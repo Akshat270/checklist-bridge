@@ -1,0 +1,5 @@
+node_modules/
+dist/
+typings/node_modules/
+.impeccable/review/
+.impeccable/questions/

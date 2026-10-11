@@ -1,0 +1,6 @@
+{
+  "version": "0.2.3",
+  "vsix": "releases/checklist-bridge-0.2.3.vsix",
+  "sha256": "abaab01ba8121d5824895acc184e355bd6397c56cded8e92159c5a1f0784bbeb",
+  "notes": "Updates now install themselves"
+}

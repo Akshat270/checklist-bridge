@@ -1,0 +1,187 @@
+{
+  "name": "checklist-bridge",
+  "displayName": "Checklist Bridge for Claude Code",
+  "description": "Each Claude chat gets its own checklist in VS Code for the things you need to do by hand. Tick tasks, add notes and screenshots, and share them with Claude one at a time.",
+  "version": "0.2.3",
+  "publisher": "akshat",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "checklistBridge",
+          "title": "Claude checklists",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "checklistBridge": [
+        {
+          "id": "checklistBridge.list",
+          "name": "Checklists"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "checklistBridge.list",
+        "contents": "When Claude needs you to do something by hand, each chat's checklist appears here.\n[Connect Claude Code](command:checklistBridge.connect)\n[Open an example checklist](command:checklistBridge.demo)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "checklistBridge.connect",
+        "title": "Connect Claude Code",
+        "category": "Checklist Bridge",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "checklistBridge.copySetup",
+        "title": "Copy Claude Code setup command",
+        "category": "Checklist Bridge"
+      },
+      {
+        "command": "checklistBridge.demo",
+        "title": "Open an example checklist",
+        "category": "Checklist Bridge"
+      },
+      {
+        "command": "checklistBridge.pick",
+        "title": "Show a checklist\u2026",
+        "category": "Checklist Bridge"
+      },
+      {
+        "command": "checklistBridge.showAll",
+        "title": "Show all checklists",
+        "category": "Checklist Bridge",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "checklistBridge.hideAll",
+        "title": "Hide all checklists",
+        "category": "Checklist Bridge",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "checklistBridge.show",
+        "title": "Show",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "checklistBridge.hide",
+        "title": "Hide",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "checklistBridge.close",
+        "title": "Close checklist",
+        "icon": "$(close)"
+      },
+      {
+        "command": "checklistBridge.toggle",
+        "title": "Show or hide checklist"
+      },
+      {
+        "command": "checklistBridge.checkForUpdates",
+        "title": "Check for updates",
+        "category": "Checklist Bridge"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "checklistBridge.showAll",
+          "when": "view == checklistBridge.list",
+          "group": "navigation@1"
+        },
+        {
+          "command": "checklistBridge.hideAll",
+          "when": "view == checklistBridge.list",
+          "group": "navigation@2"
+        },
+        {
+          "command": "checklistBridge.connect",
+          "when": "view == checklistBridge.list",
+          "group": "z@1"
+        },
+        {
+          "command": "checklistBridge.demo",
+          "when": "view == checklistBridge.list",
+          "group": "z@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "checklistBridge.show",
+          "when": "view == checklistBridge.list && viewItem == checklist.hidden",
+          "group": "inline@1"
+        },
+        {
+          "command": "checklistBridge.hide",
+          "when": "view == checklistBridge.list && viewItem == checklist.shown",
+          "group": "inline@1"
+        },
+        {
+          "command": "checklistBridge.close",
+          "when": "view == checklistBridge.list",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "checklistBridge.show",
+          "when": "false"
+        },
+        {
+          "command": "checklistBridge.hide",
+          "when": "false"
+        },
+        {
+          "command": "checklistBridge.close",
+          "when": "false"
+        },
+        {
+          "command": "checklistBridge.toggle",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Checklist Bridge",
+      "properties": {
+        "checklistBridge.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Install new versions automatically from the update repo, then offer a reload."
+        },
+        "checklistBridge.updateRepo": {
+          "type": "string",
+          "default": "Akshat270/checklist-bridge",
+          "description": "Public GitHub repo (owner/name) whose main branch has latest.json and the .vsix files."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}
