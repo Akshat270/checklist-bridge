@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+- One click makes every Claude Code chat on your computer use the checklist without being told: *Checklist Bridge: Make every Claude Code chat use checklists*. It adds a marked instruction to `~/.claude/CLAUDE.md` and allows the checklist tools in `~/.claude/settings.json`. *Undo Claude Code setup* reverses it.
+- The README now leads with installing from the VS Code Marketplace.
+
 ## 0.3.1
 - Published on the VS Code Marketplace as `Akshat270.checklist-bridge`. The old `akshat.checklist-bridge` copy removes itself.
 

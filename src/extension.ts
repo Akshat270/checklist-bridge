@@ -10,6 +10,7 @@ import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
 import { Panels } from './panels';
 import { ChecklistTree } from './sidebar';
 import { startUpdater } from './updater';
+import { applySetup, claudeDir, isSetUp, removeSetup } from './claudeSetup';
 
 let server: http.Server | undefined;
 let windowId = '';
@@ -209,6 +210,44 @@ export async function activate(ctx: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(
         'Press Enter in the terminal to finish. The first line removes an older Checklist Bridge setup if you had one; an error there is fine. Then start a new Claude chat.'
       );
+      if (!isSetUp()) vscode.commands.executeCommand('checklistBridge.setupClaude');
+    }),
+    vscode.commands.registerCommand('checklistBridge.setupClaude', async () => {
+      ctx.globalState.update('claudeSetupAsked', true);
+      const dir = claudeDir();
+      const pick = await vscode.window.showInformationMessage(
+        'Make every Claude Code chat on this computer use checklists automatically?',
+        {
+          modal: true,
+          detail:
+            `This adds a short instruction to ${path.join(dir, 'CLAUDE.md')}, which every Claude Code chat reads, ` +
+            `and allows the checklist tools in ${path.join(dir, 'settings.json')} so Claude doesn't ask before each use. ` +
+            'You can undo it any time with "Checklist Bridge: Undo Claude Code setup".',
+        },
+        'Set up'
+      );
+      if (pick !== 'Set up') return;
+      try {
+        const r = applySetup(dir);
+        log(`Claude setup: instructions ${r.instructions}, permission ${r.permission}`);
+        if (r.note) vscode.window.showWarningMessage(r.note, {});
+        vscode.window.showInformationMessage('Done. New Claude Code chats will use your checklist automatically.');
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Couldn't update Claude Code's settings: ${e?.message ?? e}`);
+      }
+    }),
+    vscode.commands.registerCommand('checklistBridge.removeClaudeSetup', () => {
+      try {
+        const r = removeSetup(claudeDir());
+        log(`Claude setup removed: instructions ${r.instructions}, permission ${r.permission}`);
+        vscode.window.showInformationMessage(
+          r.instructions === 'absent' && r.permission !== 'removed'
+            ? 'There was nothing to undo.'
+            : 'Removed. Claude Code chats will no longer be told to use the checklist (the tools stay available).'
+        );
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Couldn't update Claude Code's settings: ${e?.message ?? e}`);
+      }
     }),
     vscode.commands.registerCommand('checklistBridge.copySetup', async () => {
       await vscode.env.clipboard.writeText(await setupCommand());
@@ -262,6 +301,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.window
       .showInformationMessage('Checklist Bridge is installed. Connect it to Claude Code?', 'Connect')
       .then((p) => p && vscode.commands.executeCommand('checklistBridge.connect'));
+  } else if (!isSetUp() && !ctx.globalState.get('claudeSetupAsked')) {
+    // Existing users: offer the new one-click setup once.
+    ctx.globalState.update('claudeSetupAsked', true);
+    vscode.window
+      .showInformationMessage('Want every Claude Code chat to use your checklist without being told?', 'Set up', 'Not now')
+      .then((p) => p === 'Set up' && vscode.commands.executeCommand('checklistBridge.setupClaude'));
   }
 }
 

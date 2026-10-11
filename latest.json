@@ -1,6 +1,6 @@
 {
-  "version": "0.3.1",
-  "vsix": "releases/checklist-bridge-0.3.1.vsix",
-  "sha256": "118bd10e5b769f4b8518a182a2e7fe48e906918a6ef5400c794e021392ff0d77",
-  "notes": "Now on the VS Code Marketplace"
+  "version": "0.3.2",
+  "vsix": "releases/checklist-bridge-0.3.2.vsix",
+  "sha256": "6028597956b440574095fb4e33e6f88c7e17776de0b8d3bc848de6bd8fbbe138",
+  "notes": "Every Claude Code chat can now use the checklist automatically"
 }

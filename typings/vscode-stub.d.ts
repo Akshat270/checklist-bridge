@@ -77,6 +77,8 @@ declare module 'vscode' {
     ): WebviewPanel;
     function createTreeView<T>(id: string, opts: { treeDataProvider: TreeDataProvider<T> }): TreeView<T>;
     function showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>;
+    function showInformationMessage(message: string, options: { modal?: boolean; detail?: string }, ...items: string[]): Thenable<string | undefined>;
+    function showErrorMessage(message: string, ...items: string[]): Thenable<string | undefined>;
     function showWarningMessage(message: string, options: { modal?: boolean; detail?: string }, ...items: string[]): Thenable<string | undefined>;
     function showQuickPick<T extends QuickPickItem>(items: T[], opts?: { placeHolder?: string }): Thenable<T | undefined>;
     function setStatusBarMessage(text: string, hideAfterTimeout: number): Disposable;

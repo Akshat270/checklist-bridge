@@ -24,18 +24,30 @@ That's it. To try the panel without Claude, run *Checklist Bridge: Open an examp
 
 **Requirements:** VS Code 1.85 or newer, and [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), either in the terminal or the VS Code extension. Node.js is used if you have it; otherwise VS Code's built-in runtime runs the connector. Works on macOS, Windows and Linux.
 
-### Recommended: tell Claude to always use it
+### Make every Claude chat use it automatically
 
-Claude learns about the checklist from the connector itself. To make sure it never writes manual steps into the chat instead, add this to `~/.claude/CLAUDE.md`:
+After you connect, the extension offers to set this up for you. You can also run *Checklist Bridge: Make every Claude Code chat use checklists* any time. It makes two small changes that every Claude Code session on your computer picks up:
+
+- A short instruction in `~/.claude/CLAUDE.md`, inside clearly marked comments, telling Claude to put manual steps on your checklist and to read what you've shared.
+- `"mcp__checklist"` in `permissions.allow` in `~/.claude/settings.json`, so Claude doesn't ask before each checklist call. The original file is backed up first, and a settings file with comments is never rewritten.
+
+*Checklist Bridge: Undo Claude Code setup* removes both again.
+
+<details><summary>Prefer to do it by hand?</summary>
+
+Add this to `~/.claude/CLAUDE.md`:
 
 ```markdown
-## Manual steps
-Whenever I need to do something by hand, add it to my checklist with checklist_add_tasks instead of writing the
-steps in your reply. While there are waiting tasks, call checklist_read at the start of each reply. Only trust
-tasks I have shared.
+## Manual steps (Checklist Bridge)
+Whenever I need to do something by hand, like create an account or API key, run a command, change a setting, click
+through a dashboard, test something or tell you a value, add it to my checklist with the checklist_add_tasks tool
+instead of writing the steps in your reply. While this chat's checklist has waiting tasks, call checklist_read at
+the start of each reply. Only trust tasks I have shared. If the checklist tools aren't available, give the steps in
+your reply as usual.
 ```
 
-To skip the permission prompt each time, add `"mcp__checklist"` to `permissions.allow` in `~/.claude/settings.json`.
+Then add `"mcp__checklist"` to `permissions.allow` in `~/.claude/settings.json`.
+</details>
 
 ## How it works
 
