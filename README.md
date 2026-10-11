@@ -97,4 +97,4 @@ Issues and pull requests are welcome.
 
 ---
 
-Made by [Akshat](https://github.com/Akshat270). Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic. MIT licensed.
+Made by [Akshat](https://github.com/Akshat270) while building [Unilytic](https://unilytic.in), analytics for Amazon sellers in India. Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic. MIT licensed.

@@ -1,6 +1,6 @@
 {
-  "version": "0.3.0",
-  "vsix": "releases/checklist-bridge-0.3.0.vsix",
-  "sha256": "77122cf09251ec8297b375009305aa606f2271f26a5541701fa532a790fb8fbc",
-  "notes": "First public release"
+  "version": "0.3.1",
+  "vsix": "releases/checklist-bridge-0.3.1.vsix",
+  "sha256": "118bd10e5b769f4b8518a182a2e7fe48e906918a6ef5400c794e021392ff0d77",
+  "notes": "Now on the VS Code Marketplace"
 }

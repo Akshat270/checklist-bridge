@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.1
+- Published on the VS Code Marketplace as `Akshat270.checklist-bridge`. The old `akshat.checklist-bridge` copy removes itself.
+
 ## 0.3.0
 - First public release.
 - New icon and a README for new users, with screenshots and a one-click download link.

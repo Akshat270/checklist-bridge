@@ -2,8 +2,8 @@
   "name": "checklist-bridge",
   "displayName": "Checklist Bridge for Claude Code",
   "description": "Each Claude Code chat gets its own checklist in VS Code for the things you have to do by hand. Tick tasks, add notes and screenshots, and share them with Claude one at a time.",
-  "version": "0.3.0",
-  "publisher": "akshat",
+  "version": "0.3.1",
+  "publisher": "Akshat270",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"

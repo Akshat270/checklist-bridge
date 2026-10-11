@@ -95,6 +95,9 @@ declare module 'vscode' {
     const onDidChangeWorkspaceFolders: Event<any>;
     function getConfiguration(section?: string): { get<T>(key: string, defaultValue: T): T };
   }
+  export namespace extensions {
+    function getExtension(id: string): { id: string } | undefined;
+  }
   export namespace env {
     const clipboard: { writeText(value: string): Thenable<void> };
   }

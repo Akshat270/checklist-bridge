@@ -238,6 +238,20 @@ export async function activate(ctx: vscode.ExtensionContext) {
   }
   startUpdater(ctx, version, log);
 
+  // Versions before 0.3.1 were published as "akshat.checklist-bridge". Remove that copy so the two don't both run.
+  const OLD_ID = 'akshat.checklist-bridge';
+  if (vscode.extensions.getExtension(OLD_ID)) {
+    vscode.commands.executeCommand('workbench.extensions.uninstallExtension', OLD_ID).then(
+      () => {
+        log('Removed the old copy of Checklist Bridge (akshat.checklist-bridge).');
+        vscode.window
+          .showInformationMessage('Checklist Bridge moved to its new home on the Marketplace. Reload to finish.', 'Reload window')
+          .then((p) => p && vscode.commands.executeCommand('workbench.action.reloadWindow'));
+      },
+      (err: unknown) => log(`Could not remove the old copy: ${err}`)
+    );
+  }
+
   // Bring back checklists that were showing before the reload.
   for (const c of store.all()) if (!c.hidden) panels.show(c);
   refreshChrome();
