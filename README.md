@@ -12,13 +12,13 @@ Claude adds tasks while you keep talking. You tick them off, write a note or pas
 
 ## Install
 
-1. **[Download the extension](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-latest.vsix)** (`.vsix`).
-2. In VS Code, open the Extensions view, click `…` → **Install from VSIX…** and pick the file. Or run:
+1. **Install it from the VS Code Marketplace.** In VS Code, open the Extensions view, search for **Checklist Bridge** and click **Install**. Or [open the Marketplace page](https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge), or run:
    ```
-   code --install-extension checklist-bridge-latest.vsix
+   code --install-extension Akshat270.checklist-bridge
    ```
-3. Click **Connect** when VS Code asks, or run *Checklist Bridge: Connect Claude Code* from the command palette. A terminal opens with the command ready; press Enter.
-4. Start a new Claude chat. Run `/mcp` to check that `checklist` is connected.
+   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-latest.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
+2. Click **Connect** when VS Code asks, or run *Checklist Bridge: Connect Claude Code* from the command palette. A terminal opens with the command ready; press Enter.
+3. Start a new Claude chat. Run `/mcp` to check that `checklist` is connected.
 
 That's it. To try the panel without Claude, run *Checklist Bridge: Open an example checklist*.
 
@@ -67,7 +67,7 @@ The one network request the extension makes is the update check described below.
 
 ## Updates
 
-The extension keeps itself up to date from this repo. Shortly after VS Code starts, and every few hours after that, it reads [`latest.json`](latest.json). If there's a newer version, it downloads the `.vsix`, checks its SHA-256, installs it, and offers **Reload window**. Claude's connection is refreshed on reload too, so there's nothing to redo.
+If you installed from the Marketplace, VS Code updates it like any other extension. The extension also keeps itself up to date from this repo, which covers `.vsix` installs too. Shortly after VS Code starts, and every few hours after that, it reads [`latest.json`](latest.json). If there's a newer version, it downloads the `.vsix`, checks its SHA-256, installs it, and offers **Reload window**. Claude's connection is refreshed on reload too, so there's nothing to redo.
 
 - *Checklist Bridge: Check for updates* runs a check right away.
 - `checklistBridge.autoUpdate` turns updates off.
