@@ -1,8 +1,8 @@
 {
   "name": "checklist-bridge",
   "displayName": "Checklist Bridge for Claude Code",
-  "description": "Each Claude chat gets its own checklist in VS Code for the things you need to do by hand. Tick tasks, add notes and screenshots, and share them with Claude one at a time.",
-  "version": "0.2.3",
+  "description": "Each Claude Code chat gets its own checklist in VS Code for the things you have to do by hand. Tick tasks, add notes and screenshots, and share them with Claude one at a time.",
+  "version": "0.3.0",
   "publisher": "akshat",
   "license": "MIT",
   "engines": {
@@ -176,12 +176,33 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository"
+    "release": "python3 scripts/release.py"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.0.0",
     "typescript": "^5.6.0"
+  },
+  "icon": "media/icon.png",
+  "keywords": [
+    "claude",
+    "claude code",
+    "mcp",
+    "checklist",
+    "ai agent",
+    "human in the loop"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Akshat270/checklist-bridge"
+  },
+  "homepage": "https://github.com/Akshat270/checklist-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/Akshat270/checklist-bridge/issues"
+  },
+  "galleryBanner": {
+    "color": "#1f1f2e",
+    "theme": "dark"
   }
 }

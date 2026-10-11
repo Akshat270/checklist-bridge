@@ -5,7 +5,7 @@ import * as readline from 'readline';
 import { TOOLS, SERVER_INSTRUCTIONS, ToolResult } from './model';
 import { pickWindow, readWindows, WindowInfo } from './registry';
 
-const VERSION = '0.2.3';
+const VERSION = '0.3.0';
 const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 // One checklist per chat: the parent process is the Claude Code session that spawned us,
 // so its PID stays the same if Claude Code restarts this connector mid-chat.

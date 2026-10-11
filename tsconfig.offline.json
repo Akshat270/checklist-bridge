@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": [
+      "./typings/node_modules/@types"
+    ],
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "typings/vscode-stub.d.ts"
+  ]
+}

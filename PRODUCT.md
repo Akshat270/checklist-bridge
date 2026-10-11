@@ -7,7 +7,7 @@
 web
 
 ## Users
-Akshat, a developer and founder who runs several Claude Code agents at once inside VS Code (for example while building Unilytic). While an agent works, it hands him things only a human can do: create accounts and keys, run commands, click through dashboards, test pages, report values. He works through these between conversations with the agents.
+Developers who run one or more Claude Code agents inside VS Code. While an agent works, it hands them things only a human can do: create accounts and keys, run commands, click through dashboards, test pages, report values. They work through these between conversations with the agents. The first user was the author, a founder running several agents at once; the extension is public and open source.
 
 ## Product Purpose
 Checklist Bridge gives each Claude chat its own checklist inside VS Code. The agent adds tasks; the user ticks them, adds notes and screenshots, and shares each task when ready. The agent can read only shared tasks. Success: the user always knows what an agent is waiting on, what is urgent, and what to do next, without scrolling the chat.
@@ -27,7 +27,7 @@ A hand-off channel from agent to human, not a to-do app: tasks are written by th
 - Controls are standard ones: checkboxes, buttons, text areas, tabs.
 
 ## Brand Commitments
-- Standing preference: the familiar category standard, executed at full craft, rather than a themed visual world (chosen by the user over a themed direction, 2026-10-11).
+- Standing preference: the familiar category standard, executed at full craft, rather than a themed visual world (chosen by the author over a themed direction, 2026-10-11).
 - Craft bar delegated to Claude: the polish of Linear and the calm readability of Things 3.
 
 ## Product Principles

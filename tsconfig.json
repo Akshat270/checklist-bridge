@@ -11,15 +11,11 @@
     "rootDir": "src",
     "outDir": "dist",
     "types": [
-      "node"
-    ],
-    "typeRoots": [
-      "./node_modules/@types",
-      "./typings/node_modules/@types"
+      "node",
+      "vscode"
     ]
   },
   "include": [
-    "src",
-    "typings/vscode-stub.d.ts"
+    "src"
   ]
 }

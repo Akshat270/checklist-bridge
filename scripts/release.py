@@ -12,7 +12,10 @@ pkg = json.load(open('package.json'))
 version = pkg['version']
 note = sys.argv[1] if len(sys.argv) > 1 else ''
 
-subprocess.run(['npx', '--no-install', 'tsc', '-p', '.'] if os.path.exists('node_modules/.bin/tsc') else ['tsc', '-p', '.'], check=True)
+# Full types come from `npm install`; without them, build against the bundled stub.
+cfg = '.' if os.path.exists('node_modules/@types/vscode') else 'tsconfig.offline.json'
+tsc = ['npx', '--no-install', 'tsc'] if os.path.exists('node_modules/.bin/tsc') else ['tsc']
+subprocess.run(tsc + ['-p', cfg], check=True)
 
 manifest = f'''<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
@@ -32,6 +35,7 @@ manifest = f'''<?xml version="1.0" encoding="utf-8"?>
       <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
     </Properties>
     <License>extension/LICENSE</License>
+    <Icon>extension/media/icon.png</Icon>
   </Metadata>
   <Installation><InstallationTarget Id="Microsoft.VisualStudio.Code" /></Installation>
   <Dependencies />
@@ -39,11 +43,12 @@ manifest = f'''<?xml version="1.0" encoding="utf-8"?>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/media/icon.png" Addressable="true" />
   </Assets>
 </PackageManifest>
 '''
 types = '''<?xml version="1.0" encoding="utf-8"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".json" ContentType="application/json"/><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".css" ContentType="text/css"/><Default Extension=".svg" ContentType="image/svg+xml"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".vsixmanifest" ContentType="text/xml"/><Default Extension="" ContentType="text/plain"/></Types>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".json" ContentType="application/json"/><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".css" ContentType="text/css"/><Default Extension=".svg" ContentType="image/svg+xml"/><Default Extension=".png" ContentType="image/png"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".vsixmanifest" ContentType="text/xml"/><Default Extension="" ContentType="text/plain"/></Types>
 '''
 
 os.makedirs('releases', exist_ok=True)
@@ -59,6 +64,9 @@ with zipfile.ZipFile(rel, 'w', zipfile.ZIP_DEFLATED) as z:
                 continue
             z.write(os.path.join(d, name), f'extension/{d}/{name}')
 
+# Stable name for the README's download link.
+import shutil
+shutil.copyfile(rel, 'releases/checklist-bridge-latest.vsix')
 sha = hashlib.sha256(open(rel, 'rb').read()).hexdigest()
 json.dump({'version': version, 'vsix': rel, 'sha256': sha, 'notes': note}, open('latest.json', 'w'), indent=2)
 print(f'{rel}\nsha256 {sha}\nlatest.json -> {version}')
