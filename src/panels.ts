@@ -8,6 +8,8 @@ export interface PanelHooks {
   sendNow(c: Checklist): Promise<void>;
 }
 
+export const VIEW_TYPE = 'checklistBridge.checklist';
+
 /** One webview tab per checklist. Closing the tab only hides it. */
 export class Panels {
   private open = new Map<string, vscode.WebviewPanel>();
@@ -37,29 +39,66 @@ export class Panels {
       p.reveal(undefined, !opts.focus);
     } else {
       p = vscode.window.createWebviewPanel(
-        'checklistBridge.checklist',
+        VIEW_TYPE,
         c.title,
         { viewColumn: vscode.ViewColumn.Beside, preserveFocus: !opts.focus },
         { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(this.extUri, 'media')] }
       );
-      p.iconPath = vscode.Uri.joinPath(this.extUri, 'media', 'tab.svg');
-      p.webview.html = this.html(p.webview);
-      p.webview.onDidReceiveMessage((m) => this.onMessage(c.id, m));
-      p.onDidDispose(() => {
-        this.open.delete(c.id);
-        this.ready.delete(c.id);
-        // Closing the tab = hiding. Closing the checklist for good is a separate action.
-        const cur = this.store.get(c.id);
-        if (cur && !cur.closed) this.store.setHidden(c.id, true);
-      });
-      this.open.set(c.id, p);
+      this.attach(p, c);
     }
     if (c.hidden) this.store.setHidden(c.id, false);
     if (opts.taskId) p.webview.postMessage({ type: 'reveal', taskId: opts.taskId });
   }
 
+  /** A tab VS Code kept open across a reload or restart: take it over again. */
+  restore(p: vscode.WebviewPanel, state: any) {
+    const c = typeof state?.listId === 'string' ? this.store.get(state.listId) : undefined;
+    if (!c || c.closed || this.open.has(c.id)) {
+      p.dispose();
+      return;
+    }
+    p.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extUri, 'media')] };
+    this.attach(p, c);
+    if (c.hidden) this.store.setHidden(c.id, false);
+  }
+
+  /**
+   * VS Code closes every tab while a window shuts down. Those closes aren't the user hiding
+   * checklists, so on shutdown undo any that happened in the last moment.
+   */
+  undoShutdownCloses(withinMs = 3000) {
+    const now = Date.now();
+    for (const [id, at] of this.closedAt)
+      if (now - at <= withinMs) {
+        const c = this.store.get(id);
+        if (c && !c.closed && c.hidden) this.store.setHidden(id, false);
+      }
+  }
+
+  private closedAt = new Map<string, number>();
+
+  private attach(p: vscode.WebviewPanel, c: Checklist) {
+    p.title = c.title;
+    p.iconPath = vscode.Uri.joinPath(this.extUri, 'media', 'tab.svg');
+    p.webview.html = this.html(p.webview);
+    p.webview.onDidReceiveMessage((m) => this.onMessage(c.id, m));
+    p.onDidDispose(() => {
+      this.open.delete(c.id);
+      this.ready.delete(c.id);
+      // Closing the tab = hiding. Closing the checklist for good is a separate action.
+      const cur = this.store.get(c.id);
+      if (cur && !cur.closed && !cur.hidden) {
+        this.closedAt.set(c.id, Date.now());
+        this.store.setHidden(c.id, true);
+      }
+    });
+    this.open.set(c.id, p);
+    this.closedAt.delete(c.id);
+  }
+
   hide(id: string) {
     this.open.get(id)?.dispose();
+    this.closedAt.delete(id); // the user asked for this one
     this.store.setHidden(id, true);
   }
 

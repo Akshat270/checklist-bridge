@@ -35,6 +35,7 @@ declare module 'vscode' {
   }
   export interface Webview {
     html: string;
+    options: { enableScripts?: boolean; localResourceRoots?: Uri[] };
     readonly cspSource: string;
     asWebviewUri(u: Uri): Uri;
     onDidReceiveMessage: Event<any>;
@@ -78,6 +79,7 @@ declare module 'vscode' {
       showOptions: ViewColumn | { viewColumn: ViewColumn; preserveFocus?: boolean },
       options?: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: Uri[] }
     ): WebviewPanel;
+    function registerWebviewPanelSerializer(viewType: string, serializer: { deserializeWebviewPanel(panel: WebviewPanel, state: any): Thenable<void> }): Disposable;
     function createTreeView<T>(id: string, opts: { treeDataProvider: TreeDataProvider<T> }): TreeView<T>;
     function showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>;
     function showInformationMessage(message: string, options: { modal?: boolean; detail?: string }, ...items: string[]): Thenable<string | undefined>;

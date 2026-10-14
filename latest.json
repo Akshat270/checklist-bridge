@@ -1,6 +1,6 @@
 {
-  "version": "0.4.2",
-  "vsix": "releases/checklist-bridge-0.4.2.vsix",
-  "sha256": "954b5e0ede701e6bd972c84c989ea63757e8ec19658fdb349f03e0c67650cc55",
-  "notes": "Fixed buttons running past the card edge in narrow panels."
+  "version": "0.4.3",
+  "vsix": "releases/checklist-bridge-0.4.3.vsix",
+  "sha256": "45233cd30782f55d38241b5794dee9afb282427e2e6a261297b4a67a8cfd6994",
+  "notes": "Checklists survive window reloads and VS Code restarts again."
 }

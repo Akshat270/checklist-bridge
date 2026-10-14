@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3
+- **Checklists survive reloads and restarts again.** VS Code closes every tab while a window shuts down, and those closes were being saved as "hidden", so checklists didn't come back. Now VS Code reopens the tabs that were open, and anything you hid yourself stays hidden.
+- Changes are saved within a third of a second of the first edit (before, constant typing kept postponing the save), written safely, and saved once more when the window closes. Notes you were typing are saved when the panel loses focus.
+
 ## 0.4.2
 - Fixed **Take back** running past the edge of an open shared task, and **Share answer** running off a question card, in narrow panels. Long status lines now wrap instead.
 - An open shared task no longer shows its "not read yet" status twice, and has less empty space.

@@ -860,6 +860,11 @@
       const prevShared = list && list.tasks.find((t) => t.id === prevCurrent)?.shared;
       list = m.list;
       list.questions = list.questions || [];
+      // Lets VS Code hand this tab back to the right checklist after a reload.
+      if (ui.listId !== list.id) {
+        ui.listId = list.id;
+        saveUi();
+      }
       routes = m.routes || routes;
       render();
       // The one authored moment: after sharing the current task, the next one opens in its place.
@@ -872,6 +877,25 @@
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });
+
+  // Send typed-but-not-yet-saved notes right away when the panel loses focus or goes away,
+  // so a reload straight after typing doesn't lose them.
+  function flushDrafts() {
+    for (const id of Object.keys(noteTimers)) {
+      clearTimeout(noteTimers[id]);
+      delete noteTimers[id];
+      if (id in notes) post({ type: 'draft', taskId: id, note: notes[id] });
+    }
+    for (const id of Object.keys(qTimers)) {
+      clearTimeout(qTimers[id]);
+      delete qTimers[id];
+      const d = qDrafts[id];
+      if (d) post({ type: 'answerDraft', qid: id, picks: d.picks, other: d.other, note: d.note });
+    }
+  }
+  window.addEventListener('blur', flushDrafts);
+  window.addEventListener('pagehide', flushDrafts);
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushDrafts());
 
   post({ type: 'ready' });
 })();

@@ -6,7 +6,7 @@ import { execFile } from 'child_process';
 import { Checklist, ChecklistStore } from './model';
 import { createWindowServer, WindowServer } from './windowServer';
 import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
-import { Panels, Routes } from './panels';
+import { Panels, Routes, VIEW_TYPE } from './panels';
 import { ChecklistTree } from './sidebar';
 import { startUpdater } from './updater';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
@@ -14,6 +14,8 @@ import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from
 let ws: WindowServer | undefined;
 let windowId = '';
 let regTimer: NodeJS.Timeout | undefined;
+let flushSaves: (() => void) | undefined;
+let panelsRef: Panels | undefined;
 
 export async function activate(ctx: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Checklist Bridge');
@@ -42,14 +44,35 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
   }
   const store = new ChecklistStore(initial);
-  const saveTimers = new Map<string, NodeJS.Timeout>();
-  const save = (c: Checklist) => {
-    clearTimeout(saveTimers.get(c.id));
-    saveTimers.set(
-      c.id,
-      setTimeout(() => fs.promises.writeFile(fileOf(c.id), JSON.stringify(c)).catch((e) => log(`Save failed: ${e}`)), 400)
-    );
+  // Save soon after the first change (not after the last one, which a busy panel keeps pushing back),
+  // write to a temp file and rename so a reload mid-write can't leave a broken file,
+  // and write whatever is still pending when the window shuts down.
+  const dirty = new Set<string>();
+  let saveTimer: NodeJS.Timeout | undefined;
+  const writeOne = (id: string) => {
+    const c = store.get(id);
+    if (!c) return;
+    const tmp = fileOf(id) + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(c));
+    fs.renameSync(tmp, fileOf(id));
   };
+  const flush = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = undefined;
+    for (const id of [...dirty]) {
+      dirty.delete(id);
+      try {
+        writeOne(id);
+      } catch (e) {
+        log(`Save failed: ${e}`);
+      }
+    }
+  };
+  const save = (c: Checklist) => {
+    dirty.add(c.id);
+    if (!saveTimer) saveTimer = setTimeout(flush, 300);
+  };
+  flushSaves = flush;
 
   /* ---------- how "Send now" reaches each chat ---------- */
   // A chat running in a VS Code terminal: we can type into it. Found by matching the terminal's
@@ -92,6 +115,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   /* ---------- UI ---------- */
   const panels = new Panels(store, ctx.extensionUri, { routes, sendNow });
+  panelsRef = panels;
+  // VS Code reopens checklist tabs that were open when the window closed or reloaded.
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
+      deserializeWebviewPanel: async (p, state) => panels.restore(p, state),
+    })
+  );
   const tree = new ChecklistTree(store, panels);
   const view = vscode.window.createTreeView('checklistBridge.list', { treeDataProvider: tree });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -114,6 +144,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   store.onChange((e) => {
     const c = e.checklist;
     if (e.kind === 'removed') {
+      dirty.delete(c.id);
       fs.promises.unlink(fileOf(c.id)).catch(() => {});
       return refreshChrome();
     }
@@ -407,9 +438,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
     log(`Could not refresh CLAUDE.md instructions: ${e}`);
   }
 
-  // Bring back checklists that were showing before the reload.
-  for (const c of store.all()) if (!c.hidden) panels.show(c);
+  // Bring back checklists that were showing before the reload. VS Code hands most tabs back
+  // itself (see the serializer above), so give it a moment and open only the ones still missing.
   refreshChrome();
+  const reopen = setTimeout(() => {
+    for (const c of store.all()) if (!c.hidden && !panels.isOpen(c.id)) panels.show(c);
+  }, 1500);
+  ctx.subscriptions.push({ dispose: () => clearTimeout(reopen) });
 
   // First run: offer to connect Claude Code.
   if (!ctx.globalState.get('connectedPrompted')) {
@@ -427,6 +462,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  // The window is closing: tabs VS Code just closed weren't hidden by the user. Then save everything.
+  try {
+    panelsRef?.undoShutdownCloses();
+  } finally {
+    flushSaves?.();
+  }
   if (regTimer) clearInterval(regTimer);
   removeWindow(windowId, process.pid);
   ws?.server.close();
