@@ -5,6 +5,9 @@
   const saveUi = () => vscode.setState(ui);
 
   let list = null;
+  let routes = { waiting: false, channel: false, terminal: false };
+  const qDrafts = {}; // qid -> { picks, other, note } as typed here
+  const qTimers = {};
   let currentId = null;
   let arriveId = null;
   const notes = {}; // note text typed here, not yet confirmed saved
@@ -29,6 +32,9 @@
     copy: svg('<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>'),
     send: svg('<path d="M2.5 8h9.5M8.5 4.5 12 8l-3.5 3.5"/>'),
     undo: svg('<path d="M5.5 4 3 6.5 5.5 9"/><path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7"/>'),
+    ask: svg('<circle cx="8" cy="8" r="6.2"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.4"/><circle cx="8" cy="11.4" r=".55" fill="currentColor" stroke="none"/>'),
+    star: '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 1.8l1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.2l-3.7 2.1.8-4.2L2 6.2l4.2-.5z"/></svg>',
+    paste: svg('<rect x="3.5" y="3" width="9" height="11" rx="1.5"/><path d="M6 3V2h4v1"/><path d="M6 7.5h4M6 10h3"/>'),
     urgent: `<svg class="prio urgent" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="currentColor"/><path d="M8 4.6v4.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.2" r="1.05" fill="#fff"/></svg>`,
     important: `<svg class="prio important" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="2" y="9" width="3" height="5" rx="1"/><rect x="6.5" y="5.5" width="3" height="8.5" rx="1"/><rect x="11" y="2" width="3" height="12" rx="1"/></svg>`,
   };
@@ -404,11 +410,246 @@
     return el;
   }
 
+  /* ---------------- questions ---------------- */
+  const openQs = () => list.questions.filter((q) => !q.retired && (!q.answer || !q.seenAt));
+  const qDraftOf = (q) => qDrafts[q.id] || (qDrafts[q.id] = { picks: [...q.draft.picks], other: q.draft.other, note: q.draft.note });
+  const qReady = (q) => {
+    const d = qDraftOf(q);
+    return d.picks.some((p) => p !== 'other') || (d.picks.includes('other') && d.other.trim());
+  };
+  const optLabel = (q, id) => (id === 'other' ? 'Something else' : (q.options.find((o) => o.id === id) || {}).label || id);
+  const answerText = (q, a) => [...a.picks.map((p) => optLabel(q, p)), ...(a.other ? [a.other] : [])].join(' + ');
+
+  function saveQDraft(q, immediate) {
+    clearTimeout(qTimers[q.id]);
+    const d = qDraftOf(q);
+    const go = () => post({ type: 'answerDraft', qid: q.id, picks: d.picks, other: d.other, note: d.note });
+    if (immediate) go();
+    else qTimers[q.id] = setTimeout(go, 350);
+  }
+
+  function renderQuestion(q) {
+    const d = qDraftOf(q);
+    const urgent = q.tags.includes('urgent');
+    const el = h('div', { class: `qcard${urgent ? ' urgent' : ''}`, id: `task-${q.id}`, 'data-id': q.id, onmouseenter: () => (lastHover = q.id) });
+    const tags = q.tags.length ? h('div', { class: 'meta' }, q.tags.map((g) => h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)))) : null;
+
+    el.append(
+      h('div', { class: 'qhead' },
+        h('span', { class: 'qicon', html: I.ask }),
+        h('div', {}, h('div', { class: 'qtext', id: `qt-${q.id}` }, q.question), q.why && h('p', { class: 'qwhy' }, q.why), tags)
+      )
+    );
+
+    const role = q.multi ? 'checkbox' : 'radio';
+    const opts = h('div', { class: 'opts', role: q.multi ? 'group' : 'radiogroup', 'aria-labelledby': `qt-${q.id}` });
+    const choose = (id) => {
+      if (q.multi) d.picks = d.picks.includes(id) ? d.picks.filter((x) => x !== id) : [...d.picks, id];
+      else d.picks = [id];
+      saveQDraft(q, true);
+      paint();
+      if (id === 'other' && d.picks.includes('other')) setTimeout(() => el.querySelector('.other')?.focus(), 0);
+    };
+    const all = [...q.options, ...(q.allowOther ? [{ id: 'other', label: 'Something else' }] : [])];
+    for (const o of all) {
+      const rec = q.recommended === o.id;
+      const row = h(
+        'div',
+        { class: `opt${rec ? ' rec' : ''}`, 'data-opt': o.id },
+        h(
+          'button',
+          { class: 'opt-main', role, 'aria-checked': 'false', onclick: () => choose(o.id) },
+          h('span', { class: `pick ${q.multi ? 'multi' : 'single'}` }),
+          h(
+            'span',
+            { class: 'opt-text' },
+            h('span', { class: 'opt-label' }, o.label, rec && h('span', { class: 'chip rec-chip', title: q.reason || 'Claude recommends this', html: `${I.star}<span>Claude's pick</span>` })),
+            o.summary && h('span', { class: 'opt-sum' }, o.summary),
+            rec && q.reason && h('span', { class: 'opt-why' }, q.reason)
+          )
+        ),
+        o.details && h('details', { class: 'opt-details' }, h('summary', {}, 'Details'), h('p', {}, o.details))
+      );
+      opts.append(row);
+    }
+    el.append(opts);
+
+    const other = h('textarea', {
+      class: 'note other',
+      rows: '2',
+      placeholder: 'Your answer…',
+      'aria-label': 'Something else',
+      oninput: (e) => {
+        d.other = e.target.value;
+        saveQDraft(q);
+        paint();
+      },
+    });
+    other.value = d.other;
+    const otherWrap = h('div', { class: 'other-wrap' }, other);
+
+    const note = h('textarea', {
+      class: 'note',
+      rows: '2',
+      placeholder: 'Add a note…',
+      'aria-label': `Note for ${q.question}`,
+      oninput: (e) => {
+        d.note = e.target.value;
+        saveQDraft(q);
+      },
+      onkeydown: (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          shareQ(q);
+        }
+      },
+    });
+    note.value = d.note;
+    const noteOpen = !!d.note || q.draft.images.length > 0 || ui.expanded[q.id];
+    const noteWrap = h('div', { class: 'note-wrap', hidden: !noteOpen }, note, shots(q.draft.images, true, q.id));
+    const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, hidden: true, onchange: (e) => attach(q.id, e.target.files) });
+    const shareBtn = h('button', { class: 'btn share-q', html: `${I.send}<span>Share answer</span>`, onclick: () => shareQ(q) });
+
+    el.append(
+      otherWrap,
+      noteWrap,
+      h(
+        'div',
+        { class: 'actions' },
+        h('button', {
+          class: 'ghost add-note',
+          hidden: noteOpen,
+          html: `${I.note}<span>Note</span>`,
+          onclick: (e) => {
+            ui.expanded[q.id] = true;
+            saveUi();
+            noteWrap.hidden = false;
+            e.currentTarget.hidden = true;
+            note.focus();
+          },
+        }),
+        h('button', { class: 'ghost', title: 'Attach a screenshot (or paste one into the note)', html: `${I.image}<span>Image</span>`, onclick: () => file.click() }),
+        file,
+        h('span', { class: 'grow' }),
+        shareBtn
+      )
+    );
+
+    function paint() {
+      for (const row of el.querySelectorAll('.opt')) {
+        const on = d.picks.includes(row.dataset.opt);
+        row.classList.toggle('on', on);
+        row.querySelector('.opt-main').setAttribute('aria-checked', String(on));
+      }
+      otherWrap.hidden = !d.picks.includes('other');
+      shareBtn.disabled = !qReady(q);
+      shareBtn.title = qReady(q) ? 'Claude can read your answer once you share it' : 'Pick an option first';
+    }
+    paint();
+    el.addEventListener('dragover', (e) => {
+      if ([...e.dataTransfer.types].includes('Files')) e.preventDefault();
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      attach(q.id, e.dataTransfer.files);
+    });
+    return el;
+  }
+
+  function shareQ(q) {
+    if (!qReady(q)) return toast('Pick an option first');
+    clearTimeout(qTimers[q.id]);
+    const d = qDraftOf(q);
+    post({ type: 'shareAnswer', qid: q.id, picks: d.picks, other: d.other, note: d.note });
+    delete qDrafts[q.id];
+    delete ui.expanded[q.id];
+    saveUi();
+  }
+
+  /** Label and action for "Send now", depending on how this chat can be reached. */
+  function sendControl(compact) {
+    if (routes.waiting) return h('span', { class: 'status seen', html: `${I.check}<span>Claude is waiting and gets it right away</span>` });
+    if (routes.channel || routes.terminal)
+      return h('button', { class: `btn${compact ? ' small' : ''}`, title: 'Hand this to Claude now instead of waiting for its next read', html: `${I.send}<span>Send now</span>`, onclick: () => post({ type: 'sendNow' }) });
+    return h('button', {
+      class: 'ghost',
+      title: 'Claude can\'t be reached from here while it\'s idle. Copies a one-line message to paste into the Claude chat.',
+      html: `${I.paste}<span>Copy for chat</span>`,
+      onclick: () => post({ type: 'sendNow' }),
+    });
+  }
+
+  /** An answered question Claude hasn't read yet: stays in Decide, with Send now. */
+  function renderAnsweredQ(q) {
+    const a = q.answer;
+    const el = h('div', { class: 'qcard answered', id: `task-${q.id}`, 'data-id': q.id });
+    el.append(
+      h('div', { class: 'qhead' },
+        h('span', { class: 'mark done small', html: I.check }),
+        h('div', {}, h('div', { class: 'qtext muted' }, q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id))
+      ),
+      h(
+        'div',
+        { class: 'actions' },
+        q.pushedAt
+          ? h('span', { class: 'status', html: `${I.send}<span>Sent to Claude</span>` })
+          : routes.waiting
+            ? h('span', { class: 'status seen', html: `${I.check}<span>Claude is waiting and gets it right away</span>` })
+            : h('span', { class: 'status', html: `${I.clock}<span>Shared. Claude reads it on its next turn</span>` }),
+        h('span', { class: 'grow' }),
+        h('button', { class: 'ghost', title: 'Hide your answer from Claude again so you can change it', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }),
+        !q.pushedAt && !routes.waiting && sendControl(true)
+      )
+    );
+    return el;
+  }
+
+  /** A read (or withdrawn) question, in the Shared section. */
+  function renderSharedQ(q) {
+    const open = isOpen(q);
+    const el = h('div', { class: `task shared-row q-row${open ? ' open' : ''}${q.retired ? ' retired' : ''}`, id: `task-${q.id}`, 'data-id': q.id });
+    const answer = q.answer ? answerText(q, q.answer) : '';
+    el.append(
+      h(
+        'div',
+        { class: 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onclick: () => toggle(q) },
+        h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, html: q.retired ? I.minus : I.ask }),
+        h('div', {}, h('div', { class: 'text' }, q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
+        h('div', { class: 'right' }, q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye }))
+      )
+    );
+    if (open)
+      el.append(
+        h(
+          'div',
+          { class: 'more' },
+          q.retired && q.retired.reason && h('p', { class: 'detail' }, `Claude: ${q.retired.reason}`),
+          q.answer && q.answer.note && h('p', { class: 'said' }, q.answer.note),
+          q.answer && shots(q.answer.images, false, q.id),
+          q.answer &&
+            h('div', { class: 'actions' }, h('span', { class: 'status seen', html: `${I.eye}<span>Claude has read this</span>` }), h('span', { class: 'grow' }),
+              h('button', { class: 'ghost', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }))
+        )
+      );
+    return el;
+  }
+
+  /** Shared items Claude hasn't read yet (tasks and answers), for the Send now bar. */
+  function unreadShared() {
+    return [
+      ...list.tasks.filter((t) => t.shared && !t.seenAt && !t.pushedAt),
+      ...list.questions.filter((q) => q.answer && !q.seenAt && !q.pushedAt && !q.retired),
+    ];
+  }
+
   /* ---------------- page parts ---------------- */
   function renderProgress() {
     if (!list) return;
-    const n = list.tasks.length || 1;
-    const done = list.tasks.filter((t) => t.shared && t.shared.done).length;
+    const qs = list.questions.filter((q) => !q.retired);
+    const total = list.tasks.length + qs.length;
+    const n = total || 1;
+    const decided = qs.filter((q) => q.answer).length;
+    const done = list.tasks.filter((t) => t.shared && t.shared.done).length + decided;
     const notdone = list.tasks.filter((t) => t.shared && !t.shared.done).length;
     const pct = (x) => `${(100 * x) / n}%`;
     // The bar shows only what Claude can see, so it always agrees with "x of y shared".
@@ -416,11 +657,13 @@
       h('span', { class: 'b-done', style: `width:${pct(done)}` }),
       h('span', { class: 'b-notdone', style: `width:${pct(notdone)}` })
     );
-    const left = list.tasks.length - done - notdone;
-    $('#progress-label').innerHTML = list.tasks.length
-      ? `<span><b>${left}</b> to do</span><span><b>${done + notdone}</b> of ${list.tasks.length} shared</span>`
+    const todo = list.tasks.filter((t) => !t.shared).length;
+    const decide = qs.length - decided;
+    const leftBits = [todo && `<b>${todo}</b> to do`, decide && `<b>${decide}</b> to decide`].filter(Boolean);
+    $('#progress-label').innerHTML = total
+      ? `<span>${leftBits.join(', ') || 'Nothing left'}</span><span><b>${done + notdone}</b> of ${total} shared</span>`
       : '';
-    $('#progress').hidden = !list.tasks.length;
+    $('#progress').hidden = !total;
   }
 
   function renderDock() {
@@ -468,7 +711,8 @@
     document.title = list.title;
     $('#folder-name').textContent = list.folder;
     $('#folder').hidden = !list.folder;
-    $('#task-count').textContent = plural(list.tasks.length, 'task', 'tasks');
+    const liveQs = list.questions.filter((q) => !q.retired).length;
+    $('#task-count').textContent = [list.tasks.length && plural(list.tasks.length, 'task', 'tasks'), liveQs && plural(liveQs, 'question', 'questions')].filter(Boolean).join(', ');
 
     const groups = todoGroups();
     currentId = pickCurrent(groups);
@@ -478,9 +722,24 @@
     // Keep focus and caret across re-renders.
     const active = document.activeElement;
     const activeRow = active && active.closest && active.closest('.task');
-    const focus = activeRow && { id: activeRow.dataset.id, tag: active.tagName, start: active.selectionStart, end: active.selectionEnd };
+    const activeCard = active && active.closest && (active.closest('.task') || active.closest('.qcard'));
+    const focus = activeCard && { id: activeCard.dataset.id, tag: active.tagName, cls: active.classList.contains('other') ? '.other' : 'textarea:not(.other)', start: active.selectionStart, end: active.selectionEnd };
 
     const nodes = [];
+    $('#waiting').hidden = !routes.waiting;
+
+    const decideQs = openQs();
+    if (decideQs.length) {
+      const box = h('section', { class: 'section decide' });
+      const waitingCount = decideQs.filter((q) => !q.answer).length;
+      box.append(
+        h('div', { class: 'section-title' }, h('span', {}, 'Decide'), waitingCount ? h('span', { class: 'count' }, String(waitingCount)) : null)
+      );
+      const sorted = [...decideQs].sort((a, b) => (a.answer ? 1 : 0) - (b.answer ? 1 : 0) || (b.tags.includes('urgent') ? 1 : 0) - (a.tags.includes('urgent') ? 1 : 0));
+      for (const q of sorted) box.append(row(q, q.answer ? renderAnsweredQ : renderQuestion, `q|${q.answer ? 'a' : 'o'}|${q.pushedAt || 0}|${JSON.stringify(routes)}`));
+      nodes.push(box);
+    }
+
     const current = currentId && list.tasks.find((t) => t.id === currentId);
     if (current) nodes.push(h('section', { class: 'section', 'aria-label': 'Next task' }, row(current, renderTodo)));
 
@@ -499,7 +758,16 @@
     }
 
     const shared = list.tasks.filter((t) => t.shared).sort((a, b) => b.shared.at - a.shared.at);
-    if (!current && shared.length) {
+    const sharedQs = list.questions.filter((q) => (q.answer && q.seenAt) || q.retired);
+    const unread = unreadShared().filter((x) => !('answer' in x && x.answer));
+    if (unread.length && !routes.waiting) {
+      nodes.push(
+        h('div', { class: 'sendbar' },
+          h('span', {}, h('b', {}, String(unread.length)), unread.length === 1 ? ' shared task not read yet' : ' shared tasks not read yet'),
+          sendControl(true))
+      );
+    }
+    if (!current && !decideQs.length && shared.length) {
       nodes.push(
         h(
           'div',
@@ -509,21 +777,24 @@
         )
       );
     }
-    if (shared.length) {
+    if (shared.length || sharedQs.length) {
       const unseen = shared.filter((t) => !t.seenAt).length;
       const box = h('section', { class: 'section shared' });
-      box.append(sectionHead('__shared', 'Shared with Claude', shared.length, ui.sharedOpen, unseen ? `${unseen} not read yet` : 'All read'));
-      if (ui.sharedOpen) shared.forEach((t) => box.append(row(t, renderShared, 's')));
+      box.append(sectionHead('__shared', 'Shared with Claude', shared.length + sharedQs.length, ui.sharedOpen, unseen ? `${unseen} not read yet` : 'All read'));
+      if (ui.sharedOpen) {
+        sharedQs.forEach((q) => box.append(row(q, renderSharedQ, 'sq')));
+        shared.forEach((t) => box.append(row(t, renderShared, 's')));
+      }
       nodes.push(box);
     }
 
-    for (const id of [...rendered.keys()]) if (!list.tasks.some((t) => t.id === id)) rendered.delete(id);
+    for (const id of [...rendered.keys()]) if (!list.tasks.some((t) => t.id === id) && !list.questions.some((q) => q.id === id)) rendered.delete(id);
     $('#list').replaceChildren(...nodes);
-    $('#empty').hidden = list.tasks.length > 0;
+    $('#empty').hidden = list.tasks.length + list.questions.length > 0;
 
     if (focus) {
       const r = document.getElementById(`task-${focus.id}`);
-      const target = r && (focus.tag === 'TEXTAREA' ? r.querySelector('textarea') : r.querySelector('.row'));
+      const target = r && (focus.tag === 'TEXTAREA' ? r.querySelector(focus.cls) : r.querySelector('.row, .opt-main'));
       if (target) {
         target.focus({ preventScroll: true });
         if (focus.tag === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
@@ -554,9 +825,10 @@
         </div>
         <div class="sub"><span class="folder" id="folder">${I.folder}<span id="folder-name"></span></span><span id="task-count"></span></div>
       </header>
+      <div class="waiting" id="waiting" hidden role="status"><span class="pulse"></span>Claude is waiting for you. Whatever you share reaches it right away.</div>
       <div class="progress" id="progress"><div class="bar" id="bar"></div><div class="progress-label" id="progress-label"></div></div>
       <div id="list"></div>
-      <div class="empty" id="empty" hidden><strong>No tasks yet</strong><p>When Claude needs you to do something by hand, it appears here.</p></div>
+      <div class="empty" id="empty" hidden><strong>Nothing here yet</strong><p>When Claude needs you to do something by hand, or to decide something, it appears here.</p></div>
     </main>
     <div class="dock" id="dock" aria-hidden="true"><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>`;
@@ -568,9 +840,9 @@
   document.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
     if (!files.length) return;
-    const r = (document.activeElement?.closest && document.activeElement.closest('.task')) || (lastHover && document.getElementById(`task-${lastHover}`));
-    const t = r && list.tasks.find((x) => x.id === r.dataset.id);
-    if (!t || t.shared) return toast('Click into a task first, then paste');
+    const r = (document.activeElement?.closest && (document.activeElement.closest('.task') || document.activeElement.closest('.qcard'))) || (lastHover && document.getElementById(`task-${lastHover}`));
+    const t = r && (list.tasks.find((x) => x.id === r.dataset.id) || list.questions.find((x) => x.id === r.dataset.id));
+    if (!t || t.shared || t.answer) return toast('Click into a task or question first, then paste');
     e.preventDefault();
     attach(t.id, files);
   });
@@ -581,6 +853,8 @@
       const prevCurrent = currentId;
       const prevShared = list && list.tasks.find((t) => t.id === prevCurrent)?.shared;
       list = m.list;
+      list.questions = list.questions || [];
+      routes = m.routes || routes;
       render();
       // The one authored moment: after sharing the current task, the next one opens in its place.
       const wasSharedNow = prevCurrent && !prevShared && list.tasks.find((t) => t.id === prevCurrent)?.shared;

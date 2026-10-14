@@ -53,7 +53,7 @@ declare module 'vscode' {
     backgroundColor: ThemeColor | undefined; show(): void; hide(): void; dispose(): void;
   }
   export interface OutputChannel { appendLine(v: string): void; show(preserveFocus?: boolean): void; dispose(): void }
-  export interface Terminal { show(): void; sendText(text: string, addNewLine?: boolean): void }
+  export interface Terminal { show(): void; sendText(text: string, addNewLine?: boolean): void; readonly processId: Thenable<number | undefined>; readonly name: string }
   export interface Memento { get<T>(key: string): T | undefined; update(key: string, value: any): Thenable<void> }
   export interface EnvironmentVariableCollection { replace(variable: string, value: string): void }
   export interface ExtensionContext {
@@ -70,6 +70,9 @@ declare module 'vscode' {
   export namespace window {
     const state: WindowState;
     const onDidChangeWindowState: Event<WindowState>;
+    const terminals: readonly Terminal[];
+    const onDidOpenTerminal: Event<Terminal>;
+    const onDidCloseTerminal: Event<Terminal>;
     function createWebviewPanel(
       viewType: string, title: string,
       showOptions: ViewColumn | { viewColumn: ViewColumn; preserveFocus?: boolean },

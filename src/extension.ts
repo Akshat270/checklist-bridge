@@ -1,18 +1,17 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as http from 'http';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import { Checklist, ChecklistStore } from './model';
-import { createWindowServer } from './windowServer';
+import { createWindowServer, WindowServer } from './windowServer';
 import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
-import { Panels } from './panels';
+import { Panels, Routes } from './panels';
 import { ChecklistTree } from './sidebar';
 import { startUpdater } from './updater';
-import { applySetup, claudeDir, isSetUp, removeSetup } from './claudeSetup';
+import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
 
-let server: http.Server | undefined;
+let ws: WindowServer | undefined;
 let windowId = '';
 let regTimer: NodeJS.Timeout | undefined;
 
@@ -52,8 +51,43 @@ export async function activate(ctx: vscode.ExtensionContext) {
     );
   };
 
+  /* ---------- how "Send now" reaches each chat ---------- */
+  // A chat running in a VS Code terminal: we can type into it. Found by matching the terminal's
+  // shell process against the chat's process chain (sent by its connector).
+  const termFor = new Map<string, vscode.Terminal>();
+  const routes = (c: Checklist): Routes => {
+    const info = ws?.sessions.get(c.sessionId);
+    return {
+      waiting: !!ws?.isWaiting(c.sessionId),
+      channel: !!(info?.channel && info.polling),
+      terminal: termFor.has(c.sessionId),
+    };
+  };
+  const sendNow = async (c: Checklist) => {
+    const r = routes(c);
+    const line = store.updateSummary(c, 'line');
+    if (!line.ids.length) return void vscode.window.setStatusBarMessage('$(check) Nothing new to send', 2500);
+    if (r.waiting) return void vscode.window.setStatusBarMessage('$(check) Claude already has it', 2500);
+    if (r.channel && ws!.push(c.sessionId, store.updateSummary(c, 'full').text)) {
+      store.markPushed(c.id, line.ids);
+      log(`Sent ${line.ids.join(', ')} to chat via channel`);
+      return void vscode.window.setStatusBarMessage('$(check) Sent to Claude', 3000);
+    }
+    const term = termFor.get(c.sessionId);
+    if (r.terminal && term) {
+      // Type the update into Claude's terminal and press Enter separately, so it isn't taken as a paste.
+      term.sendText(line.text, false);
+      setTimeout(() => term.sendText('\r', false), 250);
+      store.markPushed(c.id, line.ids);
+      log(`Sent ${line.ids.join(', ')} to chat via its terminal`);
+      return void vscode.window.setStatusBarMessage('$(check) Sent to Claude', 3000);
+    }
+    await vscode.env.clipboard.writeText(line.text);
+    vscode.window.showInformationMessage('Copied. Paste it into the Claude chat and press Enter (Claude also sees it the next time it reads the checklist).');
+  };
+
   /* ---------- UI ---------- */
-  const panels = new Panels(store, ctx.extensionUri);
+  const panels = new Panels(store, ctx.extensionUri, { routes, sendNow });
   const tree = new ChecklistTree(store, panels);
   const view = vscode.window.createTreeView('checklistBridge.list', { treeDataProvider: tree });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -62,9 +96,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const refreshChrome = () => {
     const lists = store.all();
     const todo = lists.reduce((n, c) => n + c.tasks.filter((t) => !t.shared).length, 0);
-    view.badge = todo ? { value: todo, tooltip: `${todo} task${todo === 1 ? '' : 's'} waiting for you` } : undefined;
+    const decide = lists.reduce((n, c) => n + c.questions.filter((q) => !q.answer && !q.retired).length, 0);
+    const parts = [todo && `${todo} to do`, decide && `${decide} to decide`].filter(Boolean);
+    view.badge = todo + decide ? { value: todo + decide, tooltip: `${parts.join(', ')}` } : undefined;
     if (lists.length) {
-      status.text = todo ? `$(checklist) ${todo} to do` : '$(checklist) All shared';
+      status.text = parts.length ? `$(checklist) ${parts.join(', ')}` : '$(checklist) All shared';
       status.tooltip = `${lists.length} checklist${lists.length === 1 ? '' : 's'} in this window. Click to show one.`;
       status.show();
     } else status.hide();
@@ -83,6 +119,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
       vscode.window
         .showInformationMessage(`Claude added ${e.added} task${e.added === 1 ? '' : 's'} to "${c.title}".`, 'Show')
         .then((pick) => pick && panels.show(c, { focus: true }));
+    } else if (e.kind === 'asked' && !panels.isOpen(c.id)) {
+      vscode.window
+        .showInformationMessage(`Claude asked: ${e.question}${(e.added ?? 1) > 1 ? ` (+${(e.added ?? 1) - 1} more)` : ''}`, 'Show')
+        .then((pick) => pick && panels.show(c, { focus: true }));
     }
     panels.update(c);
     refreshChrome();
@@ -91,9 +131,33 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   /* ---------- server + registration ---------- */
   const token = randomBytes(24).toString('hex');
-  server = createWindowServer(store, token, log);
-  await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
+  ws = createWindowServer(store, token, log);
+  const server = ws.server;
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as { port: number }).port;
+
+  const matchTerminals = async () => {
+    if (!ws) return;
+    const terms = await Promise.all(vscode.window.terminals.map(async (t) => ({ t, pid: await t.processId })));
+    let changed = false;
+    for (const [sid, info] of ws.sessions) {
+      const hit = terms.find((x) => x.pid && info.ancestors.includes(x.pid))?.t;
+      if (termFor.get(sid) !== hit) {
+        if (hit) termFor.set(sid, hit);
+        else termFor.delete(sid);
+        changed = true;
+      }
+    }
+    if (changed) panels.refreshAll();
+  };
+  ws.onSessionsChange(() => {
+    panels.refreshAll();
+    matchTerminals();
+  });
+  ctx.subscriptions.push(
+    vscode.window.onDidOpenTerminal(() => matchTerminals()),
+    vscode.window.onDidCloseTerminal(() => matchTerminals())
+  );
   let focusedAt = vscode.window.state.focused ? Date.now() : 0;
   const register = () => {
     try {
@@ -249,6 +313,23 @@ export async function activate(ctx: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`Couldn't update Claude Code's settings: ${e?.message ?? e}`);
       }
     }),
+    vscode.commands.registerCommand('checklistBridge.startClaudeChannels', async () => {
+      const pick = await vscode.window.showInformationMessage(
+        'Start Claude Code with "Send now" switched on?',
+        {
+          modal: true,
+          detail:
+            'This opens a terminal running Claude Code with the checklist enabled as a channel, so "Send now" can hand your answers to Claude straight away, even while it is idle. ' +
+            'Channels are a Claude Code research preview: Claude asks you to confirm the first time each session starts. ' +
+            'In the Claude panel and in other terminals, "Send now" still works by typing into the terminal or by waiting.',
+        },
+        'Start Claude'
+      );
+      if (pick !== 'Start Claude') return;
+      const term = vscode.window.createTerminal({ name: 'Claude (Send now)' });
+      term.show();
+      term.sendText('claude --dangerously-load-development-channels server:checklist');
+    }),
     vscode.commands.registerCommand('checklistBridge.copySetup', async () => {
       await vscode.env.clipboard.writeText(await setupCommand());
       vscode.window.showInformationMessage('Setup command copied.');
@@ -264,6 +345,22 @@ export async function activate(ctx: vscode.ExtensionContext) {
         ],
       });
       log('Demo created: ' + (r.content[0] as any).text.split('\n')[0]);
+      const demoSession = store.all().find((c) => c.title === 'Example checklist')?.sessionId;
+      if (demoSession)
+        store.handleTool(demoSession, {}, 'checklist_ask', {
+          questions: [
+            {
+              question: 'Which example should Claude build next?',
+              why: 'Questions like this appear when Claude needs a decision that can wait.',
+              options: [
+                { label: 'A login page', summary: 'Email and password, with a reset link', details: 'Takes about an hour. Needs a database table for users.' },
+                { label: 'A settings page', summary: 'Theme and notification switches' },
+              ],
+              recommended: 'A login page',
+              reason: 'Most other pages depend on it.',
+            },
+          ],
+        });
     }),
     { dispose: () => panels.disposeAll() }
   );
@@ -291,6 +388,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
     );
   }
 
+  // Keep the managed CLAUDE.md instructions current with this version (only if the user set them up).
+  try {
+    if (isSetUp() && refreshInstructions()) log('Updated the Checklist Bridge instructions in CLAUDE.md.');
+  } catch (e) {
+    log(`Could not refresh CLAUDE.md instructions: ${e}`);
+  }
+
   // Bring back checklists that were showing before the reload.
   for (const c of store.all()) if (!c.hidden) panels.show(c);
   refreshChrome();
@@ -313,5 +417,5 @@ export async function activate(ctx: vscode.ExtensionContext) {
 export function deactivate() {
   if (regTimer) clearInterval(regTimer);
   removeWindow(windowId, process.pid);
-  server?.close();
+  ws?.server.close();
 }

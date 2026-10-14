@@ -1,8 +1,8 @@
 {
   "name": "checklist-bridge",
   "displayName": "Checklist Bridge for Claude Code",
-  "description": "Each Claude Code chat gets its own checklist in VS Code for the things you have to do by hand. Tick tasks, add notes and screenshots, and share them with Claude one at a time.",
-  "version": "0.3.2",
+  "description": "Each Claude Code chat gets its own checklist in VS Code for the things you do by hand and the decisions you make later. Tick tasks, answer questions, add notes and screenshots, and share them with Claude when you're ready.",
+  "version": "0.4.0",
   "publisher": "Akshat270",
   "license": "MIT",
   "engines": {
@@ -37,7 +37,7 @@
     "viewsWelcome": [
       {
         "view": "checklistBridge.list",
-        "contents": "When Claude needs you to do something by hand, each chat's checklist appears here.\n[Connect Claude Code](command:checklistBridge.connect)\n[Open an example checklist](command:checklistBridge.demo)"
+        "contents": "When Claude needs you to do something by hand or make a decision, each chat's checklist appears here.\n[Connect Claude Code](command:checklistBridge.connect)\n[Open an example checklist](command:checklistBridge.demo)"
       }
     ],
     "commands": [
@@ -56,6 +56,12 @@
         "command": "checklistBridge.removeClaudeSetup",
         "title": "Undo Claude Code setup",
         "category": "Checklist Bridge"
+      },
+      {
+        "command": "checklistBridge.startClaudeChannels",
+        "title": "Start Claude with Send now",
+        "category": "Checklist Bridge",
+        "icon": "$(terminal)"
       },
       {
         "command": "checklistBridge.copySetup",
@@ -130,6 +136,11 @@
           "command": "checklistBridge.demo",
           "when": "view == checklistBridge.list",
           "group": "z@2"
+        },
+        {
+          "command": "checklistBridge.startClaudeChannels",
+          "when": "view == checklistBridge.list",
+          "group": "z@3"
         }
       ],
       "view/item/context": [
@@ -201,7 +212,8 @@
     "mcp",
     "checklist",
     "ai agent",
-    "human in the loop"
+    "human in the loop",
+    "decisions"
   ],
   "repository": {
     "type": "git",

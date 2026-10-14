@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+- **Questions you can answer later.** Claude asks decisions that can wait in a new **Decide** section, with options, details and its recommendation, instead of listing options in the chat. Pick one (or several), or write your own answer, then **Share answer**.
+- **Send now.** Hand what you shared to Claude right away. It reaches Claude while it waits on the checklist, types into Claude's VS Code terminal, or pushes through Claude Code channels (*Start Claude with Send now*). In the idle Claude panel it becomes **Copy for chat**.
+- Claude can now wait for your input (`checklist_wait`) instead of ending its turn; the panel shows when it's waiting.
+- The instructions added by *Make every Claude Code chat use checklists* now cover questions too, and update themselves.
+
 ## 0.3.2
 - One click makes every Claude Code chat on your computer use the checklist without being told: *Checklist Bridge: Make every Claude Code chat use checklists*. It adds a marked instruction to `~/.claude/CLAUDE.md` and allows the checklist tools in `~/.claude/settings.json`. *Undo Claude Code setup* reverses it.
 - The README now leads with installing from the VS Code Marketplace.

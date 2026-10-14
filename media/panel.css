@@ -241,6 +241,101 @@ svg { display: block; flex: none; }
 .task.arrive { animation: arrive .38s var(--ease); }
 @keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
+/* ---------------- waiting banner ---------------- */
+.waiting {
+  display: flex; align-items: center; gap: 10px; margin: 14px 0 0; padding: 9px 12px;
+  border-radius: var(--r-m); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line);
+  color: var(--ink); font-size: 13px;
+}
+.pulse { position: relative; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.pulse::after {
+  content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--accent);
+  animation: pulse 1.8s var(--ease) infinite; opacity: 0;
+}
+@keyframes pulse { 0% { transform: scale(.5); opacity: .7; } 100% { transform: scale(1.6); opacity: 0; } }
+
+/* ---------------- decide section ---------------- */
+.section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 4px; color: var(--ink); font-weight: 650; font-size: 14px; }
+.section-title .count {
+  min-width: 20px; padding: 0 6px; border-radius: 10px; text-align: center; line-height: 19px;
+  background: var(--accent-fill); color: #fff; font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.qcard {
+  padding: 14px 14px 12px; border-radius: var(--r-l);
+  background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.qcard + .qcard { margin-top: 10px; }
+.qcard.urgent { background: color-mix(in srgb, var(--urgent) 9%, var(--ground)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--urgent) 40%, transparent); }
+.qhead { display: grid; grid-template-columns: 22px 1fr; column-gap: 10px; align-items: start; }
+.qicon { width: 20px; height: 20px; margin-top: 1px; color: var(--accent); }
+.qicon svg { width: 20px; height: 20px; }
+.qcard.urgent .qicon { color: var(--urgent); }
+.qtext { color: var(--ink); font-size: 14.5px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; text-wrap: pretty; }
+.qtext.muted { color: var(--ink-3); font-weight: 500; font-size: 13.5px; }
+.qwhy { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+.qhead .meta { margin-top: 6px; }
+
+.opts { display: grid; gap: 6px; margin: 12px 0 0 32px; }
+.opt { border-radius: var(--r-m); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow .15s ease, background-color .15s ease; }
+.opt:hover { background: var(--hover); }
+.opt.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.opt-main {
+  display: grid; grid-template-columns: 18px 1fr; column-gap: 10px; align-items: start; width: 100%;
+  padding: 9px 10px; border: 0; background: none; text-align: left; border-radius: var(--r-m);
+}
+.pick { width: 18px; height: 18px; margin-top: 1px; border: 1.5px solid var(--line-strong); background: transparent; display: grid; place-content: center; transition: border-color .15s ease, background-color .15s ease; }
+.pick.single { border-radius: 50%; }
+.pick.multi { border-radius: 6px; }
+.opt:hover .pick { border-color: var(--accent); }
+.opt.on .pick { border-color: var(--accent-fill); background: var(--accent-fill); }
+.opt.on .pick.single::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+.opt.on .pick.multi::after { content: ''; width: 9px; height: 5px; border: solid #fff; border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+.opt-text { display: grid; gap: 2px; min-width: 0; }
+.opt-label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--ink); font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
+.opt-sum { color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.opt-why { color: var(--accent); font-size: 12.5px; line-height: 1.45; }
+.chip.rec-chip { --tag: var(--accent); gap: 4px; height: 19px; }
+.chip.rec-chip svg { width: 10px; height: 10px; }
+.opt-details { margin: -2px 10px 8px 38px; }
+.opt-details summary {
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer; list-style: none;
+  color: var(--ink-3); font-size: 12.5px; padding: 1px 0; border-radius: var(--r-s);
+}
+.opt-details summary::-webkit-details-marker { display: none; }
+.opt-details summary::before {
+  content: ''; width: 5px; height: 5px; margin: 0 3px 1px 1px;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform .15s ease;
+}
+.opt-details[open] summary::before { transform: rotate(45deg); margin-bottom: 3px; }
+.opt-details summary:hover { color: var(--ink); }
+.opt-details p { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.other-wrap, .qcard .note-wrap { margin: 8px 0 0 32px; }
+.qcard .actions { margin: 10px 0 0 32px; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }
+
+.qcard.answered { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.qanswer { margin-top: 3px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.qcard.answered .said { margin-top: 4px; }
+.qcard.answered .actions { flex-wrap: wrap; row-gap: 6px; }
+.qcard.answered .actions .status { flex: 1 1 100%; white-space: normal; }
+.qcard.answered .actions .grow { display: none; }
+.qcard.answered .actions .ghost { margin-left: auto; }
+.qanswer .qsum { display: block; margin-top: 1px; color: var(--ink-2); font-size: 13px; font-weight: 400; }
+.mark.small { width: 20px; height: 20px; }
+.mark.decided { background: var(--accent-fill); }
+.mark.decided svg { width: 13px; height: 13px; }
+.mark.retired { background: var(--line-strong); }
+.chip.decided { --tag: var(--accent); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.task.retired .text { text-decoration: line-through; text-decoration-color: var(--ink-3); }
+
+.sendbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 18px; padding: 8px 10px 8px 12px; border-radius: var(--r-m);
+  background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); font-size: 13px;
+}
+.sendbar b { color: var(--ink); }
+.sendbar .ghost, .sendbar .btn { margin: 0; flex: none; white-space: nowrap; }
+
 /* ---------------- footer: share everything ticked ---------------- */
 .dock {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;

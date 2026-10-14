@@ -21,6 +21,34 @@ export interface Task {
   seenAt?: number;
   /** User took back a task Claude had already seen; reported once on the next read. */
   withdrawn?: boolean;
+  /** When "Send now" pushed this to Claude (before Claude read it). */
+  pushedAt?: number;
+}
+
+export interface QOption { id: string; label: string; summary?: string; details?: string }
+export interface QDraft { picks: string[]; other: string; note: string; images: Img[] }
+export interface Answer { at: number; picks: string[]; other: string; note: string; images: Img[] }
+
+export interface Question {
+  id: string;
+  question: string;
+  why?: string;
+  options: QOption[];
+  /** Option id Claude recommends, if any, and why. */
+  recommended?: string;
+  reason?: string;
+  multi: boolean;
+  allowOther: boolean;
+  tags: string[];
+  addedAt: number;
+  rev: number;
+  draft: QDraft;
+  answer?: Answer;
+  seenAt?: number;
+  withdrawn?: boolean;
+  pushedAt?: number;
+  /** Claude no longer needs an answer. */
+  retired?: { at: number; reason?: string };
 }
 
 export interface Checklist {
@@ -33,6 +61,8 @@ export interface Checklist {
   nextId: number;
   tasks: Task[];
   groupOrder: string[];
+  questions: Question[];
+  nextQ: number;
   hidden: boolean;
   closed: boolean;
   lastReadAt?: number;
@@ -43,11 +73,12 @@ export interface CallMeta { cwd?: string; client?: string }
 export type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 export interface ToolResult { content: Content[]; isError?: boolean }
 
-export type ChangeKind = 'created' | 'tasks-added' | 'updated' | 'closed' | 'removed';
-export interface ChangeEvent { checklist: Checklist; kind: ChangeKind; added?: number }
+export type ChangeKind = 'created' | 'tasks-added' | 'asked' | 'updated' | 'closed' | 'removed';
+export interface ChangeEvent { checklist: Checklist; kind: ChangeKind; added?: number; question?: string }
 
 const MAX_IMAGES_PER_READ = 8;
 const MAX_TASKS_PER_CALL = 40;
+const MAX_QUESTIONS_PER_CALL = 10;
 const str = (v: unknown, max = 4000) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
 const cleanTags = (v: unknown): string[] =>
   Array.isArray(v)
@@ -72,6 +103,34 @@ const taskSchema = {
   required: ['text'],
 };
 
+const questionSchema = {
+  type: 'object',
+  properties: {
+    question: { type: 'string', description: 'The decision, as a question ("Which payment gateway should subscriptions use?").' },
+    why: { type: 'string', description: 'One or two sentences: what this affects and what is on hold until it is decided.' },
+    options: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 8,
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Short name of the option ("Razorpay").' },
+          summary: { type: 'string', description: 'One line: the key difference.' },
+          details: { type: 'string', description: 'Optional longer explanation: pros, cons, cost, effort. Shown only if the user expands it.' },
+        },
+        required: ['label'],
+      },
+    },
+    recommended: { type: 'string', description: 'Optional: the label of the option you recommend.' },
+    reason: { type: 'string', description: 'Optional: one line on why you recommend it.' },
+    multiple: { type: 'boolean', description: 'Allow picking several options. Default false.' },
+    allow_other: { type: 'boolean', description: 'Offer "Something else" with free text. Default true.' },
+    tags: { type: 'array', items: { type: 'string' }, description: 'Optional, e.g. ["urgent"].' },
+  },
+  required: ['question', 'options'],
+};
+
 export const TOOLS = [
   {
     name: 'checklist_add_tasks',
@@ -91,32 +150,65 @@ export const TOOLS = [
     },
   },
   {
-    name: 'checklist_read',
-    title: 'Read what the user has shared',
+    name: 'checklist_ask',
+    title: 'Ask the user to decide something later',
     description:
-      'Returns the tasks the user has SHARED with you (done or not done, with their notes and screenshots). Tasks the user has not ' +
-      'shared yet are listed only as waiting: you cannot see whether they are ticked. Call this at the start of every reply while ' +
-      'this chat has a checklist with waiting tasks, and before you rely on any manual step. Never assume a waiting task was done.',
+      'Puts a decision for the user in the "Decide" section of this chat\'s checklist, with options, details and your recommendation. ' +
+      'Use it instead of listing options in your reply whenever the user can decide later and you can keep working meanwhile ' +
+      '(a product choice, a trade-off, naming, pricing, which approach to take next). It does NOT wait. Say in one line that you asked. ' +
+      'Questions you must have answered before you can do anything at all should be asked normally instead. ' +
+      'Answers arrive via checklist_read (or checklist_wait).',
     inputSchema: {
       type: 'object',
       properties: {
-        include_earlier_images: { type: 'boolean', description: 'Also re-send images from tasks you have already read. Default false.' },
+        title: { type: 'string', description: 'Short checklist title, only used if this creates the checklist.' },
+        questions: { type: 'array', minItems: 1, maxItems: MAX_QUESTIONS_PER_CALL, items: questionSchema },
+      },
+      required: ['questions'],
+    },
+  },
+  {
+    name: 'checklist_read',
+    title: 'Read what the user has shared',
+    description:
+      'Returns the tasks and answers the user has SHARED with you (tasks done or not done, chosen options, notes and screenshots). ' +
+      'Unshared tasks and unanswered questions are listed only as waiting: you cannot see drafts. Call this at the start of every reply ' +
+      'while this chat\'s checklist has anything waiting, and before you rely on any manual step or decision. Never assume.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_earlier_images: { type: 'boolean', description: 'Also re-send images from items you have already read. Default false.' },
+      },
+    },
+  },
+  {
+    name: 'checklist_wait',
+    title: 'Wait for the user\'s next update',
+    description:
+      'Waits until the user shares a task or answers a question in this chat\'s checklist, then returns the same result as checklist_read. ' +
+      'Use it ONLY when you have finished everything you can do and the next step depends on the user, instead of ending your turn; ' +
+      'this lets the user\'s answer reach you immediately. Returns after timeout_minutes with no update if the user hasn\'t shared anything.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeout_minutes: { type: 'number', description: 'How long to wait, 1 to 25. Default 20.' },
       },
     },
   },
   {
     name: 'checklist_edit',
-    title: 'Edit, tag, group or remove tasks',
+    title: 'Edit, tag, group or remove tasks and questions',
     description:
-      'Changes tasks already on this chat\'s checklist: rename the checklist, change a task\'s wording, add/remove tags ' +
-      '(e.g. mark something "urgent" or "important"), move tasks into groups, reorder groups, or remove tasks that are no longer needed. ' +
-      'Wording of a task the user already shared cannot be changed; tags and group can.',
+      'Changes this chat\'s checklist: rename it; change a task\'s wording, tags or group; reorder groups; remove tasks; ' +
+      'update an unanswered question; or withdraw questions that no longer need an answer. ' +
+      'Wording of anything the user already shared or answered cannot be changed; tags and group can.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
         updates: {
           type: 'array',
+          description: 'Task changes.',
           items: {
             type: 'object',
             properties: {
@@ -132,6 +224,27 @@ export const TOOLS = [
             required: ['id'],
           },
         },
+        question_updates: {
+          type: 'array',
+          description: 'Changes to questions, e.g. new options or a recommendation. Wording and options only while unanswered.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Question id, e.g. "q2".' },
+              question: { type: 'string' },
+              why: { type: 'string' },
+              options: questionSchema.properties.options,
+              recommended: { type: 'string' },
+              reason: { type: 'string' },
+              tags: { type: 'array', items: { type: 'string' } },
+              add_tags: { type: 'array', items: { type: 'string' } },
+              remove_tags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['id'],
+          },
+        },
+        withdraw_questions: { type: 'array', items: { type: 'string' }, description: 'Ids of questions that no longer need an answer.' },
+        withdraw_reason: { type: 'string', description: 'Optional one line shown to the user, e.g. "Settled by the new pricing doc".' },
         remove: { type: 'array', items: { type: 'string' }, description: 'Ids of tasks to delete.' },
         group_order: { type: 'array', items: { type: 'string' }, description: 'Group names in the order they should appear.' },
       },
@@ -142,19 +255,31 @@ export const TOOLS = [
 export const SERVER_INSTRUCTIONS =
   'This server gives each chat a checklist in the user\'s VS Code. Whenever you need the user to do something by hand ' +
   '(run a command, set an env var, create an account or API key, click through a dashboard, test a page, tell you a value), ' +
-  'add it with checklist_add_tasks instead of writing the steps in your reply, then keep working on whatever you can. ' +
-  'The user shares tasks one at a time when they are ready, with notes and screenshots. While this chat\'s checklist has ' +
-  'waiting tasks, call checklist_read at the start of each reply to pick up what they shared. Use tags such as "urgent" or ' +
-  '"important" and groups to keep longer lists readable.';
+  'add it with checklist_add_tasks instead of writing the steps in your reply. Whenever the user has to make a decision that can ' +
+  'wait while you keep working, ask it with checklist_ask (options, details, your recommendation) instead of listing options in your ' +
+  'reply. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
+  'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
+  'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
+  'call checklist_read for notes and screenshots.';
 
 /* ------------------------------------------------------------------ store */
+
+export function normalize(c: Checklist): Checklist {
+  c.questions ??= [];
+  c.nextQ ??= 1;
+  c.tasks ??= [];
+  c.groupOrder ??= [];
+  return c;
+}
+
+type Item = { c: Checklist; t: Task; q?: undefined } | { c: Checklist; q: Question; t?: undefined };
 
 export class ChecklistStore {
   private lists = new Map<string, Checklist>();
   private listeners: ((e: ChangeEvent) => void)[] = [];
 
   constructor(initial: Checklist[] = []) {
-    for (const c of initial) this.lists.set(c.id, c);
+    for (const c of initial) this.lists.set(c.id, normalize(c));
   }
 
   onChange(fn: (e: ChangeEvent) => void) {
@@ -172,7 +297,7 @@ export class ChecklistStore {
     return this.lists.get(id);
   }
   /** Latest checklist for a chat, including a closed one (so Claude can be told it was closed). */
-  private forSession(sessionId: string): Checklist | undefined {
+  forSession(sessionId: string): Checklist | undefined {
     let found: Checklist | undefined;
     for (const c of this.lists.values()) if (c.sessionId === sessionId && (!found || c.createdAt > found.createdAt)) found = c;
     return found;
@@ -180,59 +305,121 @@ export class ChecklistStore {
 
   /* ---------- actions from the panel (the user) ---------- */
 
-  private task(listId: string, taskId: string) {
+  private item(listId: string, id: string): Item | undefined {
     const c = this.lists.get(listId);
-    const t = c?.tasks.find((x) => x.id === taskId);
-    return c && t ? { c, t } : undefined;
+    if (!c) return undefined;
+    const t = c.tasks.find((x) => x.id === id);
+    if (t) return { c, t };
+    const q = c.questions.find((x) => x.id === id);
+    return q ? { c, q } : undefined;
   }
 
   /** Draft changes (tick / note) are saved without re-rendering the panel. */
   setDraft(listId: string, taskId: string, patch: { done?: boolean; note?: string }) {
-    const x = this.task(listId, taskId);
-    if (!x || x.t.shared) return;
+    const x = this.item(listId, taskId);
+    if (!x?.t || x.t.shared) return;
     if (typeof patch.done === 'boolean') x.t.draft.done = patch.done;
     if (typeof patch.note === 'string') x.t.draft.note = patch.note.slice(0, 8000);
     this.emit({ checklist: x.c, kind: 'updated' });
   }
 
-  addImages(listId: string, taskId: string, imgs: Omit<Img, 'id'>[]) {
-    const x = this.task(listId, taskId);
-    if (!x || x.t.shared) return;
-    for (const i of imgs) {
-      if (x.t.draft.images.length >= 8) break;
-      if (!/^image\/(png|jpeg|gif|webp)$/.test(i.mime) || typeof i.data !== 'string' || i.data.length > 4_000_000) continue;
-      x.t.draft.images.push({ id: randomUUID().slice(0, 8), mime: i.mime, data: i.data, w: i.w | 0, h: i.h | 0 });
+  /** Draft answer changes (picks / other text / note). */
+  setAnswerDraft(listId: string, qid: string, patch: { picks?: string[]; other?: string; note?: string }) {
+    const x = this.item(listId, qid);
+    if (!x?.q || x.q.answer || x.q.retired) return;
+    const q = x.q;
+    if (Array.isArray(patch.picks)) {
+      const valid = patch.picks.filter((p) => p === 'other' ? q.allowOther : q.options.some((o) => o.id === p));
+      q.draft.picks = q.multi ? [...new Set(valid)] : valid.slice(-1);
     }
-    x.t.rev++;
+    if (typeof patch.other === 'string') q.draft.other = patch.other.slice(0, 4000);
+    if (typeof patch.note === 'string') q.draft.note = patch.note.slice(0, 8000);
     this.emit({ checklist: x.c, kind: 'updated' });
   }
 
-  removeImage(listId: string, taskId: string, imageId: string) {
-    const x = this.task(listId, taskId);
-    if (!x || x.t.shared) return;
-    x.t.draft.images = x.t.draft.images.filter((i) => i.id !== imageId);
-    x.t.rev++;
+  addImages(listId: string, id: string, imgs: Omit<Img, 'id'>[]) {
+    const x = this.item(listId, id);
+    if (!x || (x.t ? x.t.shared : x.q!.answer)) return;
+    const draft = x.t ? x.t.draft : x.q!.draft;
+    for (const i of imgs) {
+      if (draft.images.length >= 8) break;
+      if (!/^image\/(png|jpeg|gif|webp)$/.test(i.mime) || typeof i.data !== 'string' || i.data.length > 4_000_000) continue;
+      draft.images.push({ id: randomUUID().slice(0, 8), mime: i.mime, data: i.data, w: i.w | 0, h: i.h | 0 });
+    }
+    (x.t ?? x.q!).rev++;
+    this.emit({ checklist: x.c, kind: 'updated' });
+  }
+
+  removeImage(listId: string, id: string, imageId: string) {
+    const x = this.item(listId, id);
+    if (!x || (x.t ? x.t.shared : x.q!.answer)) return;
+    const draft = x.t ? x.t.draft : x.q!.draft;
+    draft.images = draft.images.filter((i) => i.id !== imageId);
+    (x.t ?? x.q!).rev++;
     this.emit({ checklist: x.c, kind: 'updated' });
   }
 
   share(listId: string, taskId: string) {
-    const x = this.task(listId, taskId);
-    if (!x || x.t.shared) return;
+    const x = this.item(listId, taskId);
+    if (!x?.t || x.t.shared) return;
     const d = x.t.draft;
     x.t.shared = { at: Date.now(), done: d.done, note: d.note.trim(), images: [...d.images] };
     x.t.withdrawn = false;
+    x.t.pushedAt = undefined;
     x.t.rev++;
     this.emit({ checklist: x.c, kind: 'updated' });
   }
 
   unshare(listId: string, taskId: string) {
-    const x = this.task(listId, taskId);
-    if (!x || !x.t.shared) return;
-    if (x.t.seenAt) x.t.withdrawn = true;
+    const x = this.item(listId, taskId);
+    if (!x?.t || !x.t.shared) return;
+    if (x.t.seenAt || x.t.pushedAt) x.t.withdrawn = true;
     x.t.shared = undefined;
     x.t.seenAt = undefined;
+    x.t.pushedAt = undefined;
     x.t.rev++;
     this.emit({ checklist: x.c, kind: 'updated' });
+  }
+
+  /** Returns false when there is nothing to send yet (no option picked and no "something else" text). */
+  shareAnswer(listId: string, qid: string): boolean {
+    const x = this.item(listId, qid);
+    if (!x?.q || x.q.answer || x.q.retired) return false;
+    const d = x.q.draft;
+    const picks = d.picks.filter((p) => p !== 'other');
+    const other = d.picks.includes('other') || (!picks.length && x.q.allowOther) ? d.other.trim() : '';
+    if (!picks.length && !other) return false;
+    x.q.answer = { at: Date.now(), picks, other, note: d.note.trim(), images: [...d.images] };
+    x.q.withdrawn = false;
+    x.q.pushedAt = undefined;
+    x.q.rev++;
+    this.emit({ checklist: x.c, kind: 'updated' });
+    return true;
+  }
+
+  unshareAnswer(listId: string, qid: string) {
+    const x = this.item(listId, qid);
+    if (!x?.q || !x.q.answer) return;
+    if (x.q.seenAt || x.q.pushedAt) x.q.withdrawn = true;
+    x.q.answer = undefined;
+    x.q.seenAt = undefined;
+    x.q.pushedAt = undefined;
+    x.q.rev++;
+    this.emit({ checklist: x.c, kind: 'updated' });
+  }
+
+  /** Records that "Send now" pushed these items to Claude. */
+  markPushed(listId: string, ids: string[]) {
+    const c = this.lists.get(listId);
+    if (!c) return;
+    const now = Date.now();
+    for (const id of ids) {
+      const x = this.item(listId, id);
+      if (!x) continue;
+      (x.t ?? x.q!).pushedAt = now;
+      (x.t ?? x.q!).rev++;
+    }
+    this.emit({ checklist: c, kind: 'updated' });
   }
 
   setHidden(listId: string, hidden: boolean) {
@@ -259,6 +446,69 @@ export class ChecklistStore {
     }
   }
 
+  /* ---------- what Claude hasn't seen yet ---------- */
+
+  unread(c: Checklist): { tasks: Task[]; questions: Question[] } {
+    return {
+      tasks: c.tasks.filter((t) => (t.shared && (!t.seenAt || t.shared.at > t.seenAt)) || t.withdrawn),
+      questions: c.questions.filter((q) => !q.retired && ((q.answer && (!q.seenAt || q.answer.at > q.seenAt)) || q.withdrawn)),
+    };
+  }
+
+  hasUnread(sessionId: string): boolean {
+    const c = this.forSession(sessionId);
+    if (!c) return false;
+    const u = this.unread(c);
+    return u.tasks.length + u.questions.length > 0 || !!c.closed;
+  }
+
+  /** Anything still waiting on the user (so waiting makes sense). */
+  hasPending(sessionId: string): boolean {
+    const c = this.forSession(sessionId);
+    return !!c && !c.closed && (c.tasks.some((t) => !t.shared) || c.questions.some((q) => !q.answer && !q.retired));
+  }
+
+  /** Plain-language summary of everything shared but not yet read, for "Send now". */
+  updateSummary(c: Checklist, style: 'line' | 'full'): { text: string; ids: string[] } {
+    const u = this.unread(c);
+    const parts: string[] = [];
+    const ids: string[] = [];
+    for (const q of u.questions) {
+      ids.push(q.id);
+      if (!q.answer) {
+        parts.push(`I took back my answer to ${q.id} ("${q.question}") to change it`);
+        continue;
+      }
+      const choice = answerText(q, q.answer);
+      if (style === 'line') parts.push(`I answered ${q.id} ("${clip(q.question, 80)}"): ${clip(choice, 120)}`);
+      else {
+        let s = `- ${q.id} ${q.question}\n  Answer: ${choice}`;
+        if (q.answer.note) s += `\n  Note: ${quote(q.answer.note)}`;
+        if (q.answer.images.length) s += `\n  ${q.answer.images.length} screenshot(s): call checklist_read to see them.`;
+        parts.push(s);
+      }
+    }
+    for (const t of u.tasks) {
+      ids.push(t.id);
+      if (!t.shared) {
+        parts.push(`I took back ${t.id} ("${t.text}") to change it`);
+        continue;
+      }
+      const state = t.shared.done ? 'done' : 'NOT done';
+      if (style === 'line') parts.push(`${t.id} ("${clip(t.text, 60)}") is ${state}${t.shared.note ? `: ${clip(t.shared.note, 100)}` : ''}`);
+      else {
+        let s = `- ${t.id} ${t.text}: ${state.toUpperCase()}`;
+        if (t.shared.note) s += `\n  Note: ${quote(t.shared.note)}`;
+        if (t.shared.images.length) s += `\n  ${t.shared.images.length} screenshot(s): call checklist_read to see them.`;
+        parts.push(s);
+      }
+    }
+    if (!parts.length) return { text: '', ids };
+    if (style === 'line')
+      return { text: clip(`Checklist update: ${parts.join('; ')}. Read the checklist for my notes.`, 700).replace(/\s*\n\s*/g, ' '), ids };
+    return { text: `The user shared these from the checklist "${c.title}":\n${parts.join('\n')}`, ids };
+  }
+
   /* ---------- tools (Claude) ---------- */
 
   handleTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
@@ -266,6 +516,8 @@ export class ChecklistStore {
       switch (name) {
         case 'checklist_add_tasks':
           return this.toolAdd(sessionId, meta, args ?? {});
+        case 'checklist_ask':
+          return this.toolAsk(sessionId, meta, args ?? {});
         case 'checklist_read':
           return this.toolRead(sessionId, args ?? {});
         case 'checklist_edit':
@@ -278,43 +530,55 @@ export class ChecklistStore {
     }
   }
 
+  private ensureList(sessionId: string, meta: CallMeta, title: unknown): { c: Checklist; created: boolean } {
+    let c = this.forSession(sessionId);
+    if (c && !c.closed) {
+      if (str(title, 80)) c.title = str(title, 80)!;
+      return { c, created: false };
+    }
+    const folder = (meta.cwd ?? '').split(/[\\/]/).filter(Boolean).pop() ?? '';
+    c = {
+      id: randomUUID(),
+      sessionId,
+      title: str(title, 80) ?? 'Things to do',
+      folder,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      nextId: 1,
+      tasks: [],
+      groupOrder: [],
+      questions: [],
+      nextQ: 1,
+      hidden: false,
+      closed: false,
+    };
+    this.lists.set(c.id, c);
+    return { c, created: true };
+  }
+
+  private freshNote(c: Checklist): string | undefined {
+    const u = this.unread(c);
+    const n = u.tasks.length + u.questions.length;
+    return n ? `Note: ${n} item${n === 1 ? ' was' : 's were'} shared since your last read. Call checklist_read.` : undefined;
+  }
+
   private toolAdd(sessionId: string, meta: CallMeta, args: any): ToolResult {
     const raw = Array.isArray(args.tasks) ? args.tasks : [];
     if (!raw.length) return err('`tasks` must be a non-empty array.');
     if (raw.length > MAX_TASKS_PER_CALL) return err(`Add at most ${MAX_TASKS_PER_CALL} tasks per call.`);
+    raw.forEach((r: any, i: number) => {
+      if (!(typeof r === 'string' ? str(r, 300) : str(r?.text, 300))) throw new Error(`tasks[${i}].text is required.`);
+    });
 
-    let c = this.forSession(sessionId);
-    let created = false;
-    if (!c || c.closed) {
-      const folder = (meta.cwd ?? '').split(/[\\/]/).filter(Boolean).pop() ?? '';
-      c = {
-        id: randomUUID(),
-        sessionId,
-        title: str(args.title, 80) ?? 'Things to do',
-        folder,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        nextId: 1,
-        tasks: [],
-        groupOrder: [],
-        hidden: false,
-        closed: false,
-      };
-      this.lists.set(c.id, c);
-      created = true;
-    } else if (str(args.title, 80)) {
-      c.title = str(args.title, 80)!;
-    }
-
+    const { c, created } = this.ensureList(sessionId, meta, args.title);
     const ids: string[] = [];
     const now = Date.now();
-    raw.forEach((r: any, i: number) => {
-      const text = typeof r === 'string' ? str(r, 300) : str(r?.text, 300);
-      if (!text) throw new Error(`tasks[${i}].text is required.`);
+    for (const r of raw) {
+      const text = (typeof r === 'string' ? str(r, 300) : str(r?.text, 300))!;
       const group = str(r?.group, 48);
-      if (group && !c!.groupOrder.includes(group)) c!.groupOrder.push(group);
+      if (group && !c.groupOrder.includes(group)) c.groupOrder.push(group);
       const t: Task = {
-        id: `t${c!.nextId++}`,
+        id: `t${c.nextId++}`,
         text,
         detail: str(r?.detail),
         command: str(r?.command),
@@ -324,9 +588,9 @@ export class ChecklistStore {
         rev: 1,
         draft: { done: false, note: '', images: [] },
       };
-      c!.tasks.push(t);
+      c.tasks.push(t);
       ids.push(t.id);
-    });
+    }
 
     this.emit({ checklist: c, kind: created ? 'created' : 'tasks-added', added: ids.length });
 
@@ -335,31 +599,96 @@ export class ChecklistStore {
       `Added ${ids.length} task${ids.length === 1 ? '' : 's'} (${range}) to the checklist "${c.title}" in VS Code.`,
       'The user will share them one by one when ready; you can keep working meanwhile. Use checklist_read to see what they shared.',
     ];
-    const fresh = this.unread(c).length;
-    if (fresh) lines.push(`Note: ${fresh} task${fresh === 1 ? ' was' : 's were'} shared since your last read. Call checklist_read.`);
+    const fresh = this.freshNote(c);
+    if (fresh) lines.push(fresh);
     return ok(lines.join('\n'));
   }
 
-  private unread(c: Checklist) {
-    return c.tasks.filter((t) => (t.shared && (!t.seenAt || t.shared.at > t.seenAt)) || t.withdrawn);
+  private parseOptions(raw: unknown, where: string): QOption[] {
+    if (!Array.isArray(raw) || raw.length < 2) throw new Error(`${where}: give at least 2 options.`);
+    if (raw.length > 8) throw new Error(`${where}: give at most 8 options.`);
+    return raw.map((o: any, i: number) => {
+      const label = typeof o === 'string' ? str(o, 80) : str(o?.label, 80);
+      if (!label) throw new Error(`${where}.options[${i}].label is required.`);
+      return { id: `o${i + 1}`, label, summary: str(o?.summary, 200), details: str(o?.details, 3000) };
+    });
+  }
+
+  private pickRecommended(options: QOption[], rec: unknown): string | undefined {
+    const r = str(rec, 80)?.toLowerCase();
+    return r ? options.find((o) => o.label.toLowerCase() === r)?.id : undefined;
+  }
+
+  private toolAsk(sessionId: string, meta: CallMeta, args: any): ToolResult {
+    const raw = Array.isArray(args.questions) ? args.questions : [];
+    if (!raw.length) return err('`questions` must be a non-empty array.');
+    if (raw.length > MAX_QUESTIONS_PER_CALL) return err(`Ask at most ${MAX_QUESTIONS_PER_CALL} questions per call.`);
+    // Validate everything before creating anything.
+    const parsed = raw.map((r: any, i: number) => {
+      const question = str(r?.question, 300);
+      if (!question) throw new Error(`questions[${i}].question is required.`);
+      const options = this.parseOptions(r?.options, `questions[${i}]`);
+      return { r, question, options };
+    });
+
+    const { c, created } = this.ensureList(sessionId, meta, args.title);
+    const now = Date.now();
+    const ids: string[] = [];
+    const notes: string[] = [];
+    for (const { r, question, options } of parsed) {
+      const recommended = this.pickRecommended(options, r.recommended);
+      if (r.recommended && !recommended) notes.push(`"${r.recommended}" doesn't match an option label, so no option is marked as recommended.`);
+      const q: Question = {
+        id: `q${c.nextQ++}`,
+        question,
+        why: str(r.why, 600),
+        options,
+        recommended,
+        reason: recommended ? str(r.reason, 300) : undefined,
+        multi: r.multiple === true,
+        allowOther: r.allow_other !== false,
+        tags: cleanTags(r.tags),
+        addedAt: now,
+        rev: 1,
+        draft: { picks: [], other: '', note: '', images: [] },
+      };
+      c.questions.push(q);
+      ids.push(q.id);
+    }
+
+    this.emit({ checklist: c, kind: created ? 'created' : 'asked', added: ids.length, question: parsed[0].question });
+    const lines = [
+      `Asked ${ids.length} question${ids.length === 1 ? '' : 's'} (${ids.join(', ')}) in the "Decide" section of "${c.title}" in VS Code.`,
+      'Keep working on anything that doesn\'t depend on the answer. Answers arrive via checklist_read; if only the answer is left, call checklist_wait.',
+      ...notes,
+    ];
+    const fresh = this.freshNote(c);
+    if (fresh) lines.push(fresh);
+    return ok(lines.join('\n'));
   }
 
   private toolRead(sessionId: string, args: any): ToolResult {
     const c = this.forSession(sessionId);
-    if (!c) return ok('This chat has no checklist yet. Add tasks with checklist_add_tasks when the user needs to do something by hand.');
+    if (!c) return ok('This chat has no checklist yet. Add tasks with checklist_add_tasks, or ask a decision with checklist_ask.');
 
     const now = Date.now();
     const shared = c.tasks.filter((t) => t.shared);
     const waiting = c.tasks.filter((t) => !t.shared);
+    const liveQs = c.questions.filter((q) => !q.retired);
+    const answered = liveQs.filter((q) => q.answer);
+    const openQs = liveQs.filter((q) => !q.answer);
     const fresh = this.unread(c);
-    const earlier = shared.filter((t) => !fresh.includes(t));
+    const earlier = shared.filter((t) => !fresh.tasks.includes(t));
+    const earlierQs = answered.filter((q) => !fresh.questions.includes(q));
     const content: Content[] = [];
     const images: { label: string; img: Img }[] = [];
 
     const out: string[] = [];
+    const counts = [`${c.tasks.length} tasks, ${shared.length} shared by the user, ${waiting.length} waiting`];
+    if (liveQs.length) counts.push(`${liveQs.length} questions, ${answered.length} answered, ${openQs.length} waiting`);
     out.push(
       `Checklist "${c.title}"${c.closed ? ' (CLOSED by the user — it no longer shows in VS Code; adding tasks starts a new checklist)' : ''}: ` +
-        `${c.tasks.length} tasks, ${shared.length} shared by the user, ${waiting.length} waiting.`
+        counts.join('; ') + '.'
     );
 
     const describe = (t: Task, full: boolean) => {
@@ -375,10 +704,25 @@ export class ChecklistStore {
       }
       return lines.join('\n');
     };
+    const describeQ = (q: Question, full: boolean) => {
+      const a = q.answer!;
+      const lines = [`- ${q.id} ${q.question}`, `  ANSWER: ${answerText(q, a)}`];
+      if (a.note) lines.push(full ? `  Note from the user: ${quote(a.note)}` : `  Note: ${quote(clip(a.note, 140))}`);
+      if (full && a.images.length) lines.push(`  ${a.images.length} screenshot${a.images.length === 1 ? '' : 's'} attached below.`);
+      return lines.join('\n');
+    };
 
-    if (fresh.length) {
+    if (fresh.tasks.length || fresh.questions.length) {
       out.push('', 'New since your last read:');
-      for (const t of fresh) {
+      for (const q of fresh.questions) {
+        if (q.withdrawn && !q.answer) {
+          out.push(`- ${q.id} ${q.question}: the user took back their answer to change it. Treat it as unanswered again.`);
+          continue;
+        }
+        out.push(describeQ(q, true));
+        q.answer!.images.forEach((img, i) => images.push({ label: `${q.id} screenshot ${i + 1}/${q.answer!.images.length}`, img }));
+      }
+      for (const t of fresh.tasks) {
         if (t.withdrawn && !t.shared) {
           out.push(`- ${t.id} ${t.text}: the user took this back to change it. Treat it as waiting again.`);
           continue;
@@ -390,6 +734,14 @@ export class ChecklistStore {
       out.push('', 'Nothing new since your last read.');
     }
 
+    if (earlierQs.length) {
+      out.push('', 'Decided earlier:');
+      for (const q of earlierQs) {
+        out.push(describeQ(q, !!args.include_earlier_images));
+        if (args.include_earlier_images)
+          q.answer!.images.forEach((img, i) => images.push({ label: `${q.id} screenshot ${i + 1}/${q.answer!.images.length}`, img }));
+      }
+    }
     if (earlier.length) {
       out.push('', 'Shared earlier:');
       for (const t of earlier) {
@@ -399,8 +751,13 @@ export class ChecklistStore {
       }
     }
 
+    if (openQs.length) {
+      out.push('', 'Questions waiting for the user\'s decision:');
+      for (const q of openQs)
+        out.push(`- ${q.id} ${q.question} (options: ${q.options.map((o) => o.label).join(' / ')}${q.allowOther ? ' / something else' : ''})${q.tags.length ? ` [${q.tags.join(', ')}]` : ''}`);
+    }
     if (waiting.length) {
-      out.push('', 'Waiting on the user (not shared yet, so you cannot know their state):');
+      out.push('', 'Tasks waiting on the user (not shared yet, so you cannot know their state):');
       for (const g of groupsOf(c, waiting)) {
         if (g.name) out.push(`  ${g.name}:`);
         for (const t of g.tasks) out.push(`${g.name ? '  ' : ''}- ${t.id} ${t.text}${t.tags.length ? ` [${t.tags.join(', ')}]` : ''}`);
@@ -418,10 +775,10 @@ export class ChecklistStore {
 
     // Mark as seen so the panel can show it.
     let changed = false;
-    for (const t of fresh) {
-      if (t.shared) t.seenAt = now;
-      t.withdrawn = false;
-      t.rev++;
+    for (const it of [...fresh.tasks, ...fresh.questions]) {
+      if ('shared' in it ? it.shared : (it as Question).answer) it.seenAt = now;
+      it.withdrawn = false;
+      it.rev++;
       changed = true;
     }
     c.lastReadAt = now;
@@ -431,9 +788,18 @@ export class ChecklistStore {
 
   private toolEdit(sessionId: string, args: any): ToolResult {
     const c = this.forSession(sessionId);
-    if (!c || c.closed) return err('This chat has no open checklist. Use checklist_add_tasks to start one.');
+    if (!c || c.closed) return err('This chat has no open checklist. Use checklist_add_tasks or checklist_ask to start one.');
     const notes: string[] = [];
     if (str(args.title, 80)) c.title = str(args.title, 80)!;
+
+    const applyTags = (it: { tags: string[] }, u: any) => {
+      if (Array.isArray(u.tags)) it.tags = cleanTags(u.tags);
+      if (Array.isArray(u.add_tags)) it.tags = cleanTags([...it.tags, ...u.add_tags]);
+      if (Array.isArray(u.remove_tags)) {
+        const rm = cleanTags(u.remove_tags);
+        it.tags = it.tags.filter((x) => !rm.includes(x));
+      }
+    };
 
     for (const u of Array.isArray(args.updates) ? args.updates : []) {
       const t = c.tasks.find((x) => x.id === u?.id);
@@ -448,17 +814,45 @@ export class ChecklistStore {
         if (typeof u.detail === 'string') t.detail = str(u.detail);
         if (typeof u.command === 'string') t.command = str(u.command);
       }
-      if (Array.isArray(u.tags)) t.tags = cleanTags(u.tags);
-      if (Array.isArray(u.add_tags)) t.tags = cleanTags([...t.tags, ...u.add_tags]);
-      if (Array.isArray(u.remove_tags)) {
-        const rm = cleanTags(u.remove_tags);
-        t.tags = t.tags.filter((x) => !rm.includes(x));
-      }
+      applyTags(t, u);
       if (typeof u.group === 'string') {
         t.group = str(u.group, 48);
         if (t.group && !c.groupOrder.includes(t.group)) c.groupOrder.push(t.group);
       }
       t.rev++;
+    }
+
+    for (const u of Array.isArray(args.question_updates) ? args.question_updates : []) {
+      const q = c.questions.find((x) => x.id === u?.id);
+      if (!q || q.retired) {
+        notes.push(`${u?.id}: no such open question.`);
+        continue;
+      }
+      const wording = ['question', 'why', 'options', 'recommended', 'reason'].some((k) => u[k] !== undefined);
+      if (wording && q.answer) notes.push(`${q.id}: already answered, so its wording and options were kept.`);
+      else if (wording) {
+        if (str(u.question, 300)) q.question = str(u.question, 300)!;
+        if (typeof u.why === 'string') q.why = str(u.why, 600);
+        if (u.options !== undefined) {
+          q.options = this.parseOptions(u.options, q.id);
+          q.draft.picks = q.draft.picks.filter((p) => p === 'other');
+          q.recommended = undefined;
+        }
+        if (typeof u.recommended === 'string') q.recommended = this.pickRecommended(q.options, u.recommended);
+        if (typeof u.reason === 'string') q.reason = str(u.reason, 300);
+      }
+      applyTags(q, u);
+      q.rev++;
+    }
+
+    if (Array.isArray(args.withdraw_questions)) {
+      for (const id of args.withdraw_questions) {
+        const q = c.questions.find((x) => x.id === id);
+        if (!q || q.retired) continue;
+        q.retired = { at: Date.now(), reason: str(args.withdraw_reason, 200) };
+        q.rev++;
+        notes.push(`Withdrew ${q.id}.`);
+      }
     }
 
     if (Array.isArray(args.remove)) {
@@ -477,6 +871,12 @@ export class ChecklistStore {
   }
 }
 
+export function answerText(q: Question, a: Answer): string {
+  const labels = a.picks.map((p) => q.options.find((o) => o.id === p)?.label ?? p);
+  if (a.other) labels.push(`Something else: ${quote(a.other)}`);
+  return labels.join(' + ') || '(no choice)';
+}
+
 /** Tasks bucketed by group, in display order (ungrouped first). */
 export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; tasks: Task[] }[] {
   const out: { name?: string; tasks: Task[] }[] = [];
@@ -489,6 +889,7 @@ export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; tasks:
   return out;
 }
 
+const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 const quote = (s: string) => JSON.stringify(s);
 const ok = (text: string): ToolResult => ({ content: [{ type: 'text', text }] });
 const err = (text: string): ToolResult => ({ content: [{ type: 'text', text }], isError: true });

@@ -49,6 +49,29 @@ your reply as usual.
 Then add `"mcp__checklist"` to `permissions.allow` in `~/.claude/settings.json`.
 </details>
 
+## Questions you can answer later
+
+When Claude needs a decision that doesn't have to happen right now, like which payment gateway to use, how to name a page, or what the free plan includes, it asks it in the checklist instead of listing options in the chat. Claude keeps working on everything else while you think.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-decide.png" width="360" alt="The Decide section: an urgent question about payment gateways with Claude's pick highlighted, a second open question, and an answered question with a Send now button">
+</p>
+
+- Questions sit in their own **Decide** section at the top, with the options, short summaries, **Details** you can expand, and Claude's pick with its reason. Urgent questions turn red.
+- Pick an option (or several, if Claude allows it), or choose **Something else** and type your own answer. Add a note or screenshots if you like, then press **Share answer**.
+- Claude sees your answer the next time it reads the checklist. To hand it over straight away, press **Send now**.
+
+### How "Send now" reaches Claude
+
+| Where Claude is running | What Send now does |
+|---|---|
+| Claude is **waiting** on the checklist (it does this when only your input is left) | Nothing to do: your answer reaches it the moment you share it. The panel shows *Claude is waiting for you*. |
+| In a **VS Code terminal** | Types a one-line update into that terminal and presses Enter. |
+| Started with **channels** (*Checklist Bridge: Start Claude with Send now*) | Pushes the update into the chat, even while Claude is idle. Channels are a [Claude Code research preview](https://code.claude.com/docs/en/channels), so Claude asks you to confirm when it starts. |
+| Idle in the **Claude panel** | Claude can't be woken from outside, so the button becomes **Copy for chat**: it copies a one-line update for you to paste. |
+
+Send now works for shared tasks too.
+
 ## How it works
 
 - **One checklist per chat.** Each chat's checklist opens in the VS Code window where that chat is running. Two agents in the same window get two separate checklists.
@@ -63,13 +86,15 @@ Then add `"mcp__checklist"` to `permissions.allow` in `~/.claude/settings.json`.
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-shared.png" width="360" alt="Several ticked tasks with a Share all bar at the bottom, and the Shared with Claude section showing which tasks Claude has read">
 </p>
 
-Claude gets three tools:
+Claude gets five tools:
 
 | Tool | What it does |
 |---|---|
 | `checklist_add_tasks` | Adds tasks (with optional details, a command to copy, tags and a group) and opens the checklist. It doesn't wait; you work at your own pace. |
-| `checklist_read` | Returns only the tasks you shared: done or not done, your notes, and your screenshots as images. Unshared tasks show as "waiting". |
-| `checklist_edit` | Renames the checklist, rewords tasks, changes tags and groups, or removes tasks. |
+| `checklist_ask` | Asks you a question in the Decide section, with options, details and Claude's recommendation. It doesn't wait. |
+| `checklist_read` | Returns only what you shared: tasks done or not done, your answers, your notes, and your screenshots as images. Everything else shows as "waiting". |
+| `checklist_wait` | Waits until you share something, then returns it. Claude uses this only when your input is the only thing left. |
+| `checklist_edit` | Renames the checklist, rewords tasks, changes tags and groups, updates or withdraws questions, or removes tasks. |
 
 ## Privacy
 

@@ -18,14 +18,16 @@ export class ChecklistTree implements vscode.TreeDataProvider<Checklist> {
 
   getTreeItem(c: Checklist): vscode.TreeItem {
     const left = c.tasks.filter((t) => !t.shared).length;
+    const decide = c.questions.filter((q) => !q.answer && !q.retired).length;
     const shown = this.panels.isOpen(c.id);
     const item = new vscode.TreeItem(c.title);
     item.id = c.id;
-    item.description = c.tasks.length ? (left ? `${left} to do` : 'all shared') : 'empty';
+    const parts = [left && `${left} to do`, decide && `${decide} to decide`].filter(Boolean);
+    item.description = c.tasks.length + c.questions.length ? (parts.length ? parts.join(', ') : 'all shared') : 'empty';
     if (c.folder) item.description += `  ${c.folder}`;
     item.iconPath = new vscode.ThemeIcon(
-      left ? 'circle-large-outline' : 'pass',
-      left ? undefined : new vscode.ThemeColor('testing.iconPassed')
+      decide ? 'question' : left ? 'circle-large-outline' : 'pass',
+      left || decide ? undefined : new vscode.ThemeColor('testing.iconPassed')
     );
     item.contextValue = shown ? 'checklist.shown' : 'checklist.hidden';
     item.tooltip = new vscode.MarkdownString(

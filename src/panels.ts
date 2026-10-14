@@ -1,12 +1,31 @@
 import * as vscode from 'vscode';
 import { Checklist, ChecklistStore } from './model';
 
+/** How "Send now" can reach a chat right now. */
+export interface Routes { waiting: boolean; channel: boolean; terminal: boolean }
+export interface PanelHooks {
+  routes(c: Checklist): Routes;
+  sendNow(c: Checklist): Promise<void>;
+}
+
 /** One webview tab per checklist. Closing the tab only hides it. */
 export class Panels {
   private open = new Map<string, vscode.WebviewPanel>();
   private ready = new Set<string>();
 
-  constructor(private store: ChecklistStore, private extUri: vscode.Uri) {}
+  constructor(private store: ChecklistStore, private extUri: vscode.Uri, private hooks: PanelHooks) {}
+
+  private state(c: Checklist) {
+    return { type: 'state', list: c, routes: this.hooks.routes(c) };
+  }
+
+  /** Re-send state to every visible panel (e.g. when how to reach a chat changes). */
+  refreshAll() {
+    for (const id of this.open.keys()) {
+      const c = this.store.get(id);
+      if (c) this.update(c);
+    }
+  }
 
   isOpen(id: string) {
     return this.open.has(id);
@@ -53,7 +72,7 @@ export class Panels {
       return;
     }
     p.title = c.title;
-    if (this.ready.has(c.id)) p.webview.postMessage({ type: 'state', list: c });
+    if (this.ready.has(c.id)) p.webview.postMessage(this.state(c));
   }
 
   disposeAll() {
@@ -66,7 +85,7 @@ export class Panels {
       case 'ready': {
         this.ready.add(id);
         const c = s.get(id);
-        if (c) this.open.get(id)?.webview.postMessage({ type: 'state', list: c });
+        if (c) this.open.get(id)?.webview.postMessage(this.state(c));
         break;
       }
       case 'draft':
@@ -85,6 +104,21 @@ export class Panels {
       case 'unshare':
         s.unshare(id, m.taskId);
         break;
+      case 'answerDraft':
+        s.setAnswerDraft(id, m.qid, { picks: m.picks, other: m.other, note: m.note });
+        break;
+      case 'shareAnswer':
+        s.setAnswerDraft(id, m.qid, { picks: m.picks, other: m.other, note: m.note });
+        if (!s.shareAnswer(id, m.qid)) this.open.get(id)?.webview.postMessage({ type: 'toast', text: 'Pick an option first' });
+        break;
+      case 'unshareAnswer':
+        s.unshareAnswer(id, m.qid);
+        break;
+      case 'sendNow': {
+        const c = s.get(id);
+        if (c) await this.hooks.sendNow(c);
+        break;
+      }
       case 'copy':
         if (typeof m.text === 'string') {
           await vscode.env.clipboard.writeText(m.text);

@@ -1,6 +1,6 @@
 {
-  "version": "0.3.2",
-  "vsix": "releases/checklist-bridge-0.3.2.vsix",
-  "sha256": "6028597956b440574095fb4e33e6f88c7e17776de0b8d3bc848de6bd8fbbe138",
-  "notes": "Every Claude Code chat can now use the checklist automatically"
+  "version": "0.4.0",
+  "vsix": "releases/checklist-bridge-0.4.0.vsix",
+  "sha256": "3bef9b308abc5a00ac1b6961906071e06a9e7e0de03ce2adafdcaf8d8c4084f1",
+  "notes": "Questions you can answer later, and Send now"
 }

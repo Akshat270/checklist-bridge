@@ -9,8 +9,11 @@ const START = '<!-- checklist-bridge:start (managed by the Checklist Bridge VS C
 const END = '<!-- checklist-bridge:end -->';
 const PERMISSION = 'mcp__checklist';
 
-export const INSTRUCTIONS = `## Manual steps (Checklist Bridge)
-Whenever I need to do something by hand, like create an account or API key, run a command, change a setting, click through a dashboard, test something or tell you a value, add it to my checklist with the checklist_add_tasks tool instead of writing the steps in your reply. While this chat's checklist has waiting tasks, call checklist_read at the start of each reply. Only trust tasks I have shared. If the checklist tools aren't available, give the steps in your reply as usual.`;
+export const INSTRUCTIONS = `## Manual steps and decisions (Checklist Bridge)
+- Whenever I need to do something by hand, like create an account or API key, run a command, change a setting, click through a dashboard, test something or tell you a value, add it to my checklist with checklist_add_tasks instead of writing the steps in your reply.
+- Whenever I need to make a decision that can wait while you keep working, ask it with checklist_ask (options, short details, your recommendation) instead of listing the options in your reply. Ask normally only if you can't do anything until I answer.
+- While anything on the checklist is waiting, call checklist_read at the start of each reply, and only trust what I have shared. If you have done everything you can and only my input is left, call checklist_wait instead of ending your turn.
+- If the checklist tools aren't available, put the steps or the question in your reply as usual.`;
 
 export const claudeDir = (env: NodeJS.ProcessEnv = process.env) => env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -49,6 +52,18 @@ function writeAtomic(file: string, text: string) {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, file);
+}
+
+/** Updates an existing managed block to this version's wording. Returns true if the file changed. */
+export function refreshInstructions(dir = claudeDir()): boolean {
+  const md = path.join(dir, 'CLAUDE.md');
+  if (!fs.existsSync(md)) return false;
+  const before = fs.readFileSync(md, 'utf8');
+  if (!before.includes(START)) return false;
+  const after = before.replace(blockRe, (m) => (m.startsWith('\n') ? '\n\n' : '') + `${START}\n${INSTRUCTIONS}\n${END}` + '\n');
+  if (after === before) return false;
+  writeAtomic(md, after);
+  return true;
 }
 
 export function applySetup(dir = claudeDir()): SetupResult {
