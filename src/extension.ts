@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { execFile } from 'child_process';
 import { Checklist, ChecklistStore } from './model';
 import { createWindowServer, WindowServer } from './windowServer';
 import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
@@ -12,6 +11,7 @@ import { startUpdater } from './updater';
 import { Saver } from './saver';
 import { ImageFiles } from './images';
 import { Ownership } from './ownership';
+import { addArgs, connect, disconnect, findClaude, registeredInConfig, run } from './claudeConnect';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
 
 let ws: WindowServer | undefined;
@@ -138,6 +138,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   const refreshChrome = () => {
     const lists = store.all();
+    vscode.commands.executeCommand('setContext', 'checklistBridge.hasChecklist', lists.length > 0);
+    vscode.commands.executeCommand('setContext', 'checklistBridge.everyChat', isSetUp());
     const todo = lists.reduce((n, c) => n + c.tasks.filter((t) => !t.shared).length, 0);
     const decide = lists.reduce((n, c) => n + c.questions.filter((q) => !q.answer && !q.retired).length, 0);
     const parts = [todo && `${todo} to do`, decide && `${decide} to decide`].filter(Boolean);
@@ -244,12 +246,89 @@ export async function activate(ctx: vscode.ExtensionContext) {
     log(`Could not copy the connector: ${e}`);
   }
 
-  const hasNode = () => new Promise<boolean>((r) => execFile('node', ['--version'], { timeout: 4000 }, (e) => r(!e)));
+  /* ---------- connecting Claude Code ---------- */
+  const INSTALL_URL = 'https://code.claude.com/docs/en/overview';
+  const claudePath = () => vscode.workspace.getConfiguration('checklistBridge').get<string>('claudePath', '') || undefined;
+  // Anthropic's Claude Code extension bundles its own `claude`, for people who never installed the CLI.
+  const bundledIn = () => {
+    const ext = vscode.extensions.getExtension('anthropic.claude-code') ?? vscode.extensions.getExtension('Anthropic.claude-code');
+    return ext ? [ext.extensionPath] : [];
+  };
   const q = (s: string) => (/[\s"'()&]/.test(s) ? `"${s}"` : s);
   const setupCommand = async () =>
-    (await hasNode())
-      ? `claude mcp add --transport stdio --scope user checklist -- node ${q(connectorPath)}`
-      : `claude mcp add --env ELECTRON_RUN_AS_NODE=1 --transport stdio --scope user checklist -- ${q(process.execPath)} ${q(connectorPath)}`;
+    ['claude', ...addArgs(connectorPath, (await run('node', ['--version'], 4000)).ok, process.execPath)].map(q).join(' ');
+  const setConnected = (on: boolean) => vscode.commands.executeCommand('setContext', 'checklistBridge.connected', on);
+  setConnected(registeredInConfig(connectorPath));
+
+  const afterConnect = (firstTime: boolean) => {
+    setConnected(true);
+    if (!firstTime) return;
+    const more = isSetUp() ? [] : ['Make every chat use it'];
+    vscode.window
+      .showInformationMessage('Checklist Bridge is connected to Claude Code. Start a new Claude chat to use it.', ...more, 'Show an example')
+      .then((p) => {
+        if (p === 'Make every chat use it') vscode.commands.executeCommand('checklistBridge.setupClaude');
+        if (p === 'Show an example') vscode.commands.executeCommand('checklistBridge.demo');
+      });
+  };
+
+  /** Fallback: run the command in a terminal (its shell may find `claude` when VS Code can't), then watch for success. */
+  const connectInTerminal = async () => {
+    const term = vscode.window.createTerminal({ name: 'Connect Claude checklists' });
+    term.show();
+    term.sendText('claude mcp remove checklist --scope user');
+    term.sendText(await setupCommand()); // presses Enter itself
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      if (registeredInConfig(connectorPath)) {
+        clearInterval(timer);
+        ctx.globalState.update('connected', true);
+        afterConnect(true);
+      } else if (Date.now() - t0 > 90_000) clearInterval(timer);
+    }, 1500);
+  };
+
+  /** Connect without a terminal. Quiet when it works; explains what to do when it can't. */
+  const ensureConnected = async (interactive: boolean) => {
+    if (registeredInConfig(connectorPath)) {
+      setConnected(true);
+      if (interactive) vscode.window.showInformationMessage('Checklist Bridge is already connected to Claude Code.');
+      return;
+    }
+    const outcome = await vscode.window.withProgress(
+      { location: interactive ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window, title: 'Connecting Claude Code to your checklists…' },
+      () => connect({ connectorPath, electronPath: process.execPath, claude: claudePath(), bundledIn: bundledIn() })
+    );
+    const firstTime = !ctx.globalState.get('connected');
+    if (outcome.status === 'connected') {
+      log(`Connected Claude Code (${outcome.claude}).`);
+      ctx.globalState.update('connected', true);
+      afterConnect(firstTime || interactive);
+      return;
+    }
+    setConnected(false);
+    if (outcome.status === 'no-claude') {
+      log('Could not find the claude command.');
+      if (!interactive && ctx.globalState.get('toldNoClaude')) return; // don't nag on every start
+      ctx.globalState.update('toldNoClaude', true);
+      const p = await vscode.window.showWarningMessage(
+        'Checklist Bridge works with Claude Code, but VS Code could not find it on this computer. Install Claude Code, then click Connect.',
+        'Install Claude Code',
+        'Connect',
+        'Try in a terminal'
+      );
+      if (p === 'Install Claude Code') vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
+      if (p === 'Connect') ensureConnected(true);
+      if (p === 'Try in a terminal') connectInTerminal();
+      return;
+    }
+    log(`Connecting failed using ${outcome.claude}: ${outcome.detail}`);
+    if (!interactive && ctx.globalState.get('toldConnectFailed')) return;
+    ctx.globalState.update('toldConnectFailed', true);
+    const p = await vscode.window.showWarningMessage('Checklist Bridge could not connect to Claude Code automatically.', 'Try in a terminal', 'Show details');
+    if (p === 'Try in a terminal') connectInTerminal();
+    if (p === 'Show details') output.show();
+  };
 
   /* ---------- commands ---------- */
   const resolve = (arg: unknown): Checklist | undefined =>
@@ -317,17 +396,18 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const c = pick && store.get(pick.id);
       if (c) panels.show(c, { focus: true });
     }),
-    vscode.commands.registerCommand('checklistBridge.connect', async () => {
-      const cmd = await setupCommand();
-      const remove = 'claude mcp remove checklist --scope user';
-      const term = vscode.window.createTerminal({ name: 'Connect Claude checklists' });
-      term.show();
-      term.sendText(remove);
-      term.sendText(cmd, false);
+    vscode.commands.registerCommand('checklistBridge.connect', () => ensureConnected(true)),
+    vscode.commands.registerCommand('checklistBridge.gettingStarted', () =>
+      vscode.commands.executeCommand('workbench.action.openWalkthrough', `${ctx.extension?.id ?? 'Akshat270.checklist-bridge'}#start`, false)
+    ),
+    vscode.commands.registerCommand('checklistBridge.disconnect', async () => {
+      const claude = await findClaude(process.env, undefined, claudePath(), bundledIn());
+      if (claude) await disconnect(claude);
+      setConnected(registeredInConfig(connectorPath));
+      ctx.globalState.update('connected', false);
       vscode.window.showInformationMessage(
-        'Press Enter in the terminal to finish. The first line removes an older Checklist Bridge setup if you had one; an error there is fine. Then start a new Claude chat.'
+        claude ? 'Disconnected. New Claude chats won\'t use checklists until you connect again.' : 'Could not find the claude command to disconnect.'
       );
-      if (!isSetUp()) vscode.commands.executeCommand('checklistBridge.setupClaude');
     }),
     vscode.commands.registerCommand('checklistBridge.setupClaude', async () => {
       ctx.globalState.update('claudeSetupAsked', true);
@@ -348,6 +428,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
         const r = applySetup(dir);
         log(`Claude setup: instructions ${r.instructions}, permission ${r.permission}`);
         if (r.note) vscode.window.showWarningMessage(r.note, {});
+        vscode.commands.executeCommand('setContext', 'checklistBridge.everyChat', true);
         vscode.window.showInformationMessage('Done. New Claude Code chats will use your checklist automatically.');
       } catch (e: any) {
         vscode.window.showErrorMessage(`Couldn't update Claude Code's settings: ${e?.message ?? e}`);
@@ -357,6 +438,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       try {
         const r = removeSetup(claudeDir());
         log(`Claude setup removed: instructions ${r.instructions}, permission ${r.permission}`);
+        vscode.commands.executeCommand('setContext', 'checklistBridge.everyChat', false);
         vscode.window.showInformationMessage(
           r.instructions === 'absent' && r.permission !== 'removed'
             ? 'There was nothing to undo.'
@@ -469,14 +551,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   }, 1500);
   ctx.subscriptions.push({ dispose: () => clearTimeout(reopen) });
 
-  // First run: offer to connect Claude Code.
-  if (!ctx.globalState.get('connectedPrompted')) {
-    ctx.globalState.update('connectedPrompted', true);
-    vscode.window
-      .showInformationMessage('Checklist Bridge is installed. Connect it to Claude Code?', 'Connect')
-      .then((p) => p && vscode.commands.executeCommand('checklistBridge.connect'));
-  } else if (!isSetUp() && !ctx.globalState.get('claudeSetupAsked')) {
-    // Existing users: offer the new one-click setup once.
+  // Connect automatically (first run, after Claude Code gets installed, or if the setup was removed).
+  if (vscode.workspace.getConfiguration('checklistBridge').get('autoConnect', true)) ensureConnected(false);
+  else if (!isSetUp() && !ctx.globalState.get('claudeSetupAsked') && ctx.globalState.get('connected')) {
     ctx.globalState.update('claudeSetupAsked', true);
     vscode.window
       .showInformationMessage('Want every Claude Code chat to use your checklist without being told?', 'Set up', 'Not now')

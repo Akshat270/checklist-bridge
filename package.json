@@ -38,7 +38,13 @@
     "viewsWelcome": [
       {
         "view": "checklistBridge.list",
-        "contents": "When Claude needs you to do something by hand or make a decision, each chat's checklist appears here.\n[Connect Claude Code](command:checklistBridge.connect)\n[Open an example checklist](command:checklistBridge.demo)"
+        "when": "!checklistBridge.connected",
+        "contents": "Claude Code isn't connected yet. Checklist Bridge connects on its own when VS Code starts; if that didn't work, click below.\n[Connect Claude Code](command:checklistBridge.connect)\nNo Claude Code yet? [Install it](https://code.claude.com/docs/en/overview), then click Connect.\n[Getting started](command:checklistBridge.gettingStarted)"
+      },
+      {
+        "view": "checklistBridge.list",
+        "when": "checklistBridge.connected",
+        "contents": "Connected to Claude Code. Start a new Claude chat; when Claude needs you to do something by hand or make a decision, its checklist appears here.\n[Open an example checklist](command:checklistBridge.demo)\n[Getting started](command:checklistBridge.gettingStarted)"
       }
     ],
     "commands": [
@@ -47,6 +53,11 @@
         "title": "Connect Claude Code",
         "category": "Checklist Bridge",
         "icon": "$(plug)"
+      },
+      {
+        "command": "checklistBridge.disconnect",
+        "title": "Disconnect Claude Code",
+        "category": "Checklist Bridge"
       },
       {
         "command": "checklistBridge.setupClaude",
@@ -113,6 +124,11 @@
       {
         "command": "checklistBridge.checkForUpdates",
         "title": "Check for updates",
+        "category": "Checklist Bridge"
+      },
+      {
+        "command": "checklistBridge.gettingStarted",
+        "title": "Getting started",
         "category": "Checklist Bridge"
       }
     ],
@@ -192,9 +208,72 @@
           "type": "string",
           "default": "Akshat270/checklist-bridge",
           "description": "Public GitHub repo (owner/name) whose main branch has latest.json and the .vsix files."
+        },
+        "checklistBridge.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Connect Claude Code to your checklists automatically when VS Code starts (runs `claude mcp add` for you)."
+        },
+        "checklistBridge.claudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to the `claude` command, if Checklist Bridge can't find it on its own."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "start",
+        "title": "Get started with Checklist Bridge",
+        "description": "Your checklist for the things Claude needs you to do by hand, and the decisions you can make later.",
+        "steps": [
+          {
+            "id": "connect",
+            "title": "Connect Claude Code",
+            "description": "Happens automatically when VS Code starts.\n[Connect Claude Code](command:checklistBridge.connect)",
+            "media": {
+              "markdown": "media/walkthrough/connect.md"
+            },
+            "completionEvents": [
+              "onContext:checklistBridge.connected"
+            ]
+          },
+          {
+            "id": "chat",
+            "title": "Start a new Claude chat",
+            "description": "Claude Code picks up new tools when a chat starts.",
+            "media": {
+              "markdown": "media/walkthrough/chat.md"
+            },
+            "completionEvents": [
+              "onContext:checklistBridge.hasChecklist"
+            ]
+          },
+          {
+            "id": "everychat",
+            "title": "Make every chat use it (optional)",
+            "description": "So Claude uses your checklist without being asked.\n[Set it up](command:checklistBridge.setupClaude)",
+            "media": {
+              "markdown": "media/walkthrough/everychat.md"
+            },
+            "completionEvents": [
+              "onContext:checklistBridge.everyChat"
+            ]
+          },
+          {
+            "id": "example",
+            "title": "See an example",
+            "description": "Try ticking, noting and sharing.\n[Open an example checklist](command:checklistBridge.demo)",
+            "media": {
+              "markdown": "media/walkthrough/example.md"
+            },
+            "completionEvents": [
+              "onCommand:checklistBridge.demo"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "build": "tsc -p .",

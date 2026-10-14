@@ -11,10 +11,12 @@ declare module 'vscode' {
   export class Uri {
     static joinPath(base: Uri, ...parts: string[]): Uri;
     static file(p: string): Uri;
+    static parse(value: string): Uri;
     readonly fsPath: string;
     toString(): string;
   }
   export enum ViewColumn { Active = -1, Beside = -2, One = 1 }
+  export enum ProgressLocation { SourceControl = 1, Window = 10, Notification = 15 }
   export enum StatusBarAlignment { Left = 1, Right = 2 }
   export class TreeItem {
     constructor(label: string);
@@ -58,6 +60,7 @@ declare module 'vscode' {
   export interface Memento { get<T>(key: string): T | undefined; update(key: string, value: any): Thenable<void> }
   export interface EnvironmentVariableCollection { replace(variable: string, value: string): void }
   export interface ExtensionContext {
+    extension?: { id: string };
     subscriptions: { dispose(): any }[];
     extensionUri: Uri;
     storageUri: Uri | undefined;
@@ -80,6 +83,8 @@ declare module 'vscode' {
       options?: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: Uri[] }
     ): WebviewPanel;
     const tabGroups: { all: readonly { tabs: readonly { label: string; input: unknown }[] }[] };
+    function withProgress<R>(options: { location: ProgressLocation; title?: string }, task: () => Thenable<R>): Thenable<R>;
+    function showWarningMessage(message: string, ...items: string[]): Thenable<string | undefined>;
     function registerWebviewPanelSerializer(viewType: string, serializer: { deserializeWebviewPanel(panel: WebviewPanel, state: any): Thenable<void> }): Disposable;
     function createTreeView<T>(id: string, opts: { treeDataProvider: TreeDataProvider<T> }): TreeView<T>;
     function showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>;
@@ -104,9 +109,10 @@ declare module 'vscode' {
     function getConfiguration(section?: string): { get<T>(key: string, defaultValue: T): T };
   }
   export namespace extensions {
-    function getExtension(id: string): { id: string } | undefined;
+    function getExtension(id: string): { id: string; extensionPath: string } | undefined;
   }
   export namespace env {
     const clipboard: { writeText(value: string): Thenable<void> };
+    function openExternal(target: Uri): Thenable<boolean>;
   }
 }

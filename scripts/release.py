@@ -30,10 +30,13 @@ files = {
     'LICENSE': 'extension/LICENSE.txt',
 }
 for d in ['dist', 'media']:
-    for name in sorted(os.listdir(d)):
-        if d == 'dist' and not name.endswith('.js'):
-            continue
-        files[os.path.join(d, name)] = f'extension/{d}/{name}'
+    for root, dirs, names in os.walk(d):
+        dirs.sort()
+        for name in sorted(names):
+            if d == 'dist' and not name.endswith('.js'):
+                continue
+            src = os.path.join(root, name)
+            files[src] = 'extension/' + src.replace(os.sep, '/')
 
 repo = pkg['repository']['url']
 X = lambda s: escape(str(s), {'"': '&quot;'})

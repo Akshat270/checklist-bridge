@@ -9,12 +9,12 @@ const panels = [];
 let focusListener; let serializer;
 const ev = () => () => noop;
 class EventEmitter { constructor() { this.l = []; this.event = (f) => (this.l.push(f), noop); } fire(x) { this.l.forEach((f) => f(x)); } }
-const Uri = { joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p, toString() { return 'vscode-resource:' + p; } }) };
+const Uri = { parse: (v) => ({ fsPath: v, toString() { return v; } }), joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p, toString() { return 'vscode-resource:' + p; } }) };
 const say = (m) => process.send(m);
 const vscode = {
   EventEmitter, Uri, ThemeColor: class {}, ThemeIcon: class {}, MarkdownString: class {},
   TreeItem: class { constructor(l) { this.label = l; } },
-  ViewColumn: { Beside: -2 }, StatusBarAlignment: { Right: 2 },
+  ViewColumn: { Beside: -2 }, ProgressLocation: { Window: 10, Notification: 15 }, StatusBarAlignment: { Right: 2 },
   window: {
     state: { focused: focused === '1' },
     terminals,
@@ -29,8 +29,9 @@ const vscode = {
     createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
     createTreeView: () => ({ dispose() {}, onDidChangeVisibility: ev() }),
     showInformationMessage: async (m) => (say({ log: `[${name}] NOTIFY ${m}` }), undefined),
-    showWarningMessage: async () => 'Close checklist',
+    showWarningMessage: async (m) => (say({ log: `[${name}] WARN ${m}` }), /^Close /.test(m) ? 'Close checklist' : undefined),
     showQuickPick: async () => undefined,
+    withProgress: async (o, task) => { say({ log: `[${name}] PROGRESS ${o.title}` }); return task(); },
     createTerminal: () => ({ show() {}, sendText: (t) => say({ log: `[${name}] TERMINAL ${t}` }) }),
     registerWebviewPanelSerializer: (t, ser) => ((serializer = ser), noop),
     createWebviewPanel: (type, title) => {
@@ -45,9 +46,9 @@ const vscode = {
       return p;
     },
   },
-  commands: { registerCommand: (n, f) => ((commands[n] = f), noop), executeCommand: (n, ...a) => { if (n.startsWith('workbench.')) { say({ log: `[${name}] VSCODE ${n} ${a.map(String).join(' ')}` }); return Promise.resolve(); } return commands[n](...a); } },
-  workspace: { name, workspaceFolders: [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: () => ({ get: (k, d) => d }) },
-  env: { clipboard: { writeText: async (t) => say({ clipboard: t }) } },
+  commands: { registerCommand: (n, f) => ((commands[n] = f), noop), executeCommand: (n, ...a) => { if (n === 'setContext') { say({ context: { [a[0]]: a[1] } }); return Promise.resolve(); } if (n.startsWith('workbench.')) { say({ log: `[${name}] VSCODE ${n} ${a.map(String).join(' ')}` }); return Promise.resolve(); } return commands[n](...a); } },
+  workspace: { name, workspaceFolders: [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: () => ({ get: (k, d) => (k === 'autoConnect' ? process.env.CB_AUTOCONNECT === '1' : d) }) },
+  env: { clipboard: { writeText: async (t) => say({ clipboard: t }) }, openExternal: async (u) => (say({ opened: String(u) }), true) },
   extensions: { getExtension: (id) => (process.env.HAS_OLD === '1' && id === 'akshat.checklist-bridge' ? { id } : undefined) },
 };
 const orig = Module._load;
@@ -55,7 +56,12 @@ Module._load = function (r, ...a) { return r === 'vscode' ? vscode : orig.call(t
 const ext = require(extDir + '/dist/extension.js');
 const ctx = {
   subscriptions: [], extensionUri: { fsPath: extDir }, storageUri: { fsPath: storage }, globalStorageUri: { fsPath: storage },
-  globalState: { get: () => true, update: async () => {} },
+  // Like VS Code's: remembered across restarts of the same window (kept in the storage folder).
+  globalState: (() => {
+    const f = path.join(storage, 'globalState.json');
+    const read = () => { try { return JSON.parse(require('fs').readFileSync(f, 'utf8')); } catch { return { connectedPrompted: true, claudeSetupAsked: true }; } };
+    return { get: (k, d) => (k in read() ? read()[k] : d), update: async (k, v) => { require('fs').mkdirSync(storage, { recursive: true }); require('fs').writeFileSync(f, JSON.stringify({ ...read(), [k]: v })); } };
+  })(),
   environmentVariableCollection: { replace: (k, v) => say({ windowId: v }) },
 };
 ext.activate(ctx).then(() => say({ ready: name }));

@@ -17,10 +17,10 @@ Claude adds tasks while you keep talking. You tick them off, write a note or pas
    code --install-extension Akshat270.checklist-bridge
    ```
    <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-latest.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
-2. Click **Connect** when VS Code asks, or run *Checklist Bridge: Connect Claude Code* from the command palette. A terminal opens with the command ready; press Enter.
-3. Start a new Claude chat. Run `/mcp` to check that `checklist` is connected.
+2. That's it: the extension connects itself to Claude Code the first time VS Code starts, and tells you when it's done. There's no command to type.
+3. Start a **new** Claude chat (Claude Code loads tools when a chat starts). Run `/mcp` to check that `checklist` is connected.
 
-That's it. To try the panel without Claude, run *Checklist Bridge: Open an example checklist*.
+If Claude Code isn't installed yet, the extension says so: install it, then click **Connect Claude Code** in the **Claude checklists** sidebar. *Checklist Bridge: Getting started* walks through every step, and *Open an example checklist* lets you try the panel without Claude.
 
 **Requirements:** VS Code 1.85 or newer, and [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), either in the terminal or the VS Code extension. Node.js is used if you have it; otherwise VS Code's built-in runtime runs the connector. Works on macOS, Windows and Linux.
 
@@ -111,7 +111,9 @@ If you installed from the Marketplace, VS Code updates it like any other extensi
 
 ## Troubleshooting
 
-- **`/mcp` shows `checklist` as failed.** Run *Checklist Bridge: Connect Claude Code* again and start a new chat. If you have no Node.js, the command uses VS Code's runtime; make sure VS Code is installed in its usual place.
+- **It says it couldn't find Claude Code.** If Claude Code is installed somewhere unusual, set `checklistBridge.claudePath` to the full path of the `claude` command and run *Checklist Bridge: Connect Claude Code*. The warning also offers **Try in a terminal**, which runs the setup in a VS Code terminal, whose shell often finds `claude` when VS Code can't.
+- **`/mcp` shows `checklist` as failed.** Run *Checklist Bridge: Connect Claude Code* again and start a new chat. If you have no Node.js, the connection uses VS Code's own runtime; make sure VS Code is installed in its usual place.
+- **You'd rather connect by hand.** Set `checklistBridge.autoConnect` to `false`, run *Checklist Bridge: Copy Claude Code setup command*, and paste it into a terminal. *Checklist Bridge: Disconnect Claude Code* removes the connection.
 - **Claude says no VS Code window is running.** Open VS Code with the extension installed, then ask Claude to try again.
 - **The checklist opened in the wrong window.** See *Output → Checklist Bridge* for which window each chat picked and why. The connector picks a window in this order:
   1. The window the chat was started from.

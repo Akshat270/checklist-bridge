@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- **Connecting is automatic.** The first time VS Code starts, Checklist Bridge finds Claude Code and connects itself, with no terminal and no command to press Enter on, then confirms it worked. If Claude Code isn't installed, it says so and links to the install page; it reconnects on its own once you install it. New: *Getting started* walkthrough, *Disconnect Claude Code*, and the `checklistBridge.autoConnect` and `checklistBridge.claudePath` settings.
+- The **Claude checklists** sidebar shows whether Claude Code is connected, with a **Connect** button when it isn't.
 - **Windows without a folder no longer mix up checklists.** They share one storage folder, so a second such window showed the first window's checklists and could overwrite its changes. Each checklist now belongs to one window; when that window closes or crashes, the next window takes it over.
 - **Faster start with many screenshots.** Screenshots are no longer read into memory when VS Code starts; Claude's reads load them from disk when needed.
 - Screenshots of a checklist that fails to load are no longer deleted.
