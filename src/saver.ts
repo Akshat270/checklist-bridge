@@ -5,7 +5,7 @@
 // - Writes to a temp file and renames it over the real one, so a crash mid-write can't leave a broken file.
 // - On Windows, antivirus or the search indexer can briefly lock the file: the rename is retried,
 //   then the file is written directly, and if even that fails the change stays queued and is tried again.
-// - flushSync() writes everything still pending, for when the window shuts down.
+// - close() writes everything still pending, for when the window shuts down.
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -20,7 +20,9 @@ export class Saver {
   /** Bumped on every change; a write only lands if nothing newer has been written since. */
   private version = new Map<string, number>();
   private written = new Map<string, number>();
-  private failures = 0;
+  /** Per checklist: failed attempts in a row, and when to try again. One locked file doesn't slow the others. */
+  private failures = new Map<string, number>();
+  private retryAt = new Map<string, number>();
   private tmpSeq = 0;
   private stopped = false;
 
@@ -44,31 +46,35 @@ export class Saver {
     if (this.stopped) return;
     this.dirty.add(id);
     this.version.set(id, (this.version.get(id) ?? 0) + 1);
-    this.schedule(this.delayMs);
+    this.kick(this.delayMs);
   }
 
   /** The checklist was deleted: stop saving it and remove its file. */
   remove(id: string) {
     this.dirty.delete(id);
+    this.failures.delete(id);
+    this.retryAt.delete(id);
     this.version.set(id, (this.version.get(id) ?? 0) + 1);
     this.written.set(id, Infinity); // nothing in flight may recreate it
     fs.promises.rm(this.file(id), { force: true }).catch(() => {});
   }
 
-  /** Resolves once everything changed so far is on disk (or has failed for now). */
+  /** Runs one save pass now (skipping the wait) and resolves when it's done. For tests and diagnostics. */
   async idle() {
-    while (this.running || (this.timer && this.dirty.size)) {
-      if (this.timer) {
-        clearTimeout(this.timer);
-        this.timer = undefined;
-        this.running ??= this.run();
-      }
-      await this.running;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
     }
+    this.retryAt.clear();
+    this.pump();
+    while (this.running) await this.running;
   }
 
-  /** Write everything pending right now, synchronously. Used when the window shuts down. */
-  flushSync() {
+  /**
+   * The window is closing: write everything pending right now, synchronously, and stop.
+   * After this the saver ignores further changes, so only call it on shutdown.
+   */
+  close() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     for (const id of [...this.dirty]) {
@@ -86,41 +92,54 @@ export class Saver {
     this.stopped = true; // background writes still in flight must not overwrite what we just wrote
   }
 
-  private schedule(ms: number) {
+  private kick(ms: number) {
     if (this.timer || this.stopped) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      if (this.running) {
-        // A write is in progress; go again when it's done.
-        this.running.then(() => this.dirty.size && this.schedule(0));
-        return;
-      }
-      this.running = this.run();
-    }, ms);
+      this.pump();
+    }, Math.max(0, ms));
+  }
+
+  /** Start a save pass unless one is running (that one re-kicks when it finishes). */
+  private pump() {
+    if (this.running || this.stopped) return;
+    // .finally() always runs after this assignment, even when the pass has nothing to await.
+    this.running = this.run().finally(() => {
+      this.running = undefined;
+      const next = this.nextDelay();
+      if (next !== undefined) this.kick(next);
+    });
+  }
+
+  private nextDelay(): number | undefined {
+    if (!this.dirty.size || this.stopped) return undefined;
+    const now = Date.now();
+    let soonest = Infinity;
+    for (const id of this.dirty) soonest = Math.min(soonest, (this.retryAt.get(id) ?? now + this.delayMs) - now);
+    return soonest;
   }
 
   private async run() {
-    try {
-      for (const id of [...this.dirty]) {
-        if (this.stopped) return;
-        this.dirty.delete(id);
-        const v = this.version.get(id) ?? 0;
-        const text = this.serialize(id);
-        if (text === undefined) continue;
-        try {
-          await this.write(id, text, v);
-          if (this.failures) this.log('Saving works again.');
-          this.failures = 0;
-        } catch (e) {
-          // Keep it queued and try again, backing off up to 10 s.
-          this.failures++;
-          if (this.failures === 1 || this.failures % 20 === 0) this.log(`Save failed, will retry: ${e}`);
-          this.dirty.add(id);
-        }
+    for (const id of [...this.dirty]) {
+      if (this.stopped) return;
+      if ((this.retryAt.get(id) ?? 0) > Date.now()) continue; // backing off after failures
+      this.dirty.delete(id);
+      const v = this.version.get(id) ?? 0;
+      const text = this.serialize(id);
+      if (text === undefined) continue;
+      try {
+        await this.write(id, text, v);
+        if (this.failures.has(id)) this.log(`Saving checklist ${id} works again.`);
+        this.failures.delete(id);
+        this.retryAt.delete(id);
+      } catch (e) {
+        // Keep it queued and try again, backing off up to 10 s.
+        const n = (this.failures.get(id) ?? 0) + 1;
+        this.failures.set(id, n);
+        this.retryAt.set(id, Date.now() + Math.min(10_000, 250 * 2 ** n));
+        if (n === 1 || n % 20 === 0) this.log(`Saving checklist ${id} failed, will retry: ${e}`);
+        this.dirty.add(id);
       }
-    } finally {
-      this.running = undefined;
-      if (this.dirty.size && !this.stopped) this.schedule(this.failures ? Math.min(10_000, 250 * 2 ** this.failures) : this.delayMs);
     }
   }
 

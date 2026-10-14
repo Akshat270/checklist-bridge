@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.5
+- **Screenshots are stored as image files.** A checklist's own file now stays a few KB however many screenshots it has, so saving is instant, and the panel loads screenshots straight from disk instead of receiving them on every update. Checklists from earlier versions are converted automatically.
+- Fixed a case where saving could stop for the rest of the session after a checklist was deleted.
+- If one checklist's file stays locked, the others keep saving at normal speed.
+- After a restart, two checklists with the same title both come back.
+- Test dependencies are pinned with a lockfile, and the tests (131 checks) run on Linux, Windows and macOS.
+
 ## 0.4.4
 - **Saving is more reliable on Windows.** If antivirus or the search indexer briefly locks a checklist file, the save is retried instead of dropped, and a change that can't be saved yet stays queued until it can.
 - **No more stutter with screenshots.** Checklists are saved in the background instead of blocking VS Code while large screenshots are written.

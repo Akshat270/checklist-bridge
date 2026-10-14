@@ -30,10 +30,11 @@ const onDisk = () => {
   return (fs.existsSync(d) ? fs.readdirSync(d) : []).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(d, f), 'utf8')));
 };
 
-async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waitingTab }) {
+async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waitingTab, twoLists }) {
   fs.rmSync(ST, { recursive: true, force: true });
   let W = win(); await W.wait('ready');
   await chatAdd(W.id); await sleep(100);
+  if (twoLists) { await chatAdd(W.id); await sleep(100); } // a second chat, same checklist title
   const listId = onDisk()[0]?.id ?? (await W.panels())[0].id;
   if (hideFirst) { await W.user({ type: 'hide' }); await sleep(3500); }
   else await W.user({ type: 'draft', taskId: 't1', done: true });
@@ -50,7 +51,9 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
   let ps = await W.panels();
   if (waitingTab) {
     W.beforeClick = ps.length;
-    W.send({ cmd: 'restoreTab', listId }); await W.wait('done'); // the user clicks the waiting tab
+    const openIds = new Set(ps.map((p) => p.id));
+    const waitingId = onDisk().map((c) => c.id).find((id) => !openIds.has(id)) ?? listId;
+    W.send({ cmd: 'restoreTab', listId: waitingId }); await W.wait('done'); // the user clicks the waiting tab
     ps = await W.panels();
   }
   W.send({ cmd: 'quit' }); await W.exited;
@@ -80,6 +83,10 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
   r = await scenario('background-tab', { shutdown: 'vscode', waitingTab: true });
   check(r.beforeClick === 0, 'a checklist whose tab VS Code is still holding is not opened a second time');
   check(r.ps.length === 1 && r.opened === 1, 'clicking that tab brings the checklist back, once');
+
+  r = await scenario('same-title', { shutdown: 'vscode', waitingTab: true, twoLists: true });
+  check(r.beforeClick === 1, 'two checklists with the same title, one tab waiting: the other one is reopened');
+  check(r.ps.length === 2, 'and clicking the waiting tab brings back the second, without duplicates');
 
   const leftovers = fs.readdirSync(path.join(ST, 'checklists')).filter((f) => f.includes('.tmp'));
   check(!leftovers.length, 'no temp files left behind');

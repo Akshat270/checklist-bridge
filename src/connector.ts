@@ -7,7 +7,7 @@ import { execFile } from 'child_process';
 import { TOOLS, SERVER_INSTRUCTIONS, ToolResult } from './model';
 import { pickWindow, readWindows, WindowInfo } from './registry';
 
-const VERSION = '0.4.4';
+const VERSION = '0.4.5';
 const SERVER_NAME = process.env.CHECKLIST_BRIDGE_SERVER_NAME || 'checklist';
 const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 // One checklist per chat: the parent process is the Claude Code session that spawned us,

@@ -10,6 +10,7 @@ import { Panels, Routes, VIEW_TYPE } from './panels';
 import { ChecklistTree } from './sidebar';
 import { startUpdater } from './updater';
 import { Saver } from './saver';
+import { ImageFiles } from './images';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
 
 let ws: WindowServer | undefined;
@@ -36,21 +37,34 @@ export async function activate(ctx: vscode.ExtensionContext) {
   /* ---------- storage ---------- */
   const dir = vscode.Uri.joinPath(ctx.storageUri ?? ctx.globalStorageUri, 'checklists').fsPath;
   fs.mkdirSync(dir, { recursive: true });
+  const images = new ImageFiles(path.join(dir, 'images'), log);
   const initial: Checklist[] = [];
+  const inlineImages: string[] = []; // saved by an older version, with screenshots inside the JSON
   for (const n of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
     try {
-      initial.push(JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')));
+      const raw = fs.readFileSync(path.join(dir, n), 'utf8');
+      const c = JSON.parse(raw) as Checklist;
+      if (raw.includes('"data":"')) inlineImages.push(c.id);
+      images.hydrate(c);
+      initial.push(c);
     } catch (e) {
       log(`Skipped an unreadable checklist file ${n}: ${e}`);
     }
   }
+  try {
+    images.cleanup(initial);
+  } catch (e) {
+    log(`Could not clean up old screenshots: ${e}`);
+  }
   const store = new ChecklistStore(initial);
   const saver = new Saver(dir, (id) => {
     const c = store.get(id);
-    return c && JSON.stringify(c);
+    return c && images.serialize(c);
   }, log);
+  // Convert checklists saved by older versions, moving their screenshots out into files.
+  for (const id of inlineImages) saver.mark(id);
   const save = (c: Checklist) => saver.mark(c.id);
-  flushSaves = () => saver.flushSync();
+  flushSaves = () => saver.close();
   saveOne = save;
 
   /* ---------- how "Send now" reaches each chat ---------- */
@@ -93,7 +107,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   };
 
   /* ---------- UI ---------- */
-  const panels = new Panels(store, ctx.extensionUri, { routes, sendNow });
+  const panels = new Panels(store, ctx.extensionUri, { routes, sendNow }, images);
   panelsRef = panels;
   // VS Code reopens checklist tabs that were open when the window closed or reloaded.
   ctx.subscriptions.push(
@@ -422,13 +436,18 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const reopen = setTimeout(() => {
     // VS Code may only hand a background tab back when it's clicked, so don't open a second
     // tab for a checklist that still has one waiting in the tab bar.
-    const waiting = new Set(
-      (vscode.window.tabGroups?.all ?? [])
-        .flatMap((g) => g.tabs)
-        .filter((t) => String((t.input as { viewType?: string } | undefined)?.viewType ?? '').endsWith(VIEW_TYPE))
-        .map((t) => t.label)
-    );
-    for (const c of store.all()) if (!c.hidden && !panels.isOpen(c.id) && !waiting.has(c.title)) panels.show(c);
+    // Tabs only carry a title, so count them: with two checklists named the same and one tab
+    // waiting, the other one still gets opened.
+    const waiting = new Map<string, number>();
+    for (const t of (vscode.window.tabGroups?.all ?? []).flatMap((g) => g.tabs))
+      if (String((t.input as { viewType?: string } | undefined)?.viewType ?? '').endsWith(VIEW_TYPE))
+        waiting.set(t.label, (waiting.get(t.label) ?? 0) + 1);
+    for (const c of store.all()) {
+      if (c.hidden || panels.isOpen(c.id)) continue;
+      const n = waiting.get(c.title) ?? 0;
+      if (n > 0) waiting.set(c.title, n - 1);
+      else panels.show(c);
+    }
   }, 1500);
   ctx.subscriptions.push({ dispose: () => clearTimeout(reopen) });
 

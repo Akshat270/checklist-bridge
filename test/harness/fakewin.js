@@ -9,7 +9,7 @@ const panels = [];
 let focusListener; let serializer;
 const ev = () => () => noop;
 class EventEmitter { constructor() { this.l = []; this.event = (f) => (this.l.push(f), noop); } fire(x) { this.l.forEach((f) => f(x)); } }
-const Uri = { joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p }) };
+const Uri = { joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p, toString() { return 'vscode-resource:' + p; } }) };
 const say = (m) => process.send(m);
 const vscode = {
   EventEmitter, Uri, ThemeColor: class {}, ThemeIcon: class {}, MarkdownString: class {},

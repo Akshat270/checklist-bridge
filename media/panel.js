@@ -161,7 +161,7 @@
       'div',
       { class: 'shots' },
       images.map((img) => {
-        const src = `data:${img.mime};base64,${img.data}`;
+        const src = img.src || `data:${img.mime};base64,${img.data}`;
         return h(
           'div',
           { class: 'shot' },

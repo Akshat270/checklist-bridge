@@ -1,6 +1,6 @@
 {
-  "version": "0.4.4",
-  "vsix": "releases/checklist-bridge-0.4.4.vsix",
-  "sha256": "f60d15f3316eb3e2006024fdfbcb31c152bb0a43a95d1321db72e9493bc8dba2",
-  "notes": "More reliable saving on Windows, no stutter with screenshots, no duplicate tabs after a restart."
+  "version": "0.4.5",
+  "vsix": "releases/checklist-bridge-0.4.5.vsix",
+  "sha256": "bdd55649b35097a00274d04e5951ec499bae518786389ff53af67747edafce2a",
+  "notes": "Screenshots stored as image files, so saving stays instant; fixes a rare case where saving could stop."
 }

@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
-import { Checklist, ChecklistStore } from './model';
+import { Checklist, ChecklistStore, Img } from './model';
+
+/** Where screenshots live on disk, so the panel can load them as files instead of receiving their data. */
+export interface ImageSource {
+  dir: string;
+  has(listId: string, img: Img): boolean;
+  file(listId: string, img: Img): string;
+}
 
 /** How "Send now" can reach a chat right now. */
 export interface Routes { waiting: boolean; channel: boolean; terminal: boolean }
@@ -15,10 +22,28 @@ export class Panels {
   private open = new Map<string, vscode.WebviewPanel>();
   private ready = new Set<string>();
 
-  constructor(private store: ChecklistStore, private extUri: vscode.Uri, private hooks: PanelHooks) {}
+  constructor(private store: ChecklistStore, private extUri: vscode.Uri, private hooks: PanelHooks, private images?: ImageSource) {}
 
-  private state(c: Checklist) {
-    return { type: 'state', list: c, routes: this.hooks.routes(c) };
+  private roots() {
+    const r = [vscode.Uri.joinPath(this.extUri, 'media')];
+    if (this.images) r.push(vscode.Uri.file(this.images.dir));
+    return r;
+  }
+
+  /**
+   * What the panel gets: the checklist, with each saved screenshot as a link to its file
+   * (so each update is a few KB, not every screenshot again). Screenshots not on disk yet go inline.
+   */
+  private state(c: Checklist, webview: vscode.Webview) {
+    const imgs = this.images;
+    const list = JSON.parse(
+      JSON.stringify(c, (_k, v) => {
+        if (!v || typeof v !== 'object' || typeof v.mime !== 'string' || typeof v.data !== 'string') return v;
+        const src = imgs?.has(c.id, v) ? webview.asWebviewUri(vscode.Uri.file(imgs.file(c.id, v))).toString() : undefined;
+        return src ? { id: v.id, mime: v.mime, w: v.w, h: v.h, src } : v;
+      })
+    );
+    return { type: 'state', list, routes: this.hooks.routes(c) };
   }
 
   /** Re-send state to every visible panel (e.g. when how to reach a chat changes). */
@@ -42,7 +67,7 @@ export class Panels {
         VIEW_TYPE,
         c.title,
         { viewColumn: vscode.ViewColumn.Beside, preserveFocus: !opts.focus },
-        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(this.extUri, 'media')] }
+        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: this.roots() }
       );
       this.attach(p, c);
     }
@@ -57,7 +82,7 @@ export class Panels {
       p.dispose();
       return;
     }
-    p.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extUri, 'media')] };
+    p.webview.options = { enableScripts: true, localResourceRoots: this.roots() };
     this.attach(p, c);
     if (c.hidden) this.store.setHidden(c.id, false);
   }
@@ -117,7 +142,7 @@ export class Panels {
       return;
     }
     p.title = c.title;
-    if (this.ready.has(c.id)) p.webview.postMessage(this.state(c));
+    if (this.ready.has(c.id)) p.webview.postMessage(this.state(c, p.webview));
   }
 
   disposeAll() {
@@ -130,7 +155,8 @@ export class Panels {
       case 'ready': {
         this.ready.add(id);
         const c = s.get(id);
-        if (c) this.open.get(id)?.webview.postMessage(this.state(c));
+        const p = this.open.get(id);
+        if (c && p) p.webview.postMessage(this.state(c, p.webview));
         break;
       }
       case 'draft':
