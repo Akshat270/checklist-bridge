@@ -1,0 +1,53 @@
+# Uploads each new release to the VS Code Marketplace.
+# Runs when latest.json changes on main (that's what scripts/release.py updates),
+# or by hand from the Actions tab. Needs one repo secret: VSCE_PAT.
+name: Publish to Marketplace
+
+on:
+  push:
+    branches: [main]
+    paths: [latest.json]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Publish the release .vsix if this version isn't on the Marketplace yet
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VSCE_PAT}" ]; then
+            echo "::error::Add a repository secret named VSCE_PAT (a Marketplace personal access token)."
+            exit 1
+          fi
+
+          VERSION=$(node -p "require('./latest.json').version")
+          FILE=$(node -p "require('./latest.json').vsix")
+          WANT=$(node -p "require('./latest.json').sha256")
+          ID=$(node -p "const p=require('./package.json'); p.publisher + '.' + p.name")
+
+          # Upload exactly the file users already get from GitHub, after checking it's intact.
+          GOT=$(sha256sum "$FILE" | cut -d' ' -f1)
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::$FILE does not match the checksum in latest.json."
+            exit 1
+          fi
+
+          LIVE=$(npx --yes @vscode/vsce@3 show "$ID" --json 2>/dev/null \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).versions[0].version)}catch{console.log('')}})" || true)
+          if [ "$LIVE" = "$VERSION" ]; then
+            echo "$ID $VERSION is already on the Marketplace. Nothing to do."
+            exit 0
+          fi
+
+          echo "Publishing $ID $VERSION (Marketplace has: ${LIVE:-unknown})"
+          npx --yes @vscode/vsce@3 publish --packagePath "$FILE" --pat "$VSCE_PAT"
+          echo "### Published $ID $VERSION to the VS Code Marketplace" >> "$GITHUB_STEP_SUMMARY"

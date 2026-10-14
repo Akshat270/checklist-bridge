@@ -120,6 +120,21 @@ If you installed from the Marketplace, VS Code updates it like any other extensi
   4. The window you used most recently.
 - **Claude doesn't notice what you shared.** Claude reads the checklist when it replies. Send any message, even "done".
 
+## Installing the newest build from GitHub
+
+To install the latest release straight from GitHub (useful in Cursor or VSCodium, or to test a build before it reaches the Marketplace), run one line, then reload VS Code:
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/scripts/install-latest.ps1 | iex
+```
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/scripts/install-latest.sh | sh
+```
+
+It checks the download against the published SHA-256 before installing.
+
 ## Building from source
 
 ```
@@ -127,6 +142,8 @@ npm install
 npm run build            # compiles src/ to dist/
 python3 scripts/release.py "what changed"   # packages releases/*.vsix and updates latest.json
 ```
+
+Pushing a new `latest.json` to `main` publishes that `.vsix` to the Marketplace through `.github/workflows/publish.yml`, using the `VSCE_PAT` repository secret.
 
 Without `npm install`, you can build against the bundled type stub with `npx tsc -p tsconfig.offline.json`.
 
