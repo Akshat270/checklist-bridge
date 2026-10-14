@@ -28,6 +28,11 @@ for (const f of suites) {
   results.push({ f, ok, pass, fail, skipped, ms: Date.now() - t0 });
   const label = skipped ? 'SKIP' : ok ? ' OK ' : 'FAIL';
   console.log(`[${label}] ${f.padEnd(22)} ${String(pass).padStart(3)} passed${fail ? `, ${fail} failed` : ''}  (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+  if (!ok && !skipped && process.env.GITHUB_ACTIONS) {
+    // Shows up as an annotation on the run, readable without downloading logs.
+    const lines = out.split('\n').filter((l) => /^FAIL |Error|at /.test(l)).slice(0, 12).join(' | ');
+    console.log(`::error title=${f} failed::${(lines || out.slice(-800)).replace(/\r?\n/g, ' | ').replace(/%/g, '%25')}`);
+  }
   if (!ok && !skipped) {
     console.log(out.split('\n').filter((l) => !/^PASS /.test(l)).map((l) => '    ' + l).join('\n'));
     if (r.error) console.log('    ' + r.error.message);
