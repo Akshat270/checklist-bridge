@@ -11,6 +11,7 @@ import { ChecklistTree } from './sidebar';
 import { startUpdater } from './updater';
 import { Saver } from './saver';
 import { ImageFiles } from './images';
+import { Ownership } from './ownership';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
 
 let ws: WindowServer | undefined;
@@ -19,6 +20,7 @@ let regTimer: NodeJS.Timeout | undefined;
 let flushSaves: (() => void) | undefined;
 let saveOne: ((c: Checklist) => void) | undefined;
 let panelsRef: Panels | undefined;
+let ownersRef: Ownership | undefined;
 
 export async function activate(ctx: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Checklist Bridge');
@@ -38,28 +40,42 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const dir = vscode.Uri.joinPath(ctx.storageUri ?? ctx.globalStorageUri, 'checklists').fsPath;
   fs.mkdirSync(dir, { recursive: true });
   const images = new ImageFiles(path.join(dir, 'images'), log);
+  // Windows with no folder open share this storage, so each checklist belongs to one window.
+  const owners = new Ownership(dir);
+  ownersRef = owners;
   const initial: Checklist[] = [];
+  const onDisk: string[] = []; // every checklist file, loaded or not, so their screenshots are kept
   const inlineImages: string[] = []; // saved by an older version, with screenshots inside the JSON
+  let othersSkipped = 0;
   for (const n of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+    const id = n.slice(0, -'.json'.length);
+    onDisk.push(id);
+    if (!owners.claim(id)) {
+      othersSkipped++;
+      continue;
+    }
     try {
       const raw = fs.readFileSync(path.join(dir, n), 'utf8');
       const c = JSON.parse(raw) as Checklist;
       if (raw.includes('"data":"')) inlineImages.push(c.id);
-      images.hydrate(c);
+      images.index(c);
       initial.push(c);
     } catch (e) {
+      owners.release(id);
       log(`Skipped an unreadable checklist file ${n}: ${e}`);
     }
   }
+  if (othersSkipped) log(`${othersSkipped} checklist${othersSkipped === 1 ? ' belongs' : 's belong'} to another open window.`);
   try {
-    images.cleanup(initial);
+    images.cleanup(initial, onDisk);
   } catch (e) {
     log(`Could not clean up old screenshots: ${e}`);
   }
   const store = new ChecklistStore(initial);
+  store.loadImage = (listId, img) => images.load(listId, img);
   const saver = new Saver(dir, (id) => {
     const c = store.get(id);
-    return c && images.serialize(c);
+    return c && owners.owns(id) ? images.serialize(c) : undefined;
   }, log);
   // Convert checklists saved by older versions, moving their screenshots out into files.
   for (const id of inlineImages) saver.mark(id);
@@ -138,8 +154,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
     const c = e.checklist;
     if (e.kind === 'removed') {
       saver.remove(c.id);
+      owners.release(c.id);
       return refreshChrome();
     }
+    if (e.kind === 'created') owners.claim(c.id); // new checklists belong to this window
     save(c);
     if (e.kind === 'created') panels.show(c);
     else if (e.kind === 'tasks-added' && !panels.isOpen(c.id)) {
@@ -472,6 +490,7 @@ export function deactivate() {
     for (const c of panelsRef?.undoShutdownCloses() ?? []) saveOne?.(c);
   } finally {
     flushSaves?.();
+    ownersRef?.releaseAll(); // after saving, so the next window gets the final version
   }
   if (regTimer) clearInterval(regTimer);
   removeWindow(windowId, process.pid);

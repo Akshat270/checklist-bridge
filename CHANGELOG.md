@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- **Windows without a folder no longer mix up checklists.** They share one storage folder, so a second such window showed the first window's checklists and could overwrite its changes. Each checklist now belongs to one window; when that window closes or crashes, the next window takes it over.
+- **Faster start with many screenshots.** Screenshots are no longer read into memory when VS Code starts; Claude's reads load them from disk when needed.
+- Screenshots of a checklist that fails to load are no longer deleted.
+
 ## 0.4.5
 - **Screenshots are stored as image files.** A checklist's own file now stays a few KB however many screenshots it has, so saving is instant, and the panel loads screenshots straight from disk instead of receiving them on every update. Checklists from earlier versions are converted automatically.
 - Fixed a case where saving could stop for the rest of the session after a checklist was deleted.

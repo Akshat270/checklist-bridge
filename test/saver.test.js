@@ -79,9 +79,12 @@ const locked = (code = 'EPERM') => Object.assign(new Error(`${code}: operation n
   // 7. Deleted checklists stay deleted, and temp files from a crash are cleaned up.
   {
     const d = dir(); fs.writeFileSync(path.join(d, 'x.json.123.4.tmp'), 'junk');
+    const hourAgo = new Date(Date.now() - 3600_000); fs.utimesSync(path.join(d, 'x.json.123.4.tmp'), hourAgo, hourAgo);
+    fs.writeFileSync(path.join(d, 'y.json.999.1.tmp'), 'another window, mid-save');
     P.writeFile = async (...a) => { await sleep(200); return orig.writeFile(...a); };
     const s = new Saver(d, () => '{"v":1}', () => {}, 0);
     check(!fs.existsSync(path.join(d, 'x.json.123.4.tmp')), 'leftover temp files are removed on start');
+    check(fs.existsSync(path.join(d, 'y.json.999.1.tmp')), 'a fresh temp file (another window saving right now) is left alone');
     s.mark('a'); await sleep(50); s.remove('a'); await sleep(500); restore();
     check(read(d, 'a') === undefined, 'a save in flight does not bring back a deleted checklist');
   }

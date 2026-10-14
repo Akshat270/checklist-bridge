@@ -33,8 +33,17 @@ export class Saver {
     private delayMs = 300
   ) {
     fs.mkdirSync(dir, { recursive: true });
-    // Temp files left by a crash.
-    for (const n of fs.readdirSync(dir)) if (n.endsWith('.tmp')) fs.rmSync(path.join(dir, n), { force: true });
+    // Temp files left by a crash (not recent ones: another window sharing this folder may be mid-save).
+    const old = Date.now() - 60_000;
+    for (const n of fs.readdirSync(dir)) {
+      if (!n.endsWith('.tmp')) continue;
+      const f = path.join(dir, n);
+      try {
+        if (fs.statSync(f).mtimeMs < old) fs.rmSync(f, { force: true });
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   file(id: string) {

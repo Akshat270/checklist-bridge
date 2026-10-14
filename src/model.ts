@@ -1,7 +1,11 @@
 // Checklist data model and Claude's tools. Pure Node, no `vscode` import, so it can be tested directly.
 import { randomUUID } from 'crypto';
 
-export interface Img { id: string; mime: string; data: string; w: number; h: number }
+/**
+ * A screenshot. `data` (base64) is present for new screenshots; screenshots saved to disk are kept
+ * without it (`stored`) and their data is loaded only when Claude reads them.
+ */
+export interface Img { id: string; mime: string; data?: string; stored?: boolean; w: number; h: number }
 export interface Draft { done: boolean; note: string; images: Img[] }
 export interface Shared { at: number; done: boolean; note: string; images: Img[] }
 
@@ -277,6 +281,9 @@ type Item = { c: Checklist; t: Task; q?: undefined } | { c: Checklist; q: Questi
 export class ChecklistStore {
   private lists = new Map<string, Checklist>();
   private listeners: ((e: ChangeEvent) => void)[] = [];
+
+  /** Loads a stored screenshot's data from disk (set by the extension). */
+  loadImage: (listId: string, img: Img) => string | undefined = () => undefined;
 
   constructor(initial: Checklist[] = []) {
     for (const c of initial) this.lists.set(c.id, normalize(c));
@@ -771,8 +778,10 @@ export class ChecklistStore {
       out.push('', `(${images.length - sent.length} more screenshots not included; call again with include_earlier_images if needed.)`);
     content.push({ type: 'text', text: out.join('\n') });
     for (const { label, img } of sent) {
+      const data = img.data ?? this.loadImage(c.id, img);
       content.push({ type: 'text', text: label });
-      content.push({ type: 'image', data: img.data, mimeType: img.mime });
+      if (data) content.push({ type: 'image', data, mimeType: img.mime });
+      else content.push({ type: 'text', text: '(this screenshot could not be loaded)' });
     }
 
     // Mark as seen so the panel can show it.

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Checklist, ChecklistStore, Img } from './model';
+import { isImg } from './images';
 
 /** Where screenshots live on disk, so the panel can load them as files instead of receiving their data. */
 export interface ImageSource {
@@ -38,7 +39,7 @@ export class Panels {
     const imgs = this.images;
     const list = JSON.parse(
       JSON.stringify(c, (_k, v) => {
-        if (!v || typeof v !== 'object' || typeof v.mime !== 'string' || typeof v.data !== 'string') return v;
+        if (!isImg(v)) return v;
         const src = imgs?.has(c.id, v) ? webview.asWebviewUri(vscode.Uri.file(imgs.file(c.id, v))).toString() : undefined;
         return src ? { id: v.id, mime: v.mime, w: v.w, h: v.h, src } : v;
       })

@@ -24,17 +24,21 @@ const listWith = (id, imgs) => ({ id, title: 'Shots', tasks: [{ id: 't1', text: 
     const mtime = fs.statSync(f).mtimeMs; await sleep(20); im.serialize(c);
     check(fs.statSync(f).mtimeMs === mtime, 'a screenshot file is written once, not on every save');
 
-    const back = JSON.parse(json); new ImageFiles(dir).hydrate(back);
-    check(back.tasks[0].draft.images[0].data === big.data && back.tasks[0].shared.images[0].data === big.data, 'loading puts the screenshot data back');
+    const back = JSON.parse(json); const im2 = new ImageFiles(dir); im2.index(back);
+    const kept = back.tasks[0].draft.images[0];
+    check(kept && kept.stored && kept.data === undefined && im2.has('L1', kept), 'opening a checklist does not read its screenshots into memory');
+    check(im2.load('L1', kept) === big.data, 'the screenshot is read from disk when needed, byte for byte');
 
     const lost = JSON.parse(json); fs.renameSync(f, f + '.moved');
-    new ImageFiles(dir).hydrate(lost);
+    new ImageFiles(dir).index(lost);
     check(lost.tasks[0].draft.images.length === 0, 'a screenshot whose file is missing is dropped instead of breaking the checklist');
     fs.renameSync(f + '.moved', f);
 
     fs.writeFileSync(path.join(dir, 'L9-deadbeef.png'), 'old');
-    new ImageFiles(dir).cleanup([back]);
+    fs.writeFileSync(path.join(dir, 'L5-cafecafe.png'), 'belongs to a checklist that failed to load');
+    new ImageFiles(dir).cleanup([back], ['L1', 'L5']);
     check(fs.existsSync(f) && !fs.existsSync(path.join(dir, 'L9-deadbeef.png')), 'unused screenshot files are cleaned up, used ones kept');
+    check(fs.existsSync(path.join(dir, 'L5-cafecafe.png')), 'screenshots of a checklist that could not be loaded are kept');
 
     const evil = im.file('../../etc', { id: '../passwd', mime: 'image/png' });
     check(path.dirname(evil) === dir, 'file names cannot escape the screenshots folder');
