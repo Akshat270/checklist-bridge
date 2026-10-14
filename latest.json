@@ -1,6 +1,6 @@
 {
-  "version": "0.4.0",
-  "vsix": "releases/checklist-bridge-0.4.0.vsix",
-  "sha256": "3bef9b308abc5a00ac1b6961906071e06a9e7e0de03ce2adafdcaf8d8c4084f1",
-  "notes": "Questions you can answer later, and Send now"
+  "version": "0.4.1",
+  "vsix": "releases/checklist-bridge-0.4.1.vsix",
+  "sha256": "64a834ef1962611543f16621af7ba5bf20597f61b315d34d787d9b4e5ff9332d",
+  "notes": "Safer Send now in the terminal: never types into a shell after Claude exits. One Send now button. No duplicate tasks when VS Code is slow."
 }

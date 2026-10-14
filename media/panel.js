@@ -598,7 +598,7 @@
             : h('span', { class: 'status', html: `${I.clock}<span>Shared. Claude reads it on its next turn</span>` }),
         h('span', { class: 'grow' }),
         h('button', { class: 'ghost', title: 'Hide your answer from Claude again so you can change it', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }),
-        !q.pushedAt && !routes.waiting && sendControl(true)
+        !q.pushedAt && !routes.waiting && sendOnCard && sendControl(true)
       )
     );
     return el;
@@ -705,6 +705,7 @@
     return r.el;
   }
 
+  let sendOnCard = false;
   function render() {
     if (!list) return;
     $('#title').textContent = list.title;
@@ -727,6 +728,10 @@
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
+    // "Send now" hands over everything not read yet in one go, so show exactly one control:
+    // on the answer card when that answer is the only thing waiting, otherwise in the bar.
+    const pending = unreadShared();
+    sendOnCard = pending.length === 1 && 'options' in pending[0];
 
     const decideQs = openQs();
     if (decideQs.length) {
@@ -736,7 +741,7 @@
         h('div', { class: 'section-title' }, h('span', {}, 'Decide'), waitingCount ? h('span', { class: 'count' }, String(waitingCount)) : null)
       );
       const sorted = [...decideQs].sort((a, b) => (a.answer ? 1 : 0) - (b.answer ? 1 : 0) || (b.tags.includes('urgent') ? 1 : 0) - (a.tags.includes('urgent') ? 1 : 0));
-      for (const q of sorted) box.append(row(q, q.answer ? renderAnsweredQ : renderQuestion, `q|${q.answer ? 'a' : 'o'}|${q.pushedAt || 0}|${JSON.stringify(routes)}`));
+      for (const q of sorted) box.append(row(q, q.answer ? renderAnsweredQ : renderQuestion, `q|${q.answer ? 'a' : 'o'}|${q.pushedAt || 0}|${sendOnCard}|${JSON.stringify(routes)}`));
       nodes.push(box);
     }
 
@@ -759,11 +764,12 @@
 
     const shared = list.tasks.filter((t) => t.shared).sort((a, b) => b.shared.at - a.shared.at);
     const sharedQs = list.questions.filter((q) => (q.answer && q.seenAt) || q.retired);
-    const unread = unreadShared().filter((x) => !('answer' in x && x.answer));
-    if (unread.length && !routes.waiting) {
+    if (pending.length && !sendOnCard && !routes.waiting) {
+      const nt = pending.filter((x) => !('options' in x)).length, na = pending.length - nt;
+      const what = [nt && plural(nt, 'task', 'tasks'), na && plural(na, 'answer', 'answers')].filter(Boolean).join(' and ');
       nodes.push(
         h('div', { class: 'sendbar' },
-          h('span', {}, h('b', {}, String(unread.length)), unread.length === 1 ? ' shared task not read yet' : ' shared tasks not read yet'),
+          h('span', {}, `${what} not read yet`),
           sendControl(true))
       );
     }

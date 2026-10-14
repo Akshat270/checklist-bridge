@@ -18,6 +18,10 @@ export interface WindowServer {
   server: http.Server;
   sessions: Map<string, SessionInfo>;
   isWaiting(sessionId: string): boolean;
+  /** The chat's Claude Code process is still running (unknown counts as alive). */
+  isAlive(sessionId: string): boolean;
+  /** Forget chats whose Claude Code process has exited. Returns true if any were dropped. */
+  prune(): boolean;
   /** Queue a channel message for this chat. Returns false if no connector is listening. */
   push(sessionId: string, content: string): boolean;
   onSessionsChange(fn: () => void): void;
@@ -28,7 +32,8 @@ const MAX_WAIT_MIN = 25;
 export function createWindowServer(store: ChecklistStore, token: string, log: (s: string) => void = () => {}): WindowServer {
   const expected = Buffer.from(`Bearer ${token}`);
   const sessions = new Map<string, SessionInfo>();
-  const waiters = new Map<string, Set<(r: ToolResult) => void>>();
+  type Waiter = ((r: ToolResult) => void) & { res?: http.ServerResponse };
+  const waiters = new Map<string, Set<Waiter>>();
   const polls = new Map<string, (events: string[]) => void>();
   const queued = new Map<string, string[]>();
   const changeFns: (() => void)[] = [];
@@ -40,10 +45,26 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
     return s;
   };
 
+  const pidAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e: any) {
+      return e?.code === 'EPERM';
+    }
+  };
+  const isAlive = (id: string) => {
+    const pid = sessions.get(id)?.ancestors[0];
+    return pid === undefined || pidAlive(pid);
+  };
+  const open = (res?: http.ServerResponse) => !!res && !res.writableEnded && !res.destroyed;
+
   // Wake waiting chats whenever their checklist gains something unread.
+  // Only read (which marks items as seen) when a connector is still there to receive the result.
   store.onChange(() => {
     for (const [sid, set] of [...waiters]) {
       if (!store.hasUnread(sid)) continue;
+      if (![...set].some((w) => open(w.res))) continue;
       waiters.delete(sid);
       const result = store.handleTool(sid, {}, 'checklist_read', {});
       for (const resolve of set) resolve(result);
@@ -61,7 +82,7 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
     return new Promise((resolve) => {
       let set = waiters.get(sessionId);
       if (!set) waiters.set(sessionId, (set = new Set()));
-      const done = (r: ToolResult) => {
+      const done: Waiter = (r: ToolResult) => {
         clearTimeout(timer);
         set!.delete(done);
         if (!set!.size) waiters.delete(sessionId);
@@ -92,6 +113,7 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
           changed();
         }
       });
+      done.res = res;
       set.add(done);
       changed();
     });
@@ -191,14 +213,28 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
     server,
     sessions,
     isWaiting: (id) => (waiters.get(id)?.size ?? 0) > 0,
+    isAlive,
+    prune() {
+      let dropped = false;
+      for (const id of [...sessions.keys()]) {
+        if (isAlive(id)) continue;
+        sessions.delete(id);
+        queued.delete(id);
+        polls.get(id)?.([]);
+        polls.delete(id);
+        dropped = true;
+      }
+      if (dropped) changed();
+      return dropped;
+    },
     push(sessionId, content) {
       const s = sessions.get(sessionId);
       if (!s?.channel) return false;
       const p = polls.get(sessionId);
       if (p) p([content]);
       else {
-        if (!s.polling) return false;
-        queued.set(sessionId, [...(queued.get(sessionId) ?? []), content]);
+        if (!s.polling || !isAlive(sessionId)) return false;
+        queued.set(sessionId, [...(queued.get(sessionId) ?? []), content].slice(-20));
       }
       return true;
     },

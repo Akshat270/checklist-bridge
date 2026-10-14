@@ -7,7 +7,7 @@ import { execFile } from 'child_process';
 import { TOOLS, SERVER_INSTRUCTIONS, ToolResult } from './model';
 import { pickWindow, readWindows, WindowInfo } from './registry';
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const SERVER_NAME = process.env.CHECKLIST_BRIDGE_SERVER_NAME || 'checklist';
 const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 // One checklist per chat: the parent process is the Claude Code session that spawned us,
@@ -97,7 +97,9 @@ function post(w: WindowInfo, path: string, body: object, timeoutMs: number, sign
         res.setEncoding('utf8');
         res.on('data', (c) => (buf += c));
         res.on('end', () => {
-          if (res.statusCode !== 200) return reject(new Error(`window answered ${res.statusCode}`));
+          if (res.statusCode !== 200)
+            // Refused before running (stale token, another app on that port): nothing happened.
+            return reject(Object.assign(new Error(`window answered ${res.statusCode}`), { code: 'EREFUSEDCALL' }));
           try {
             resolve(JSON.parse(buf));
           } catch (e) {
@@ -121,6 +123,9 @@ function windowFor(tried: Set<string>): WindowInfo | undefined {
   return pick?.w;
 }
 
+/** Errors that mean the request never reached a window. */
+const NOT_DELIVERED = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EADDRNOTAVAIL', 'EHOSTUNREACH', 'ENETUNREACH', 'EREFUSEDCALL']);
+
 async function call(tool: string, args: any, signal?: AbortSignal): Promise<ToolResult> {
   const tried = new Set<string>();
   const timeout = tool === 'checklist_wait' ? (Math.min(25, Math.max(1, Number(args?.timeout_minutes) || 20)) + 1) * 60_000 : 15_000;
@@ -134,6 +139,21 @@ async function call(tool: string, args: any, signal?: AbortSignal): Promise<Tool
     } catch (e: any) {
       if (signal?.aborted) return { isError: true, content: [{ type: 'text', text: 'Cancelled.' }] };
       log(`Window "${w.name}" did not answer (${e.message}).`);
+      // A window that never got the call (closed, reloaded on a new port) is safe to skip.
+      // One that got it but was slow may have acted on it: trying another window would add the
+      // same tasks or questions twice, so only read-only calls move on.
+      if (!NOT_DELIVERED.has(e.code) && tool !== 'checklist_read')
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text:
+                `The VS Code window "${w.name}" did not answer in time, so this ${tool} call may or may not have gone through. ` +
+                'Call checklist_read to see the checklist before trying again.',
+            },
+          ],
+        };
       tried.add(w.windowId);
       current = undefined;
     }

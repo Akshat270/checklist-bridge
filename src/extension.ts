@@ -57,13 +57,16 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const termFor = new Map<string, vscode.Terminal>();
   const routes = (c: Checklist): Routes => {
     const info = ws?.sessions.get(c.sessionId);
+    const alive = !!ws?.isAlive(c.sessionId);
     return {
       waiting: !!ws?.isWaiting(c.sessionId),
-      channel: !!(info?.channel && info.polling),
-      terminal: termFor.has(c.sessionId),
+      channel: !!(alive && info?.channel && info.polling),
+      // Only while Claude is still running there; otherwise the terminal is back at a shell prompt.
+      terminal: alive && !!info?.ancestors.length && termFor.has(c.sessionId),
     };
   };
   const sendNow = async (c: Checklist) => {
+    ws?.prune();
     const r = routes(c);
     const line = store.updateSummary(c, 'line');
     if (!line.ids.length) return void vscode.window.setStatusBarMessage('$(check) Nothing new to send', 2500);
@@ -74,7 +77,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
       return void vscode.window.setStatusBarMessage('$(check) Sent to Claude', 3000);
     }
     const term = termFor.get(c.sessionId);
-    if (r.terminal && term) {
+    // Check again right before typing: never type into a shell whose Claude has exited.
+    if (r.terminal && term && ws!.isAlive(c.sessionId)) {
       // Type the update into Claude's terminal and press Enter separately, so it isn't taken as a paste.
       term.sendText(line.text, false);
       setTimeout(() => term.sendText('\r', false), 250);
@@ -140,6 +144,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
     if (!ws) return;
     const terms = await Promise.all(vscode.window.terminals.map(async (t) => ({ t, pid: await t.processId })));
     let changed = false;
+    for (const sid of [...termFor.keys()])
+      if (!ws.sessions.has(sid)) {
+        termFor.delete(sid);
+        changed = true;
+      }
     for (const [sid, info] of ws.sessions) {
       const hit = terms.find((x) => x.pid && info.ancestors.includes(x.pid))?.t;
       if (termFor.get(sid) !== hit) {
@@ -158,6 +167,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.window.onDidOpenTerminal(() => matchTerminals()),
     vscode.window.onDidCloseTerminal(() => matchTerminals())
   );
+  // Forget chats whose Claude has exited, so their Send now falls back to Copy for chat.
+  const pruneTimer = setInterval(() => ws?.prune(), 20_000);
+  ctx.subscriptions.push({ dispose: () => clearInterval(pruneTimer) });
   let focusedAt = vscode.window.state.focused ? Date.now() : 0;
   const register = () => {
     try {

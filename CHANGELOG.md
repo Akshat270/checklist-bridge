@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+- **Safer Send now in the terminal.** Send now types into a terminal only while Claude is still running there. After you quit Claude, it copies the update for you instead of typing into your shell. Control characters are removed from what it types.
+- Pressing Send now twice no longer sends the same update twice.
+- One Send now button instead of two: it sits on the answer when that's the only thing waiting, otherwise in the bar below your tasks ("1 task and 1 answer not read yet").
+- If VS Code is slow to answer, Claude no longer adds the same tasks or question to another window. It's told to check the checklist first.
+- Chats that have ended are forgotten, and an answer is marked as read only when Claude actually receives it.
+
 ## 0.4.0
 - **Questions you can answer later.** Claude asks decisions that can wait in a new **Decide** section, with options, details and its recommendation, instead of listing options in the chat. Pick one (or several), or write your own answer, then **Share answer**.
 - **Send now.** Hand what you shared to Claude right away. It reaches Claude while it waits on the checklist, types into Claude's VS Code terminal, or pushes through Claude Code channels (*Start Claude with Send now*). In the idle Claude panel it becomes **Copy for chat**.

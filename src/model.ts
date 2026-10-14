@@ -470,7 +470,9 @@ export class ChecklistStore {
 
   /** Plain-language summary of everything shared but not yet read, for "Send now". */
   updateSummary(c: Checklist, style: 'line' | 'full'): { text: string; ids: string[] } {
-    const u = this.unread(c);
+    // Skip what "Send now" already handed over, so pressing it twice doesn't send it twice.
+    const all = this.unread(c);
+    const u = { tasks: all.tasks.filter((t) => !t.pushedAt), questions: all.questions.filter((q) => !q.pushedAt) };
     const parts: string[] = [];
     const ids: string[] = [];
     for (const q of u.questions) {
@@ -505,7 +507,7 @@ export class ChecklistStore {
     }
     if (!parts.length) return { text: '', ids };
     if (style === 'line')
-      return { text: clip(`Checklist update: ${parts.join('; ')}. Read the checklist for my notes.`, 700).replace(/\s*\n\s*/g, ' '), ids };
+      return { text: clip(`Checklist update: ${parts.join('; ')}. Read the checklist for my notes.`, 700).replace(/[\x00-\x1f\x7f\u2028\u2029]+/g, ' '), ids };
     return { text: `The user shared these from the checklist "${c.title}":\n${parts.join('\n')}`, ids };
   }
 

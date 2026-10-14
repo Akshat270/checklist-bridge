@@ -66,7 +66,7 @@ When Claude needs a decision that doesn't have to happen right now, like which p
 | Where Claude is running | What Send now does |
 |---|---|
 | Claude is **waiting** on the checklist (it does this when only your input is left) | Nothing to do: your answer reaches it the moment you share it. The panel shows *Claude is waiting for you*. |
-| In a **VS Code terminal** | Types a one-line update into that terminal and presses Enter. |
+| In a **VS Code terminal** | Types a one-line update into that terminal and presses Enter, only while Claude is still running there. |
 | Started with **channels** (*Checklist Bridge: Start Claude with Send now*) | Pushes the update into the chat, even while Claude is idle. Channels are a [Claude Code research preview](https://code.claude.com/docs/en/channels), so Claude asks you to confirm when it starts. |
 | Idle in the **Claude panel** | Claude can't be woken from outside, so the button becomes **Copy for chat**: it copies a one-line update for you to paste. |
 
