@@ -25,8 +25,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${VSCE_PAT}" ]; then
-            echo "::error::Add a repository secret named VSCE_PAT (a Marketplace personal access token)."
-            exit 1
+            echo "::notice::No VSCE_PAT secret, so nothing was published. Upload the .vsix on the Marketplace by hand."
+            exit 0
           fi
 
           VERSION=$(node -p "require('./latest.json').version")
