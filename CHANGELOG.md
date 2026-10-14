@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+- Fixed **Take back** running past the edge of an open shared task, and **Share answer** running off a question card, in narrow panels. Long status lines now wrap instead.
+- An open shared task no longer shows its "not read yet" status twice, and has less empty space.
+
 ## 0.4.1
 - **Safer Send now in the terminal.** Send now types into a terminal only while Claude is still running there. After you quit Claude, it copies the update for you instead of typing into your shell. Control characters are removed from what it types.
 - Pressing Send now twice no longer sends the same update twice.
