@@ -18,9 +18,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # Linux is the reference platform. Windows and macOS results are reported but don't fail the build yet.
-    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
     env:
+      # The panel (browser) tests run on Linux only.
       CB_NO_BROWSER: ${{ matrix.os != 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
