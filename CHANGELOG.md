@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4
+- **Saving is more reliable on Windows.** If antivirus or the search indexer briefly locks a checklist file, the save is retried instead of dropped, and a change that can't be saved yet stays queued until it can.
+- **No more stutter with screenshots.** Checklists are saved in the background instead of blocking VS Code while large screenshots are written.
+- **No duplicate tabs after a restart.** If VS Code is still holding a checklist's tab, the extension doesn't open a second one.
+- Tests now ship with the source: `npm test` runs 113 checks against the real extension, and GitHub runs them on every change.
+
 ## 0.4.3
 - **Checklists survive reloads and restarts again.** VS Code closes every tab while a window shuts down, and those closes were being saved as "hidden", so checklists didn't come back. Now VS Code reopens the tabs that were open, and anything you hid yourself stays hidden.
 - Changes are saved within a third of a second of the first edit (before, constant typing kept postponing the save), written safely, and saved once more when the window closes. Notes you were typing are saved when the panel loses focus.

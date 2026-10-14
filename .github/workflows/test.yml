@@ -1,0 +1,40 @@
+# Builds the extension and runs every test suite on each push and pull request,
+# on Linux, Windows and macOS (Windows matters: file locking, PowerShell process listing).
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # Linux is the reference platform. Windows and macOS results are reported but don't fail the build yet.
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
+    env:
+      CB_NO_BROWSER: ${{ matrix.os != 'ubuntu-latest' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install --no-audit --no-fund
+
+      - run: npm run build
+
+      - name: Install a browser for the panel tests (Linux only)
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - run: npm test

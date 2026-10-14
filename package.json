@@ -2,7 +2,7 @@
   "name": "checklist-bridge",
   "displayName": "Checklist Bridge for Claude Code",
   "description": "Each Claude Code chat gets its own checklist in VS Code for the things you do by hand and the decisions you make later. Tick tasks, answer questions, add notes and screenshots, and share them with Claude when you're ready.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "publisher": "Akshat270",
   "license": "MIT",
   "engines": {
@@ -76,7 +76,7 @@
       },
       {
         "command": "checklistBridge.pick",
-        "title": "Show a checklist\u2026",
+        "title": "Show a checklist…",
         "category": "Checklist Bridge"
       },
       {
@@ -198,13 +198,15 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "release": "python3 scripts/release.py"
+    "release": "python3 scripts/release.py",
+    "test": "node test/run.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "1.85.0",
     "@vscode/vsce": "^3.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "playwright": "^1.48.0"
   },
   "icon": "media/icon.png",
   "keywords": [

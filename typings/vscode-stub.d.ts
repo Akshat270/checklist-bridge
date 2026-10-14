@@ -79,6 +79,7 @@ declare module 'vscode' {
       showOptions: ViewColumn | { viewColumn: ViewColumn; preserveFocus?: boolean },
       options?: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: Uri[] }
     ): WebviewPanel;
+    const tabGroups: { all: readonly { tabs: readonly { label: string; input: unknown }[] }[] };
     function registerWebviewPanelSerializer(viewType: string, serializer: { deserializeWebviewPanel(panel: WebviewPanel, state: any): Thenable<void> }): Disposable;
     function createTreeView<T>(id: string, opts: { treeDataProvider: TreeDataProvider<T> }): TreeView<T>;
     function showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>;

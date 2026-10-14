@@ -66,13 +66,19 @@ export class Panels {
    * VS Code closes every tab while a window shuts down. Those closes aren't the user hiding
    * checklists, so on shutdown undo any that happened in the last moment.
    */
-  undoShutdownCloses(withinMs = 3000) {
+  undoShutdownCloses(withinMs = 3000): Checklist[] {
+    // Changes the flag directly: the UI is being torn down, so no change events, just a save.
     const now = Date.now();
+    const out: Checklist[] = [];
     for (const [id, at] of this.closedAt)
       if (now - at <= withinMs) {
         const c = this.store.get(id);
-        if (c && !c.closed && c.hidden) this.store.setHidden(id, false);
+        if (c && !c.closed && c.hidden) {
+          c.hidden = false;
+          out.push(c);
+        }
       }
+    return out;
   }
 
   private closedAt = new Map<string, number>();

@@ -287,7 +287,10 @@
         oninput: (e) => {
           notes[t.id] = e.target.value;
           clearTimeout(noteTimers[t.id]);
-          noteTimers[t.id] = setTimeout(() => post({ type: 'draft', taskId: t.id, note: notes[t.id] }), 350);
+          noteTimers[t.id] = setTimeout(() => {
+            delete noteTimers[t.id];
+            post({ type: 'draft', taskId: t.id, note: notes[t.id] });
+          }, 350);
           refresh(el, t);
         },
         onkeydown: (e) => {
@@ -425,7 +428,11 @@
     const d = qDraftOf(q);
     const go = () => post({ type: 'answerDraft', qid: q.id, picks: d.picks, other: d.other, note: d.note });
     if (immediate) go();
-    else qTimers[q.id] = setTimeout(go, 350);
+    else
+      qTimers[q.id] = setTimeout(() => {
+        delete qTimers[q.id];
+        go();
+      }, 350);
   }
 
   function renderQuestion(q) {
