@@ -17,8 +17,10 @@ export const run: Runner = (file, args, timeoutMs = 30_000) =>
   new Promise((resolve) => {
     const isBatch = WIN && /\.(cmd|bat)$/i.test(file);
     const quote = (s: string) => (/[\s"&|<>^()]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    // Use Windows' own command processor by full path, not whatever "cmd.exe" PATH finds (if any).
+    const cmd = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
     const [f, a, opts] = isBatch
-      ? ['cmd.exe', ['/d', '/s', '/c', `"${[file, ...args].map(quote).join(' ')}"`], { windowsVerbatimArguments: true }]
+      ? [cmd, ['/d', '/s', '/c', `"${[file, ...args].map(quote).join(' ')}"`], { windowsVerbatimArguments: true }]
       : [file, args, {}];
     execFile(f, a, { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024, ...opts }, (e, stdout, stderr) =>
       resolve({ ok: !e, out: `${stdout ?? ''}${stderr ?? ''}${e && !stdout && !stderr ? String(e.message) : ''}` })
