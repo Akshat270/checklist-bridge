@@ -38,6 +38,23 @@ function state(shareTask, answers) {
     if (shot && process.env.SHOTS) { await page.mouse.move(2, 2); await page.screenshot({ path: path.join(process.env.SHOTS, shot), fullPage: true }); }
     await page.close();
   }
+  // Every task and question shows the id Claude uses; clicking it copies the id without opening the row.
+  {
+    const page = await b.newPage({ viewport: { width: 400, height: 1100 } });
+    await page.setContent(`<!doctype html><html><head><style>html{${THEME}}${css}</style></head><body class="vscode-dark"><script>window.__out=[];window.acquireVsCodeApi=()=>({postMessage:m=>window.__out.push(m),getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
+    await page.evaluate((l) => window.postMessage({ type: 'state', list: l, routes: { waiting: false, channel: false, terminal: false } }, '*'), state(true, ['q1']));
+    await page.waitForTimeout(300);
+    for (const t of await page.$$('text=Shared with Claude')) await t.click().catch(() => {});
+    await page.waitForTimeout(150);
+    const shown = await page.$$eval('.item-id', (xs) => xs.map((x) => x.textContent).sort().join(' '));
+    check(shown === 'q1 q2 t1 t2', `every task and question shows its id (${shown})`);
+    const isOpen = () => page.$eval('#task-t2', (e) => e.classList.contains('open'));
+    const before = await isOpen();
+    await page.click('#task-t2 .item-id'); await page.waitForTimeout(100);
+    const out = await page.evaluate(() => window.__out.filter((m) => m.type === 'copy'));
+    check(out.length === 1 && out[0].text === 't2' && (await isOpen()) === before, 'clicking an id copies it, without opening or closing the task');
+    await page.close();
+  }
   await b.close();
   console.log(failed ? `${failed} FAILED` : 'ALL PASS'); process.exit(failed ? 1 : 0);
 })();

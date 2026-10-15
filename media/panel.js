@@ -56,6 +56,18 @@
   const post = (msg) => vscode.postMessage(Object.assign({ listId: list && list.id }, msg));
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  /** The id Claude uses for this item (t1, q2…), shown so you can refer to it in the chat. Click to copy. */
+  const idTag = (id) =>
+    h('button', {
+      class: 'item-id',
+      title: `Claude calls this ${id}. Click to copy.`,
+      'aria-label': `Copy ${id}`,
+      onclick: (e) => {
+        e.stopPropagation();
+        post({ type: 'copy', text: id, label: id });
+      },
+      onkeydown: (e) => e.stopPropagation(),
+    }, id);
 
   function toast(text) {
     const t = $('#toast');
@@ -272,7 +284,7 @@
         },
       },
       tick,
-      h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent))),
+      h('div', {}, h('div', { class: 'text' }, idTag(t.id), t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent))),
       h('div', { class: 'right' }, open ? null : quickShare, open ? null : prioMark(t))
     );
     el.append(row);
@@ -376,7 +388,7 @@
           },
         },
         h('span', { class: `mark ${s.done ? 'done' : 'notdone'}`, title: s.done ? 'Shared as done' : 'Shared as not done', html: s.done ? I.check : I.minus }),
-        h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, false))),
+        h('div', {}, h('div', { class: 'text' }, idTag(t.id), t.text), h('div', { class: 'meta' }, chipsFor(t, open, false))),
         h(
           'div',
           { class: 'right' },
@@ -444,7 +456,7 @@
     el.append(
       h('div', { class: 'qhead' },
         h('span', { class: 'qicon', html: I.ask }),
-        h('div', {}, h('div', { class: 'qtext', id: `qt-${q.id}` }, q.question), q.why && h('p', { class: 'qwhy' }, q.why), tags)
+        h('div', {}, h('div', { class: 'qtext', id: `qt-${q.id}` }, idTag(q.id), q.question), q.why && h('p', { class: 'qwhy' }, q.why), tags)
       )
     );
 
@@ -593,7 +605,7 @@
     el.append(
       h('div', { class: 'qhead' },
         h('span', { class: 'mark done small', html: I.check }),
-        h('div', {}, h('div', { class: 'qtext muted' }, q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id))
+        h('div', {}, h('div', { class: 'qtext muted' }, idTag(q.id), q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id))
       ),
       h(
         'div',
@@ -621,7 +633,7 @@
         'div',
         { class: 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onclick: () => toggle(q) },
         h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, html: q.retired ? I.minus : I.ask }),
-        h('div', {}, h('div', { class: 'text' }, q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
+        h('div', {}, h('div', { class: 'text' }, idTag(q.id), q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
         h('div', { class: 'right' }, q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye }))
       )
     );

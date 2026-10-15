@@ -194,7 +194,8 @@ export class Panels {
       case 'copy':
         if (typeof m.text === 'string') {
           await vscode.env.clipboard.writeText(m.text);
-          this.open.get(id)?.webview.postMessage({ type: 'toast', text: 'Copied' });
+          const what = typeof m.label === 'string' && /^[a-z]\d{1,4}$/.test(m.label) ? ` ${m.label}. Paste it into the Claude chat to refer to it.` : '';
+          this.open.get(id)?.webview.postMessage({ type: 'toast', text: `Copied${what}` });
         }
         break;
       case 'hide':

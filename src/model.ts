@@ -264,7 +264,8 @@ export const SERVER_INSTRUCTIONS =
   'reply. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
   'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
   'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
-  'call checklist_read for notes and screenshots.';
+  'call checklist_read for notes and screenshots. When you mention a checklist item to the user, give its id with a few words of ' +
+  'its title, e.g. "q1 (payment gateway)": the user sees the same ids (t1, q1…) in the checklist.';
 
 /* ------------------------------------------------------------------ store */
 
