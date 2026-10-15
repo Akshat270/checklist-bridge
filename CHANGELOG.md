@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 - When several VS Code windows are open as the extension installs, only one of them connects Claude Code and says so (they used to all connect at once, each showing a message).
 - **Every task and question shows its id** (t1, q2…), the same one Claude uses, so when Claude says "clear q1" you can find it. Click an id to copy it into the chat. Claude is also told to give a few words of the title with the id.
 - Fixed the **Share** button and the urgent mark being pushed past the edge of a collapsed task that has a long title or group name. Long group names now end in "…".

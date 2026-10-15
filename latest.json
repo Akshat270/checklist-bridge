@@ -1,6 +1,6 @@
 {
-  "version": "0.4.5",
-  "vsix": "releases/checklist-bridge-0.4.5.vsix",
-  "sha256": "bdd55649b35097a00274d04e5951ec499bae518786389ff53af67747edafce2a",
-  "notes": "Screenshots stored as image files, so saving stays instant; fixes a rare case where saving could stop."
+  "version": "0.5.0",
+  "vsix": "releases/checklist-bridge-0.5.0.vsix",
+  "sha256": "598d82cbe9963d2696355e5c0c813a8c6a06c005399c76fb8fe2be3f8e31be77",
+  "notes": "Connects to Claude Code automatically; visible task and question ids (t1, q2); security fix for project settings; windows without a folder keep their own checklists."
 }
