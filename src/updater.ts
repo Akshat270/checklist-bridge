@@ -1,6 +1,7 @@
 // Self-update from a GitHub repo: reads <repo>/main/latest.json, downloads the .vsix it names,
 // checks its SHA-256, installs it and offers a reload.
 import * as vscode from 'vscode';
+import { userSetting } from './settings';
 import * as https from 'https';
 import * as http from 'http';
 import * as fs from 'fs';
@@ -68,13 +69,13 @@ export function startUpdater(ctx: vscode.ExtensionContext, current: string, log:
   let lastCheck = 0;
 
   const check = async (manual: boolean) => {
-    const cfg = vscode.workspace.getConfiguration('checklistBridge');
-    const repo = cfg.get<string>('updateRepo', 'Akshat270/checklist-bridge').trim();
-    if (!manual && !cfg.get<boolean>('autoUpdate', true)) return;
+    const repo = String(userSetting('updateRepo', 'Akshat270/checklist-bridge')).trim();
+    if (!manual && !userSetting('autoUpdate', true)) return;
     if (busy || !/^[\w.-]+\/[\w.-]+$/.test(repo)) return;
     if (!manual && Date.now() - lastCheck < 30 * 60_000) return;
     lastCheck = Date.now();
     busy = true;
+    log(`Checking for updates from ${repo}.`);
     const base = process.env.CHECKLIST_BRIDGE_UPDATE_BASE || `https://raw.githubusercontent.com/${repo}/main/`;
     try {
       const latest = JSON.parse((await get(base + 'latest.json')).toString('utf8')) as Latest;

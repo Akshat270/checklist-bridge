@@ -202,22 +202,26 @@
         "checklistBridge.autoUpdate": {
           "type": "boolean",
           "default": true,
-          "description": "Install new versions automatically from the update repo, then offer a reload."
+          "description": "Install new versions automatically from the update repo, then offer a reload.",
+          "scope": "application"
         },
         "checklistBridge.updateRepo": {
           "type": "string",
           "default": "Akshat270/checklist-bridge",
-          "description": "Public GitHub repo (owner/name) whose main branch has latest.json and the .vsix files."
+          "description": "Public GitHub repo (owner/name) whose main branch has latest.json and the .vsix files.",
+          "scope": "application"
         },
         "checklistBridge.autoConnect": {
           "type": "boolean",
           "default": true,
-          "description": "Connect Claude Code to your checklists automatically when VS Code starts (runs `claude mcp add` for you)."
+          "description": "Connect Claude Code to your checklists automatically when VS Code starts (runs `claude mcp add` for you).",
+          "scope": "application"
         },
         "checklistBridge.claudePath": {
           "type": "string",
           "default": "",
-          "description": "Full path to the `claude` command, if Checklist Bridge can't find it on its own."
+          "description": "Full path to the `claude` command, if Checklist Bridge can't find it on its own.",
+          "scope": "machine"
         }
       }
     },
@@ -246,7 +250,7 @@
               "markdown": "media/walkthrough/chat.md"
             },
             "completionEvents": [
-              "onContext:checklistBridge.hasChecklist"
+              "onContext:checklistBridge.claudeUsed"
             ]
           },
           {

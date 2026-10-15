@@ -10,19 +10,21 @@ export const SERVER = 'checklist';
 const WIN = process.platform === 'win32';
 
 export interface RunResult { ok: boolean; out: string }
-export type Runner = (file: string, args: string[], timeoutMs?: number) => Promise<RunResult>;
+export type Runner = (file: string, args: string[], timeoutMs?: number, env?: NodeJS.ProcessEnv) => Promise<RunResult>;
 
 /** Runs a program without a shell (or through cmd.exe for .cmd/.bat files on Windows), quoting safely. */
-export const run: Runner = (file, args, timeoutMs = 30_000) =>
+export const run: Runner = (file, args, timeoutMs = 30_000, env = process.env) =>
   new Promise((resolve) => {
     const isBatch = WIN && /\.(cmd|bat)$/i.test(file);
-    const quote = (s: string) => (/[\s"&|<>^()]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    // Quote for cmd.exe; a % is put outside the quotes and escaped (^%) so it isn't read as a %VARIABLE%.
+    const quote = (s: string) =>
+      /[\s"&|<>^()%]/.test(s) ? s.split('%').map((part) => `"${part.replace(/"/g, '""')}"`).join('^%') : s;
     // Use Windows' own command processor by full path, not whatever "cmd.exe" PATH finds (if any).
-    const cmd = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+    const cmd = env.ComSpec || process.env.ComSpec || path.join(env.SystemRoot || process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
     const [f, a, opts] = isBatch
       ? [cmd, ['/d', '/s', '/c', `"${[file, ...args].map(quote).join(' ')}"`], { windowsVerbatimArguments: true }]
       : [file, args, {}];
-    execFile(f, a, { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024, ...opts }, (e, stdout, stderr) =>
+    execFile(f, a, { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env, ...opts }, (e, stdout, stderr) =>
       resolve({ ok: !e, out: `${stdout ?? ''}${stderr ?? ''}${e && !stdout && !stderr ? String(e.message) : ''}` })
     );
   });
@@ -90,7 +92,7 @@ export async function findClaude(
   const home = env.HOME || env.USERPROFILE || os.homedir();
   for (const f of knownLocations(home, env)) if (exists(f)) return f;
   if (!WIN && env.SHELL) {
-    const r = await runner(env.SHELL, ['-ilc', 'command -v claude'], 8000);
+    const r = await runner(env.SHELL, ['-ilc', 'command -v claude'], 8000, env);
     const found = r.out.split('\n').map((l) => l.trim()).reverse().find((l) => l.startsWith('/') && exists(l));
     if (found) return found;
   }
@@ -105,6 +107,30 @@ export async function findClaude(
 /** Where Claude Code keeps user-level settings, including user-scope MCP servers. */
 export function claudeJsonPath(env: NodeJS.ProcessEnv = process.env) {
   return env.CLAUDE_CONFIG_DIR ? path.join(env.CLAUDE_CONFIG_DIR, '.claude.json') : path.join(env.HOME || env.USERPROFILE || os.homedir(), '.claude.json');
+}
+
+/** Finds a program on PATH (node, node.exe…). */
+export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const names = WIN ? [`${name}.exe`, `${name}.cmd`, name] : [name];
+  for (const dir of (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean))
+    for (const n of names) if (exists(path.join(dir, n))) return path.join(dir, n);
+  return undefined;
+}
+
+/** Our server's entry in Claude Code's user settings, if any. */
+export function registration(env: NodeJS.ProcessEnv = process.env): { command: string; args: string[] } | undefined {
+  try {
+    const s = JSON.parse(fs.readFileSync(claudeJsonPath(env), 'utf8'))?.mcpServers?.[SERVER];
+    return s && typeof s.command === 'string' && Array.isArray(s.args) ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Registered, but the program it runs is gone (Node upgraded or uninstalled): needs re-registering. */
+export function needsRepair(connectorPath: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const r = registration(env);
+  return !!r && registeredInConfig(connectorPath, env) && path.isAbsolute(r.command) && !exists(r.command);
 }
 
 /** Quick check without running anything: is our connector registered as a user-scope server? */
@@ -122,15 +148,24 @@ export function registeredInConfig(connectorPath: string, env: NodeJS.ProcessEnv
 export async function isConnected(connectorPath: string, claude?: string, env: NodeJS.ProcessEnv = process.env, runner: Runner = run) {
   if (registeredInConfig(connectorPath, env)) return true;
   if (!claude) return false;
-  const r = await runner(claude, ['mcp', 'get', SERVER], 20_000);
+  const r = await runner(claude, ['mcp', 'get', SERVER], 20_000, env);
   return r.ok && r.out.includes(path.basename(path.dirname(connectorPath))) && r.out.includes('connector.js');
 }
 
-/** The `claude mcp add` arguments: Node if it's installed, otherwise VS Code's own runtime. */
-export function addArgs(connectorPath: string, nodeAvailable: boolean, electronPath: string): string[] {
-  return nodeAvailable
-    ? ['mcp', 'add', '--transport', 'stdio', '--scope', 'user', SERVER, '--', 'node', connectorPath]
+/**
+ * The `claude mcp add` arguments. Uses Node by its full path when it's installed, so the connection
+ * works however Claude Code was started (its PATH may differ); otherwise VS Code's own runtime.
+ */
+export function addArgs(connectorPath: string, nodePath: string | undefined, electronPath: string): string[] {
+  return nodePath
+    ? ['mcp', 'add', '--transport', 'stdio', '--scope', 'user', SERVER, '--', nodePath, connectorPath]
     : ['mcp', 'add', '--env', 'ELECTRON_RUN_AS_NODE=1', '--transport', 'stdio', '--scope', 'user', SERVER, '--', electronPath, connectorPath];
+}
+
+/** Full path to a working Node.js, if there is one. */
+export async function findNode(env: NodeJS.ProcessEnv = process.env, runner: Runner = run): Promise<string | undefined> {
+  const node = findOnPath('node', env);
+  return node && (await runner(node, ['--version'], 5000, env)).ok ? node : undefined;
 }
 
 export type ConnectOutcome =
@@ -151,14 +186,14 @@ export async function connect(opts: {
   const runner = opts.runner ?? run;
   const claude = await findClaude(env, runner, opts.claude, opts.bundledIn);
   if (!claude) return { status: 'no-claude' };
-  const node = (await runner('node', ['--version'], 5000)).ok;
-  await runner(claude, ['mcp', 'remove', SERVER, '--scope', 'user'], 20_000); // an older setup, if any
-  const r = await runner(claude, addArgs(opts.connectorPath, node, opts.electronPath), 30_000);
+  const node = await findNode(env, runner);
+  await runner(claude, ['mcp', 'remove', SERVER, '--scope', 'user'], 20_000, env); // an older setup, if any
+  const r = await runner(claude, addArgs(opts.connectorPath, node, opts.electronPath), 30_000, env);
   if (await isConnected(opts.connectorPath, claude, env, runner)) return { status: 'connected', claude };
   return { status: 'failed', claude, detail: r.out.trim().slice(0, 500) || 'claude mcp add did not report an error, but the server is not registered.' };
 }
 
 /** Removes the registration. */
-export async function disconnect(claude: string, runner: Runner = run) {
-  return runner(claude, ['mcp', 'remove', SERVER, '--scope', 'user'], 20_000);
+export async function disconnect(claude: string, runner: Runner = run, env: NodeJS.ProcessEnv = process.env) {
+  return runner(claude, ['mcp', 'remove', SERVER, '--scope', 'user'], 20_000, env);
 }

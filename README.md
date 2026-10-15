@@ -113,7 +113,9 @@ If you installed from the Marketplace, VS Code updates it like any other extensi
 
 - **It says it couldn't find Claude Code.** If Claude Code is installed somewhere unusual, set `checklistBridge.claudePath` to the full path of the `claude` command and run *Checklist Bridge: Connect Claude Code*. The warning also offers **Try in a terminal**, which runs the setup in a VS Code terminal, whose shell often finds `claude` when VS Code can't.
 - **`/mcp` shows `checklist` as failed.** Run *Checklist Bridge: Connect Claude Code* again and start a new chat. If you have no Node.js, the connection uses VS Code's own runtime; make sure VS Code is installed in its usual place.
-- **You'd rather connect by hand.** Set `checklistBridge.autoConnect` to `false`, run *Checklist Bridge: Copy Claude Code setup command*, and paste it into a terminal. *Checklist Bridge: Disconnect Claude Code* removes the connection.
+- **You'd rather connect by hand.** Set `checklistBridge.autoConnect` to `false`, run *Checklist Bridge: Copy Claude Code setup command*, and paste it into a terminal. *Checklist Bridge: Disconnect Claude Code* removes the connection, and it stays removed until you click **Connect** again.
+
+Settings that decide where updates come from or which program runs (`updateRepo`, `autoUpdate`, `autoConnect`, `claudePath`) are only read from your user settings, never from a project's `.vscode/settings.json`.
 - **Claude says no VS Code window is running.** Open VS Code with the extension installed, then ask Claude to try again.
 - **The checklist opened in the wrong window.** See *Output → Checklist Bridge* for which window each chat picked and why. The connector picks a window in this order:
   1. The window the chat was started from.

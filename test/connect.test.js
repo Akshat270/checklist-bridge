@@ -41,7 +41,7 @@ async function withEnv(env, fn) {
   // ---- unit
   {
     const sb = sandbox();
-    const connector = path.join(sb.home, 'dir with spaces', 'connector', 'connector.js');
+    const connector = path.join(sb.home, 'dir with spaces & 100%done', 'connector', 'connector.js');
     fs.mkdirSync(path.dirname(connector), { recursive: true }); fs.writeFileSync(connector, '');
     const found = await withEnv(sb.env, () => C.findClaude());
     check(found && found.startsWith(FAKE), `finds the claude command (${found && path.basename(found)})`);
@@ -49,7 +49,7 @@ async function withEnv(env, fn) {
     const r = await withEnv(sb.env, () => C.connect({ connectorPath: connector, electronPath: process.execPath }));
     const s = sb.config().mcpServers?.checklist;
     check(r.status === 'connected', 'connects without a terminal');
-    check(s && s.args.includes(connector), 'registers the connector, even with spaces in its path');
+    check(s && s.args.includes(connector), 'registers the connector, even with spaces, & and % in its path');
     check(sb.calls()[0]?.[1] === 'remove' && sb.calls().some((c) => c[1] === 'add'), 'removes an older registration first, then adds');
     check(await withEnv(sb.env, () => C.registeredInConfig(connector)), 'sees that it is connected by reading the config');
 
@@ -115,6 +115,69 @@ async function withEnv(env, fn) {
     W.send({ cmd: 'quit' }); await W.exited;
     W = win(sb); await W.ready; await sleep(1500);
     check(!warned(W), 'the warning is not repeated on every start');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- what the user decided sticks
+  const cmd = (W, name) => { W.send({ cmd: 'command', name }); return new Promise((r) => W.on('message', (m) => m.done && r())); };
+  const registered = (sb) => sb.config().mcpServers?.checklist;
+  {
+    const sb = sandbox();
+    let W = win(sb); await W.ready; await sleep(2500);
+    const reg = registered(sb);
+    check(reg && path.isAbsolute(reg.command) && fs.existsSync(reg.command), `registers the full path of the runtime, not just "node" (${reg && reg.command})`);
+    await cmd(W, 'checklistBridge.disconnect');
+    check(!registered(sb), 'Disconnect removes the connection');
+    W.send({ cmd: 'quit' }); await W.exited;
+    W = win(sb); await W.ready; await sleep(2500);
+    check(!registered(sb), 'after Disconnect, restarting VS Code does not reconnect by itself');
+    check(contexts(W).at(-1) === false, 'and the sidebar offers Connect');
+    await cmd(W, 'checklistBridge.connect'); await sleep(500);
+    check(!!registered(sb), 'clicking Connect connects again');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+  {
+    // Connected, then removed outside VS Code (e.g. `claude mcp remove checklist`).
+    const sb = sandbox();
+    let W = win(sb); await W.ready; await sleep(2500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    const c = JSON.parse(fs.readFileSync(path.join(sb.home, '.claude', '.claude.json'), 'utf8')); delete c.mcpServers.checklist;
+    fs.writeFileSync(path.join(sb.home, '.claude', '.claude.json'), JSON.stringify(c));
+    W = win(sb); await W.ready; await sleep(2500);
+    check(!registered(sb), 'a connection removed outside VS Code is not silently re-added');
+    check(notes(W).some((n) => /no longer connected/.test(n)), 'the user is asked whether to reconnect instead');
+    W.send({ cmd: 'quit' }); await W.exited;
+    W = win(sb); await W.ready; await sleep(2000);
+    check(!notes(W).some((n) => /no longer connected/.test(n)) && !registered(sb), 'and is asked only once');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+  {
+    // The runtime the connection points to was removed (Node upgraded or uninstalled): repaired silently.
+    const sb = sandbox();
+    let W = win(sb); await W.ready; await sleep(2500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    const f = path.join(sb.home, '.claude', '.claude.json'); const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+    c.mcpServers.checklist.command = path.join(sb.home, 'old-node', 'v18', 'node'); fs.writeFileSync(f, JSON.stringify(c));
+    W = win(sb); await W.ready; await sleep(2500);
+    const reg = registered(sb);
+    check(reg && fs.existsSync(reg.command), 'a connection pointing at a runtime that no longer exists is repaired by itself');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+  {
+    // Getting started: "Start a new Claude chat" is ticked by Claude's checklist, not by the example.
+    const sb = sandbox();
+    const W = win(sb); await W.ready; await sleep(1500);
+    const used = () => W.msgs.filter((m) => m.context && 'checklistBridge.claudeUsed' in m.context).map((m) => m.context['checklistBridge.claudeUsed']);
+    await cmd(W, 'checklistBridge.demo'); await sleep(300);
+    check(!used().includes(true), 'opening the example does not tick "Start a new Claude chat"');
+    const { spawn } = require('child_process');
+    const p = spawn(process.execPath, [path.join(__dirname, 'harness', 'fakeclaude.js'), path.join(sb.home, '.checklist-bridge', 'connector', 'connector.js')], { env: { ...sb.env, CHECKLIST_BRIDGE_HOME: path.join(sb.home, '.checklist-bridge'), CHECKLIST_BRIDGE_WINDOW: W.msgs.find((m) => m.windowId)?.windowId }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const send = (m) => p.stdin.write(JSON.stringify(m) + '\n');
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'c', version: '1' } } });
+    send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'checklist_add_tasks', arguments: { title: 'Real', tasks: ['x'] } } });
+    await new Promise((r) => { let b = ''; p.stdout.on('data', (d) => { b += d; if (b.includes('"id":2')) r(); }); });
+    p.kill(); await sleep(300);
+    check(used().includes(true), 'a checklist from Claude ticks it');
     W.send({ cmd: 'quit' }); await W.exited;
   }
 

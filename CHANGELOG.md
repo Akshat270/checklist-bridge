@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- **Security: a project's settings can no longer redirect updates or run programs.** `checklistBridge.updateRepo`, `autoUpdate`, `autoConnect` and `claudePath` are now read only from your own user settings. Before, a repository's `.vscode/settings.json` (in a trusted folder) could point the updater at another repo, or name a program to run as `claude`.
+- **Disconnect stays disconnected.** Automatic connecting happens until the first success. If the connection is later removed outside VS Code, you're asked once whether to reconnect instead of it being re-added silently.
+- The connection now uses Node.js by its full path, so it works however Claude Code is started, and it repairs itself if that Node.js is upgraded or removed.
+- "Start a new Claude chat" in *Getting started* is ticked by Claude's first checklist, not by the example.
 - **Connecting is automatic.** The first time VS Code starts, Checklist Bridge finds Claude Code and connects itself, with no terminal and no command to press Enter on, then confirms it worked. If Claude Code isn't installed, it says so and links to the install page; it reconnects on its own once you install it. New: *Getting started* walkthrough, *Disconnect Claude Code*, and the `checklistBridge.autoConnect` and `checklistBridge.claudePath` settings.
 - The **Claude checklists** sidebar shows whether Claude Code is connected, with a **Connect** button when it isn't.
 - **Windows without a folder no longer mix up checklists.** They share one storage folder, so a second such window showed the first window's checklists and could overwrite its changes. Each checklist now belongs to one window; when that window closes or crashes, the next window takes it over.

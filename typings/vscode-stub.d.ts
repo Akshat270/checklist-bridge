@@ -106,7 +106,7 @@ declare module 'vscode' {
     const workspaceFolders: readonly WorkspaceFolder[] | undefined;
     const workspaceFile: Uri | undefined;
     const onDidChangeWorkspaceFolders: Event<any>;
-    function getConfiguration(section?: string): { get<T>(key: string, defaultValue: T): T };
+    function getConfiguration(section?: string): { get<T>(key: string, defaultValue: T): T; inspect<T>(key: string): { defaultValue?: T; globalValue?: T; workspaceValue?: T } | undefined };
   }
   export namespace extensions {
     function getExtension(id: string): { id: string; extensionPath: string } | undefined;

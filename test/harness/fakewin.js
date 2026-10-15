@@ -11,6 +11,21 @@ const ev = () => () => noop;
 class EventEmitter { constructor() { this.l = []; this.event = (f) => (this.l.push(f), noop); } fire(x) { this.l.forEach((f) => f(x)); } }
 const Uri = { parse: (v) => ({ fsPath: v, toString() { return v; } }), joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p, toString() { return 'vscode-resource:' + p; } }) };
 const say = (m) => process.send(m);
+// Settings like VS Code's: user settings (CB_SETTINGS) and project settings (CB_WS_SETTINGS, i.e. a repo's
+// .vscode/settings.json). Like VS Code, project values are ignored for settings declared
+// "application" or "machine" scope in package.json.
+const declared = require(path.join(extDir, 'package.json')).contributes.configuration.properties;
+const userSettings = JSON.parse(process.env.CB_SETTINGS || '{}');
+userSettings.autoConnect ??= process.env.CB_AUTOCONNECT === '1';
+const wsSettings = JSON.parse(process.env.CB_WS_SETTINGS || '{}');
+const config = (section) => ({
+  get: (k, d) => {
+    const scope = declared[`${section}.${k}`]?.scope;
+    if (k in wsSettings && (process.env.CB_IGNORE_SCOPES || !['application', 'machine'].includes(scope))) return wsSettings[k];
+    return k in userSettings ? userSettings[k] : d;
+  },
+  inspect: (k) => ({ key: `${section}.${k}`, defaultValue: declared[`${section}.${k}`]?.default, globalValue: userSettings[k], workspaceValue: wsSettings[k] }),
+});
 const vscode = {
   EventEmitter, Uri, ThemeColor: class {}, ThemeIcon: class {}, MarkdownString: class {},
   TreeItem: class { constructor(l) { this.label = l; } },
@@ -47,7 +62,7 @@ const vscode = {
     },
   },
   commands: { registerCommand: (n, f) => ((commands[n] = f), noop), executeCommand: (n, ...a) => { if (n === 'setContext') { say({ context: { [a[0]]: a[1] } }); return Promise.resolve(); } if (n.startsWith('workbench.')) { say({ log: `[${name}] VSCODE ${n} ${a.map(String).join(' ')}` }); return Promise.resolve(); } return commands[n](...a); } },
-  workspace: { name, workspaceFolders: [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: () => ({ get: (k, d) => (k === 'autoConnect' ? process.env.CB_AUTOCONNECT === '1' : d) }) },
+  workspace: { name, workspaceFolders: [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: (section) => config(section) },
   env: { clipboard: { writeText: async (t) => say({ clipboard: t }) }, openExternal: async (u) => (say({ opened: String(u) }), true) },
   extensions: { getExtension: (id) => (process.env.HAS_OLD === '1' && id === 'akshat.checklist-bridge' ? { id } : undefined) },
 };

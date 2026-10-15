@@ -22,7 +22,7 @@ srv.listen(0, '127.0.0.1', async () => {
       showWarningMessage: async (m) => (shown.push('WARN ' + m), undefined),
       onDidChangeWindowState: () => noop,
     },
-    workspace: { getConfiguration: () => ({ get: (k, d) => d }) },
+    workspace: { getConfiguration: () => ({ get: (k, d) => d, inspect: () => undefined }) },
     commands: {
       registerCommand: (n, f) => ((cmds[n] = f), noop),
       executeCommand: async (n, uri) => { if (n === 'workbench.extensions.installExtension') installed.push(uri.fsPath); },
