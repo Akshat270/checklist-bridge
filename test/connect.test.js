@@ -19,7 +19,7 @@ function sandbox({ withClaude = true, fail = false } = {}) {
     HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
     PATH: [withClaude ? FAKE : null, nodeDir].filter(Boolean).join(path.delimiter),
     SHELL: '', FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_FAIL: fail ? '1' : '',
-    CHECKLIST_BRIDGE_CLAUDE: withClaude ? '' : 'none',
+    CHECKLIST_BRIDGE_TEST: '1', CHECKLIST_BRIDGE_CLAUDE: withClaude ? '' : 'none',
   };
   delete env.Path;
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -179,6 +179,24 @@ async function withEnv(env, fn) {
     p.kill(); await sleep(300);
     check(used().includes(true), 'a checklist from Claude ticks it');
     W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  {
+    // Installing activates the extension in every open window at once: one connection, one message.
+    const sb = sandbox();
+    const ws = ['A', 'B', 'C'].map((n) => {
+      const W = fork(path.join(__dirname, 'harness', 'fakewin.js'), [n, '/work/' + n, ROOT, path.join(sb.home, 'st-' + n), '1'], { env: { ...sb.env, CB_AUTOCONNECT: '1', CHECKLIST_BRIDGE_HOME: path.join(sb.home, '.checklist-bridge') } });
+      W.msgs = []; W.on('message', (m) => W.msgs.push(m)); W.exited = new Promise((r) => W.on('exit', r)); return W;
+    });
+    await sleep(6000);
+    const all = ws.flatMap((W) => notes(W));
+    const told = all.filter((n) => /connected to Claude Code/.test(n)).length;
+    check(!!registered(sb), 'several windows starting together: Claude Code ends up connected');
+    check(told === 1, `only one window says so (${told} messages)`);
+    check(!all.some((n) => /could not/.test(n)), 'and no window shows a false failure');
+    check(sb.calls().filter((c) => c[1] === 'add').length === 1, `claude mcp add runs once (${sb.calls().map((c) => c[1]).join(',')})`);
+    check(ws.every((W) => contexts(W).at(-1) === true), 'every window shows it is connected');
+    ws.forEach((W) => W.send({ cmd: 'quit' })); await Promise.all(ws.map((W) => W.exited));
   }
 
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');

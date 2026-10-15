@@ -57,16 +57,15 @@
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   /** The id Claude uses for this item (t1, q2…), shown so you can refer to it in the chat. Click to copy. */
+  // Plain text, not a button: the row is already a button, and a screen reader reads it as part of the title.
   const idTag = (id) =>
-    h('button', {
+    h('span', {
       class: 'item-id',
       title: `Claude calls this ${id}. Click to copy.`,
-      'aria-label': `Copy ${id}`,
       onclick: (e) => {
         e.stopPropagation();
         post({ type: 'copy', text: id, label: id });
       },
-      onkeydown: (e) => e.stopPropagation(),
     }, id);
 
   function toast(text) {

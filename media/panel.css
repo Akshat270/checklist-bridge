@@ -130,7 +130,6 @@ svg { display: block; flex: none; }
   color: var(--ink-3); font: 600 11.5px/18px var(--mono); letter-spacing: 0; text-decoration: none; cursor: copy;
 }
 .item-id:hover { color: var(--ink); background: color-mix(in srgb, var(--ink-3) 24%, transparent); }
-.item-id:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .text {
   color: var(--ink); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere;

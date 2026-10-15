@@ -12,7 +12,7 @@ import { Saver } from './saver';
 import { ImageFiles } from './images';
 import { Ownership } from './ownership';
 import { userSetting } from './settings';
-import { addArgs, connect, disconnect, findClaude, findNode, needsRepair, registeredInConfig } from './claudeConnect';
+import { addArgs, connect, disconnect, findClaude, findNode, needsRepair, registeredInConfig, withLock } from './claudeConnect';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
 
 let ws: WindowServer | undefined;
@@ -250,6 +250,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   /* ---------- connecting Claude Code ---------- */
   const INSTALL_URL = 'https://code.claude.com/docs/en/overview';
+  const connectLock = path.join(ROOT, 'connect.lock'); // one window connects at a time
   const claudePath = () => userSetting('claudePath', '') || undefined;
   // Anthropic's Claude Code extension bundles its own `claude`, for people who never installed the CLI.
   const bundledIn = () => {
@@ -305,10 +306,24 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (interactive) vscode.window.showInformationMessage('Checklist Bridge is already connected to Claude Code.');
       return;
     }
-    const outcome = await vscode.window.withProgress(
-      { location: interactive ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window, title: 'Connecting Claude Code to your checklists…' },
-      () => connect({ connectorPath, electronPath: process.execPath, claude: claudePath(), bundledIn: bundledIn() })
-    );
+    const attempt = () =>
+      vscode.window.withProgress(
+        { location: interactive ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window, title: 'Connecting Claude Code to your checklists…' },
+        () => withLock(connectLock, () => connect({ connectorPath, electronPath: process.execPath, claude: claudePath(), bundledIn: bundledIn() }))
+      );
+    let r = await attempt();
+    if (!r.ran) {
+      // Another window was connecting at the same time. If it worked, we're done, quietly.
+      if (registeredInConfig(connectorPath)) {
+        setConnected(true);
+        setConnectState('connected');
+        if (interactive) vscode.window.showInformationMessage('Checklist Bridge is connected to Claude Code.');
+        return;
+      }
+      r = await attempt(); // it didn't: try ourselves
+      if (!r.ran) return;
+    }
+    const outcome = r.value;
     const firstTime = connectState() === 'never';
     if (outcome.status === 'connected') {
       log(`Connected Claude Code (${outcome.claude}).`);
@@ -567,8 +582,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const startupConnect = async () => {
     if (needsRepair(connectorPath)) {
       log('The runtime the Claude Code connection uses is gone; reconnecting.');
-      const r = await connect({ connectorPath, electronPath: process.execPath, claude: claudePath(), bundledIn: bundledIn() });
-      setConnected(r.status === 'connected');
+      const r = await withLock(connectLock, () => connect({ connectorPath, electronPath: process.execPath, claude: claudePath(), bundledIn: bundledIn() }));
+      setConnected(r.ran ? r.value.status === 'connected' : registeredInConfig(connectorPath));
       return;
     }
     if (registeredInConfig(connectorPath)) {

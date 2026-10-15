@@ -83,8 +83,8 @@ export async function findClaude(
   configured?: string,
   bundledIn: string[] = []
 ): Promise<string | undefined> {
-  // Set by the user (checklistBridge.claudePath) or, in tests, CHECKLIST_BRIDGE_CLAUDE ("none" = not installed).
-  const explicit = configured || env.CHECKLIST_BRIDGE_CLAUDE;
+  // Set by the user (checklistBridge.claudePath), or in the test suite only, CHECKLIST_BRIDGE_CLAUDE ("none" = not installed).
+  const explicit = configured || (env.CHECKLIST_BRIDGE_TEST === '1' ? env.CHECKLIST_BRIDGE_CLAUDE : undefined);
   if (explicit) return explicit === 'none' ? undefined : explicit;
   const names = WIN ? ['claude.exe', 'claude.cmd', 'claude.bat', 'claude'] : ['claude'];
   for (const dir of (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean))
@@ -196,4 +196,53 @@ export async function connect(opts: {
 /** Removes the registration. */
 export async function disconnect(claude: string, runner: Runner = run, env: NodeJS.ProcessEnv = process.env) {
   return runner(claude, ['mcp', 'remove', SERVER, '--scope', 'user'], 20_000, env);
+}
+
+/**
+ * Runs `fn` while holding a lock file shared by every VS Code window on this computer, so only one
+ * window connects at a time (installing activates the extension in all open windows at once).
+ * If another window holds the lock, waits for it to finish and returns { ran: false } without running
+ * `fn`: the caller should look at the result of that window's work instead. A lock left by a window that
+ * died, or older than two minutes, is taken over.
+ */
+export async function withLock<T>(file: string, fn: () => Promise<T>, waitMs = 90_000): Promise<{ ran: true; value: T } | { ran: false }> {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e: any) {
+      return e?.code === 'EPERM';
+    }
+  };
+  const t0 = Date.now();
+  let waited = false;
+  for (;;) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: 'wx' });
+      break; // we hold it
+    } catch (e: any) {
+      if (e?.code !== 'EEXIST') throw e;
+    }
+    let holder: { pid?: number; at?: number } = {};
+    try {
+      holder = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      /* being written or just removed */
+    }
+    const stale = holder.pid !== undefined && (!alive(holder.pid) || Date.now() - (holder.at ?? 0) > 120_000);
+    if (stale) {
+      fs.rmSync(file, { force: true });
+      continue;
+    }
+    if (Date.now() - t0 > waitMs) return { ran: false };
+    waited = true;
+    await new Promise((r) => setTimeout(r, 250));
+    if (waited && !fs.existsSync(file)) return { ran: false }; // the other window is done
+  }
+  try {
+    return { ran: true, value: await fn() };
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 }

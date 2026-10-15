@@ -12,6 +12,7 @@ const srv = http.createServer((req, res) => {
   res.writeHead(200); fs.createReadStream(f).pipe(res);
 });
 srv.listen(0, '127.0.0.1', async () => {
+  process.env.CHECKLIST_BRIDGE_TEST = '1';
   process.env.CHECKLIST_BRIDGE_UPDATE_BASE = `http://127.0.0.1:${srv.address().port}/`;
   const installed = [], shown = [], cmds = {};
   const noop = { dispose() {} };

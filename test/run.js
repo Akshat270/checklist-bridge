@@ -19,7 +19,7 @@ if (!fs.existsSync(path.join(__dirname, '..', 'dist', 'extension.js'))) {
 const results = [];
 for (const f of suites) {
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [path.join(__dirname, f)], { encoding: 'utf8', timeout: 300_000, env: process.env });
+  const r = spawnSync(process.execPath, [path.join(__dirname, f)], { encoding: 'utf8', timeout: 300_000, env: { ...process.env, CHECKLIST_BRIDGE_TEST: '1' } });
   const out = (r.stdout || '') + (r.stderr || '');
   const pass = (out.match(/^PASS /gm) || []).length;
   const fail = (out.match(/^FAIL /gm) || []).length;

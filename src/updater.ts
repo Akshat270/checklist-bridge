@@ -76,7 +76,9 @@ export function startUpdater(ctx: vscode.ExtensionContext, current: string, log:
     lastCheck = Date.now();
     busy = true;
     log(`Checking for updates from ${repo}.`);
-    const base = process.env.CHECKLIST_BRIDGE_UPDATE_BASE || `https://raw.githubusercontent.com/${repo}/main/`;
+    // CHECKLIST_BRIDGE_UPDATE_BASE points the updater at a local server, for the test suite only.
+    const testBase = process.env.CHECKLIST_BRIDGE_TEST === '1' ? process.env.CHECKLIST_BRIDGE_UPDATE_BASE : undefined;
+    const base = testBase || `https://raw.githubusercontent.com/${repo}/main/`;
     try {
       const latest = JSON.parse((await get(base + 'latest.json')).toString('utf8')) as Latest;
       if (!latest?.version || !latest.vsix || !/^[\w./-]+\.vsix$/.test(latest.vsix) || latest.vsix.includes('..')) throw new Error('latest.json is malformed');
