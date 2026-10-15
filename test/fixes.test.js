@@ -45,14 +45,16 @@ const fakeWindow = (id, port) => {
   await sleep(1500); // process detection
   // The shell is this test process: an ancestor of the chat that outlives Claude, like a real terminal.
   W.send({ cmd: 'addTerminal', pid: process.pid }); await wwait('done');
-  await A.tool('checklist_ask', { title: 'Alpha', questions: [{ question: 'Pick a name\r\nrm -rf ~ $(touch /tmp/pwned)\x1b[2J', options: ['Ledger', 'Atlas'] }] });
+  const asked = await A.tool('checklist_ask', { title: 'Alpha', questions: [{ question: 'Pick a name\r\nrm -rf ~ $(touch /tmp/pwned)\x1b[2J', options: ['Ledger', 'Atlas'] }] });
+  check(!asked.isError, 'Claude can ask a question' + (asked.isError ? `: ${asked.text}` : ''));
   // Process detection can take several seconds on Windows (PowerShell); wait for it rather than guess.
   let p;
   for (const t0 = Date.now(); Date.now() - t0 < 30_000; await sleep(250)) {
     p = await panel('Alpha');
     if (p && p.routes.terminal) break;
   }
-  check(p.routes.terminal, 'while Claude runs in the terminal, Send now types into it');
+  if (!p) console.log('  panels open:', JSON.stringify((await panels()).map((x) => x.title)));
+  check(p?.routes.terminal, 'while Claude runs in the terminal, Send now types into it');
   await user('Alpha', { type: 'answerDraft', qid: 'q1', picks: ['o1'] });
   await user('Alpha', { type: 'shareAnswer', qid: 'q1' });
   await user('Alpha', { type: 'sendNow' }); await sleep(500);

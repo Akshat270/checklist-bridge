@@ -68,15 +68,23 @@ export class Saver {
     fs.promises.rm(this.file(id), { force: true }).catch(() => {});
   }
 
-  /** Runs one save pass now (skipping the wait) and resolves when it's done. For tests and diagnostics. */
+  /**
+   * Saves everything pending now (skipping the wait and any retry delay) and resolves when done, or
+   * after a few passes if something keeps failing. For tests and diagnostics.
+   */
   async idle() {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
+    for (let pass = 0; pass < 5; pass++) {
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = undefined;
+      }
+      while (this.running) await this.running; // a pass started earlier may still be finishing
+      if (!this.dirty.size || this.stopped) return;
+      this.retryAt.clear();
+      this.pump();
+      while (this.running) await this.running;
+      if (!this.dirty.size) return;
     }
-    this.retryAt.clear();
-    this.pump();
-    while (this.running) await this.running;
   }
 
   /**
