@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Fixed the **Share** button and the urgent mark being pushed past the edge of a collapsed task that has a long title or group name. Long group names now end in "…".
 - **Security: a project's settings can no longer redirect updates or run programs.** `checklistBridge.updateRepo`, `autoUpdate`, `autoConnect` and `claudePath` are now read only from your own user settings. Before, a repository's `.vscode/settings.json` (in a trusted folder) could point the updater at another repo, or name a program to run as `claude`.
 - **Disconnect stays disconnected.** Automatic connecting happens until the first success. If the connection is later removed outside VS Code, you're asked once whether to reconnect instead of it being re-added silently.
 - The connection now uses Node.js by its full path, so it works however Claude Code is started, and it repairs itself if that Node.js is upgraded or removed.

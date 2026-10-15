@@ -11,7 +11,9 @@ function build(stage) {
   s.handleTool(S, {}, 'checklist_add_tasks', { title: 'Launch subscriptions for Unilytic sellers', tasks: [
     { text: 'Create a Razorpay test account and switch it to test mode', detail: 'dashboard.razorpay.com → Sign up', tags: ['urgent'], group: 'Payments' },
     { text: 'Add RAZORPAY_KEY_ID to .env.local', command: 'RAZORPAY_KEY_ID=rzp_test_aVeryLongKeyValueThatGoesOnAndOn1234567890', group: 'Payments' },
-    { text: 'Check the pricing page on mobile', tags: ['quick', 'optional'] }] });
+    { text: 'Check the pricing page on mobile', tags: ['quick', 'optional'] },
+    // A long title and a long group name on an urgent, ticked task (the case from a real screenshot).
+    { text: 'Restart the local backend again, then hard-reload /email-preview and check the new header on mobile and desktop', tags: ['urgent'], group: 'Re-test after redesign + review fixes' }] });
   s.handleTool(S, {}, 'checklist_ask', { questions: [
     { question: 'Which payment gateway should subscriptions use?', why: 'Decides checkout.', options: [{ label: 'Razorpay', summary: 'UPI Autopay, GST invoices', details: 'Long details text here.' }, 'Stripe'], recommended: 'Razorpay', reason: 'Most sellers pay with UPI.', tags: ['urgent'] },
     { question: 'Show prices with GST?', options: ['With GST', 'Without GST'], multi: true }] });
@@ -27,28 +29,33 @@ function build(stage) {
   for (const theme of ['mine', 'light']) for (const w of [300, 360, 431, 600]) for (const stage of [0, 1, 2]) for (const routes of [{ waiting: false, channel: false, terminal: false }, { waiting: false, channel: false, terminal: true }, { waiting: true, channel: false, terminal: false }]) {
     const page = await b.newPage({ viewport: { width: w, height: 900 } });
     const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+    const measure = async (label) => {
+      const res = await page.evaluate(() => {
+        const W = document.documentElement.clientWidth, out = [];
+        for (const card of document.querySelectorAll('.task, .qcard, .sendbar')) {
+          const cr = card.getBoundingClientRect();
+          for (const e of card.querySelectorAll('*')) { const r = e.getBoundingClientRect(); if (r.width && r.right > cr.right + 1) out.push((card.id || card.className) + ' > ' + (typeof e.className === 'string' ? e.className : e.tagName) + ' +' + Math.round(r.right - cr.right)); }
+        }
+        return { scroll: document.documentElement.scrollWidth - W, out: [...new Set(out)].slice(0, 6) };
+      });
+      if (res.scroll > 0 || res.out.length || errs.length) { bad++; console.log(theme, w, 'stage', stage, label, JSON.stringify(routes), JSON.stringify(res), errs); }
+    };
     await page.setContent(`<!doctype html><html><head><style>html{${THEMES[theme]}}${css}</style></head><body class="vscode-${theme === 'light' ? 'light' : 'dark'}"><script>window.acquireVsCodeApi=()=>({postMessage(){},getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
     await page.evaluate(([l, r]) => window.postMessage({ type: 'state', list: l, routes: r }, '*'), [build(stage), routes]);
     await page.waitForTimeout(150);
-    // open the Shared section and every collapsed row
+    // First as it opens, with every row collapsed (including the pinned next task)...
+    for (const t of await page.$$('.task.open .row .text')) { await t.click().catch(() => {}); await page.waitForTimeout(40); }
+    await measure('rows collapsed');
+    // ...then open the Shared section and every collapsed row
     for (const t of await page.$$('text=Shared with Claude')) await t.click().catch(() => {});
     await page.waitForTimeout(80);
     for (const r of await page.$$('.task:not(.open) .row')) { await r.click().catch(() => {}); await page.waitForTimeout(40); }
     for (const d of await page.$$('summary')) await d.click().catch(() => {});
     await page.waitForTimeout(120);
-    const res = await page.evaluate(() => {
-      const W = document.documentElement.clientWidth, out = [];
-      for (const card of document.querySelectorAll('.task, .qcard, .sendbar')) {
-        const cr = card.getBoundingClientRect();
-        for (const e of card.querySelectorAll('*')) { const r = e.getBoundingClientRect(); if (r.width && r.right > cr.right + 1) out.push((card.id || card.className) + ' > ' + (typeof e.className === 'string' ? e.className : e.tagName) + ' +' + Math.round(r.right - cr.right)); }
-      }
-      return { scroll: document.documentElement.scrollWidth - W, out: [...new Set(out)].slice(0, 6) };
-    });
-    if (res.scroll > 0 || res.out.length || errs.length) { bad++; console.log(theme, w, 'stage', stage, JSON.stringify(routes), JSON.stringify(res), errs); }
-    
+    await measure('rows open');
     await page.close();
   }
-  console.log(bad ? `FAIL ${bad} layouts with overflow` : 'PASS no overflow in 72 layouts');
+  console.log(bad ? `FAIL ${bad} layouts with overflow` : 'PASS no overflow in 144 layouts (72 with rows collapsed, 72 open)');
   process.exitCode = bad ? 1 : 0;
   await b.close();
 })();

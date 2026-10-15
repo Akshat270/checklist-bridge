@@ -114,7 +114,8 @@ svg { display: block; flex: none; }
 .task { position: relative; border-radius: var(--r-l); transition: background-color .15s ease; }
 .task + .task { margin-top: 1px; }
 .row {
-  display: grid; grid-template-columns: 22px 1fr auto; align-items: start; column-gap: 10px;
+  /* minmax(0, 1fr): the text column may shrink below its longest word or label, so the right side stays inside the card. */
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; column-gap: 10px;
   padding: 9px 10px 9px 8px; border-radius: var(--r-l); cursor: pointer;
 }
 .task:not(.open):hover { background: var(--hover); }
@@ -133,6 +134,11 @@ svg { display: block; flex: none; }
 .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 5px; }
 .meta:empty { display: none; }
 .right { display: flex; align-items: center; gap: 6px; padding-top: 1px; }
+/* Long group names and tags shorten with "…" instead of widening the row. */
+.meta { min-width: 0; }
+.meta .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Text-only labels: a block layout, so the browser can draw the "…" (it can't inside a flexbox). */
+.meta .chip:not(:has(svg)) { display: inline-block; line-height: 20px; vertical-align: top; }
 
 /* checkbox (Things-style) */
 .tick {
