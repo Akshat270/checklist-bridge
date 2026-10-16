@@ -41,6 +41,29 @@ export class Ownership {
   }
 
   /**
+   * Note who holds each claim right now, so that we still know afterwards who it was even if the
+   * holder hands it back before its checklist file shows up (a window saves and lets go as it closes).
+   */
+  observe() {
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(this.dir).filter((n) => n.endsWith('.owner'));
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const id = n.slice(0, -'.owner'.length);
+      if (this.owned.has(id) || this.lastHeldBy.has(id)) continue;
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(this.dir, n), 'utf8')) as OwnerRecord;
+        if (rec.token !== this.token) this.lastHeldBy.set(id, rec.window);
+      } catch {
+        /* just removed or unreadable: nothing to note */
+      }
+    }
+  }
+
+  /**
    * Take a checklist if no other live window has it. Returns true if this window now owns it.
    * With `onlyFromMyWindow`, a checklist last held by a different window is left alone even if that
    * window is gone: used when looking again after startup, to catch up with an earlier copy of this
@@ -50,8 +73,6 @@ export class Ownership {
     if (this.owned.has(id)) return true;
     const f = this.file(id);
     if (onlyFromMyWindow) {
-      // Only works for checklists seen held at startup: one created in the last moments before a reload
-      // isn't on disk yet at the first look, so it is never seen and never taken back this way.
       let last = this.lastHeldBy.get(id); // the file is gone once its window handed it back
       try {
         last = (JSON.parse(fs.readFileSync(f, 'utf8')) as OwnerRecord).window;
@@ -60,7 +81,8 @@ export class Ownership {
         /* handed back or unreadable: go by what we saw before */
       }
       // Claims written by 0.5.0 name no window. For a folder window (stable id) that is still ours to
-      // take, so the first reload after an update works too. A folderless window never matches.
+      // take, so the first reload after an update works too. A folder window's storage belongs to its
+      // workspace alone, so nobody else can have held it. A folderless window never matches.
       const oldClaim = last === undefined && this.lastHeldBy.has(id);
       if (!this.windowId || (last !== this.windowId && !(oldClaim && this.windowId.startsWith('ws-')))) return false;
     }

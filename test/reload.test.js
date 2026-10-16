@@ -88,21 +88,30 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
   check(r.beforeClick === 1, 'two checklists with the same title, one tab waiting: the other one is reopened');
   check(r.ps.length === 2, 'and clicking the waiting tab brings back the second, without duplicates');
 
-  // The new window starts while the old one is still shutting down and holds the checklist.
+  // The new window starts while the old one is still shutting down and holds the checklist. This also
+  // covers a reload straight after Claude made it, when its file isn't on disk yet at the first look.
   {
-    fs.rmSync(ST, { recursive: true, force: true });
-    const A = win(); await A.wait('ready');
-    await chatAdd(A.id); await sleep(1500); // let it be saved, as it long has been in a real reload
-    const B = win(); await B.wait('ready');
-    A.send({ cmd: 'quit' }); await A.exited;
-    await sleep(3500);
-    const ps = await B.panels();
-    check(ps.length === 1 && ps[0].tasks.length === 2, 'reload while the old window still holds the checklist: it appears once the old window lets go');
-    B.send({ cmd: 'quit' }); await B.exited;
+    const until = async (fn, ms = 20000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v || Date.now() - t0 > ms) return v; await sleep(200); } };
+    for (const [label, wait] of [['an established checklist', true], ['one made just before the reload', false]]) {
+      fs.rmSync(ST, { recursive: true, force: true });
+      const A = win(); await A.wait('ready');
+      await chatAdd(A.id);
+      if (wait) await until(() => onDisk().length); // saved, as it long has been in a real reload
+      const B = win(); await B.wait('ready');
+      A.send({ cmd: 'quit' }); await A.exited;
+      const ps = await until(async () => { const x = await B.panels(); return x.length ? x : null; }) || [];
+      check(ps.length === 1 && ps[0].tasks.length === 2, `reload while the old window still holds ${label}: it appears once the old window lets go`);
+      B.send({ cmd: 'quit' }); await B.exited;
+    }
   }
 
   // Who may take a checklist back when looking again after startup.
   {
+    const { ChecklistStore } = require(EXT + '/dist/model.js');
+    const st = new ChecklistStore();
+    st.handleTool('s', {}, 'checklist_add_tasks', { title: 'T', tasks: ['One'] });
+    const have = JSON.parse(JSON.stringify(st.all()[0]));
+    check(st.adopt(have) === undefined && st.all().length === 1, 'adopting a checklist this window already has changes nothing');
     const { Ownership } = require(EXT + '/dist/ownership.js');
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cbown-')), f = (id) => path.join(d, id + '.owner');
     const held = (id, rec) => fs.writeFileSync(f(id), JSON.stringify({ pid: process.pid, token: 'other', ...rec }));
