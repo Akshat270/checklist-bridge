@@ -65,6 +65,8 @@ export interface Checklist {
   nextId: number;
   tasks: Task[];
   groupOrder: string[];
+  /** Groups whose tasks must be done in the order Claude added them. */
+  orderedGroups: string[];
   questions: Question[];
   nextQ: number;
   hidden: boolean;
@@ -100,7 +102,7 @@ const taskSchema = {
     tags: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Optional labels. "urgent", "important", "optional", "quick" and "blocked" are styled specially; any other short word works too.',
+      description: 'Optional labels. "urgent", "important", "optional", "quick" and "blocked" are styled specially; any other short word works too. Tags only rank tasks that can be done in any order: do not use urgent/important on steps inside an ordered group.',
     },
     group: { type: 'string', description: 'Optional section name, e.g. "Database" or "Deploy". Tasks with the same group are shown together.' },
   },
@@ -143,12 +145,19 @@ export const TOOLS = [
       'Adds tasks for THE USER to do by hand (run a command, change a setting, click through a website/dashboard, create a key, ' +
       'test something, give you a value) to this chat\'s checklist in VS Code. The first call opens the checklist; later calls add to it. ' +
       'It does NOT wait: the user works through tasks at their own pace while you keep talking. Do not also list these steps in your reply; ' +
-      'just say briefly that you added them. You only learn what happened via checklist_read.',
+      'just say briefly that you added them. You only learn what happened via checklist_read. ' +
+      'If tasks must be done in a fixed order, give them the same group, add them in that order and list the group in ordered_groups: ' +
+      'the user then sees them as numbered steps in that order, and tags never reorder them.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short checklist title (only used/changed if given), e.g. "Supabase setup".' },
         tasks: { type: 'array', minItems: 1, maxItems: MAX_TASKS_PER_CALL, items: taskSchema },
+        ordered_groups: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Names of groups whose tasks must be done in the order you add them (a sequence). Other groups and tasks can be done in any order.',
+        },
       },
       required: ['tasks'],
     },
@@ -251,6 +260,8 @@ export const TOOLS = [
         withdraw_reason: { type: 'string', description: 'Optional one line shown to the user, e.g. "Settled by the new pricing doc".' },
         remove: { type: 'array', items: { type: 'string' }, description: 'Ids of tasks to delete.' },
         group_order: { type: 'array', items: { type: 'string' }, description: 'Group names in the order they should appear.' },
+        ordered_groups: { type: 'array', items: { type: 'string' }, description: 'Mark these groups as sequences: their tasks must be done in the order they were added.' },
+        unordered_groups: { type: 'array', items: { type: 'string' }, description: 'Stop treating these groups as sequences.' },
       },
     },
   },
@@ -261,7 +272,8 @@ export const SERVER_INSTRUCTIONS =
   '(run a command, set an env var, create an account or API key, click through a dashboard, test a page, tell you a value), ' +
   'add it with checklist_add_tasks instead of writing the steps in your reply. Whenever the user has to make a decision that can ' +
   'wait while you keep working, ask it with checklist_ask (options, details, your recommendation) instead of listing options in your ' +
-  'reply. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
+  'reply. If tasks must be done in a fixed order, put them in one group and list it in ordered_groups; tags (urgent, important) only rank ' +
+  'tasks that can be done in any order. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
   'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
   'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
   'call checklist_read for notes and screenshots. When you mention a checklist item to the user, give its id with a few words of ' +
@@ -274,6 +286,7 @@ export function normalize(c: Checklist): Checklist {
   c.nextQ ??= 1;
   c.tasks ??= [];
   c.groupOrder ??= [];
+  c.orderedGroups ??= [];
   return c;
 }
 
@@ -566,6 +579,7 @@ export class ChecklistStore {
       nextId: 1,
       tasks: [],
       groupOrder: [],
+      orderedGroups: [],
       questions: [],
       nextQ: 1,
       hidden: false,
@@ -592,6 +606,12 @@ export class ChecklistStore {
     const { c, created } = this.ensureList(sessionId, meta, args.title);
     const ids: string[] = [];
     const now = Date.now();
+    for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : []) {
+      const name = str(g, 48);
+      if (!name) continue;
+      if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
+      if (!c.groupOrder.includes(name)) c.groupOrder.push(name);
+    }
     for (const r of raw) {
       const text = (typeof r === 'string' ? str(r, 300) : str(r?.text, 300))!;
       const group = str(r?.group, 48);
@@ -778,7 +798,7 @@ export class ChecklistStore {
     if (waiting.length) {
       out.push('', 'Tasks waiting on the user (not shared yet, so you cannot know their state):');
       for (const g of groupsOf(c, waiting)) {
-        if (g.name) out.push(`  ${g.name}:`);
+        if (g.name) out.push(`  ${g.name}${g.ordered ? ' (to be done in this order)' : ''}:`);
         for (const t of g.tasks) out.push(`${g.name ? '  ' : ''}- ${t.id} ${t.text}${t.tags.length ? ` [${t.tags.join(', ')}]` : ''}`);
       }
     }
@@ -885,7 +905,20 @@ export class ChecklistStore {
       const want = args.group_order.map((g: unknown) => str(g, 48)).filter(Boolean) as string[];
       c.groupOrder = [...want, ...c.groupOrder.filter((g) => !want.includes(g))];
     }
+    if (Array.isArray(args.unordered_groups)) {
+      const off = args.unordered_groups.map((g: unknown) => str(g, 48));
+      c.orderedGroups = c.orderedGroups.filter((g) => !off.includes(g));
+    }
+    if (Array.isArray(args.ordered_groups)) {
+      for (const g of args.ordered_groups) {
+        const name = str(g, 48);
+        if (!name) continue;
+        if (!c.tasks.some((t) => t.group === name)) notes.push(`${name}: no tasks in that group, so it was not marked as ordered.`);
+        else if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
+      }
+    }
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
+    c.orderedGroups = c.orderedGroups.filter((g) => c.groupOrder.includes(g));
 
     this.emit({ checklist: c, kind: 'updated' });
     return ok(['Checklist updated.', ...notes].join('\n'));
@@ -899,13 +932,13 @@ export function answerText(q: Question, a: Answer): string {
 }
 
 /** Tasks bucketed by group, in display order (ungrouped first). */
-export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; tasks: Task[] }[] {
-  const out: { name?: string; tasks: Task[] }[] = [];
+export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; ordered?: boolean; tasks: Task[] }[] {
+  const out: { name?: string; ordered?: boolean; tasks: Task[] }[] = [];
   const loose = tasks.filter((t) => !t.group);
   if (loose.length) out.push({ tasks: loose });
   for (const g of c.groupOrder) {
     const ts = tasks.filter((t) => t.group === g);
-    if (ts.length) out.push({ name: g, tasks: ts });
+    if (ts.length) out.push({ name: g, ordered: c.orderedGroups.includes(g), tasks: ts });
   }
   return out;
 }

@@ -79,7 +79,7 @@ Send now works for shared tasks too.
 - **Share tasks one at a time.** Tick a task, optionally add a note or screenshots (paste, drag in, or **Add image**), and press **Share**. Tick several and **Share all**. You can also share a task as *not done*, with a note saying what went wrong.
 - **Claude only sees what you share.** The progress bar counts shared tasks only. Shared tasks move to **Shared with Claude**, which shows whether Claude has read each one. **Take back** hides a task from Claude again so you can change it.
 - **Every item has an id.** The small label in front of each task and question (t1, q2…) is the name Claude uses for it. Click it to copy it, then paste it into the chat.
-- **Claude can organise the list.** It can tag tasks (*urgent*, *important*, *quick*, *optional*, *blocked*), group them, reword them and remove ones that are no longer needed.
+- **Claude can organise the list.** It can tag tasks (*urgent*, *important*, *quick*, *optional*, *blocked*), group them, reword them and remove ones that are no longer needed. Tags decide the order of tasks that can be done in any order. When steps must be done one after another, Claude puts them in an ordered group: they show as numbered steps in its order, and tags never move them.
 - **Hide or close.** Closing a tab only hides that checklist. The **Claude checklists** icon in the activity bar lists every checklist with show, hide and close. Click one in the list to open it and bring it to the front. Closing a checklist for good tells Claude, and the next tasks it adds start a new checklist.
 - **Nothing is lost on reload.** Checklists survive a window reload.
 
