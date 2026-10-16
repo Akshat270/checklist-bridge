@@ -33,7 +33,7 @@ export class ChecklistTree implements vscode.TreeDataProvider<Checklist> {
     item.tooltip = new vscode.MarkdownString(
       `**${c.title}**\n\n${c.tasks.length} tasks, ${c.tasks.length - left} shared with Claude` +
         (c.folder ? `\n\nChat in \`${c.folder}\`` : '') +
-        `\n\n${shown ? 'Open' : 'Hidden'}. Click to open it. Use the eye button to hide it.`
+        `\n\n${shown ? 'Open. Click to bring it to the front.' : 'Hidden. Click to open it.'} Use the eye button to hide it.`
     );
     item.command = { command: 'checklistBridge.show', title: 'Open checklist', arguments: [c.id] };
     return item;

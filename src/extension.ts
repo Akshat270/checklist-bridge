@@ -47,7 +47,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const initial: Checklist[] = [];
   const onDisk: string[] = []; // every checklist file, loaded or not, so their screenshots are kept
   const inlineImages: string[] = []; // saved by an older version, with screenshots inside the JSON
-  const loaded = new Set<string>();
+  const loaded = new Set<string>(); // ours already, or given up on
+  const readFailures = new Map<string, number>();
   /** Reads every checklist file this window can take. Returns how many belong to another live window. */
   const loadFromDisk = (into: Checklist[], later = false) => {
     let skipped = 0;
@@ -56,7 +57,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const id = n.slice(0, -'.json'.length);
       if (loaded.has(id) || owners.owns(id)) continue; // already ours (loaded, or created here since)
       if (!onDisk.includes(id)) onDisk.push(id);
-      if (!owners.claim(id, later)) {
+      let mine = false;
+      try {
+        mine = owners.claim(id, later);
+      } catch (e) {
+        log(`Could not check who has checklist file ${n}: ${e}`);
+      }
+      if (!mine) {
         skipped++;
         continue;
       }
@@ -68,9 +75,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
         into.push(c);
         loaded.add(id);
       } catch (e) {
+        // Maybe only locked for a moment (antivirus, sync): let go and try again a few times.
         owners.release(id);
-        loaded.add(id); // don't try (and log) again every time we look
-        log(`Skipped an unreadable checklist file ${n}: ${e}`);
+        const tries = (readFailures.get(id) ?? 0) + 1;
+        readFailures.set(id, tries);
+        if (tries >= 5) loaded.add(id);
+        if (tries === 1 || tries >= 5) log(`Could not read checklist file ${n}${tries >= 5 ? ', giving up' : ', will try again'}: ${e}`);
       }
     }
     return skipped;
@@ -386,6 +396,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(register),
 
+    // Not offered anywhere any more (a click now always opens), kept so a keybinding someone made for it still works.
+    vscode.commands.registerCommand('checklistBridge.toggle', (arg) => {
+      const c = resolve(arg);
+      if (!c) return;
+      panels.isOpen(c.id) ? panels.hide(c.id) : panels.show(c, { focus: true });
+      tree.refresh();
+    }),
     vscode.commands.registerCommand('checklistBridge.show', (arg) => {
       const c = resolve(arg);
       if (c) panels.show(c, { focus: true });
@@ -567,7 +584,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // itself (see the serializer above), so give it a moment and open only the ones still missing.
   refreshChrome();
   if (store.all().some((c) => !c.sessionId.startsWith('demo-'))) vscode.commands.executeCommand('setContext', 'checklistBridge.claudeUsed', true);
-  const reopen = setTimeout(() => {
+  // Open a tab for each of these checklists that should have one.
+  const reopenTabs = (lists: Checklist[]) => {
     // VS Code may only hand a background tab back when it's clicked, so don't open a second
     // tab for a checklist that still has one waiting in the tab bar.
     // Tabs only carry a title, so count them: with two checklists named the same and one tab
@@ -576,36 +594,41 @@ export async function activate(ctx: vscode.ExtensionContext) {
     for (const t of (vscode.window.tabGroups?.all ?? []).flatMap((g) => g.tabs))
       if (String((t.input as { viewType?: string } | undefined)?.viewType ?? '').endsWith(VIEW_TYPE))
         waiting.set(t.label, (waiting.get(t.label) ?? 0) + 1);
-    for (const c of store.all()) {
-      if (c.hidden || panels.isOpen(c.id)) continue;
+    for (const c of lists) {
+      if (c.hidden || c.closed || panels.isOpen(c.id)) continue;
       const n = waiting.get(c.title) ?? 0;
       if (n > 0) waiting.set(c.title, n - 1);
       else panels.show(c);
     }
-  }, 1500);
+  };
+  const reopen = setTimeout(() => reopenTabs(store.all()), 1500);
   ctx.subscriptions.push({ dispose: () => clearTimeout(reopen) });
   // After a reload the old window may still hold its checklists for a moment. Keep looking, and take
   // each one as soon as it is free, so a checklist never goes missing because we asked too early.
   // Only checklists last held by this same window (same folder). Windows without a folder have no
   // stable identity, and there a closing window's checklists go to the next window that starts.
-  // Reload overlap lasts seconds, so look for a minute and then stop.
-  const lookUntil = Date.now() + 60_000;
-  const adoptTimer = setInterval(() => {
-    if (windowId.startsWith('empty-') || Date.now() > lookUntil) return void clearInterval(adoptTimer); // no stable identity: nothing here could be ours
+  // Every 2 s for the first minute, then every 30 s in case the old window was very slow to let go.
+  const lookStart = Date.now();
+  let lookTimer: NodeJS.Timeout | undefined;
+  const lookAgain = () => {
     try {
       const more: Checklist[] = [];
       loadFromDisk(more, true);
+      const adopted: Checklist[] = [];
       for (const c of more) {
         const mine = store.adopt(c);
         if (!mine) continue;
         noteClaudeUsed(mine);
-        if (!mine.hidden && !mine.closed) panels.show(mine);
+        adopted.push(mine);
       }
+      reopenTabs(adopted);
     } catch (e) {
       log(`Could not look for checklists: ${e}`);
     }
-  }, 2000);
-  ctx.subscriptions.push({ dispose: () => clearInterval(adoptTimer) });
+    lookTimer = setTimeout(lookAgain, Date.now() - lookStart < 60_000 ? 2000 : 30_000);
+  };
+  if (!windowId.startsWith('empty-')) lookTimer = setTimeout(lookAgain, 2000); // no stable identity: nothing here could be ours
+  ctx.subscriptions.push({ dispose: () => lookTimer && clearTimeout(lookTimer) });
 
   // Connect automatically the first time (or once Claude Code gets installed), keep a working connection
   // healthy, and respect the user's choice if they disconnected.

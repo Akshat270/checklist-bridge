@@ -1,8 +1,8 @@
 # Changelog
 
 ## Unreleased
-- Fixed checklists going missing after **Reload Window**. If the old window hadn't finished closing when the new one started, the new window skipped your checklists and never looked again, so the tab stayed closed and the list was empty. It now keeps looking for a few seconds and brings them back as soon as they are free.
-- Clicking a checklist in the **Claude checklists** list now always opens it and brings it to the front. Before, clicking one that was already open (for example behind other tabs) closed it. Use the eye button on the row to hide a checklist. (The hidden command `checklistBridge.toggle`, which nothing in the extension used any more, is gone.)
+- Fixed checklists going missing after **Reload Window**. If the old window was slow to close, the new one skipped your checklists and never looked again, so the tab stayed closed and the list was empty. It now keeps looking and brings them back as soon as they are free.
+- Clicking a checklist in the **Claude checklists** list now always opens it and brings it to the front. Before, clicking one that was already open (for example behind other tabs) closed it. Use the eye button on the row to hide a checklist.
 
 ## 0.5.0
 - When several VS Code windows are open as the extension installs, only one of them connects Claude Code and says so (they used to all connect at once, each showing a message).

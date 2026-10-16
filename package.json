@@ -118,6 +118,10 @@
         "icon": "$(close)"
       },
       {
+        "command": "checklistBridge.toggle",
+        "title": "Show or hide checklist"
+      },
+      {
         "command": "checklistBridge.checkForUpdates",
         "title": "Check for updates",
         "category": "Checklist Bridge"
@@ -184,6 +188,10 @@
         },
         {
           "command": "checklistBridge.close",
+          "when": "false"
+        },
+        {
+          "command": "checklistBridge.toggle",
           "when": "false"
         }
       ]
