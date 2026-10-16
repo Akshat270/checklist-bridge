@@ -51,9 +51,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
   /** Reads every checklist file this window can take. Returns how many belong to another live window. */
   const loadFromDisk = (into: Checklist[], later = false) => {
     let skipped = 0;
+    owners.observe();
     for (const n of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
       const id = n.slice(0, -'.json'.length);
-      if (loaded.has(id)) continue;
+      if (loaded.has(id) || owners.owns(id)) continue; // already ours (loaded, or created here since)
       if (!onDisk.includes(id)) onDisk.push(id);
       if (!owners.claim(id, later)) {
         skipped++;
@@ -68,6 +69,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
         loaded.add(id);
       } catch (e) {
         owners.release(id);
+        loaded.add(id); // don't try (and log) again every time we look
         log(`Skipped an unreadable checklist file ${n}: ${e}`);
       }
     }
@@ -161,6 +163,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
     tree.refresh();
   };
 
+  const noteClaudeUsed = (c: Checklist) => {
+    if (!c.sessionId.startsWith('demo-')) vscode.commands.executeCommand('setContext', 'checklistBridge.claudeUsed', true);
+  };
+
   store.onChange((e) => {
     const c = e.checklist;
     if (e.kind === 'removed') {
@@ -169,7 +175,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       return refreshChrome();
     }
     if (e.kind === 'created') owners.claim(c.id); // new checklists belong to this window
-    if (e.kind === 'created' && !c.sessionId.startsWith('demo-')) vscode.commands.executeCommand('setContext', 'checklistBridge.claudeUsed', true);
+    if (e.kind === 'created') noteClaudeUsed(c);
     save(c);
     if (e.kind === 'created') panels.show(c);
     else if (e.kind === 'tasks-added' && !panels.isOpen(c.id)) {
@@ -582,14 +588,17 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // each one as soon as it is free, so a checklist never goes missing because we asked too early.
   // Only checklists last held by this same window (same folder). Windows without a folder have no
   // stable identity, and there a closing window's checklists go to the next window that starts.
+  // Reload overlap lasts seconds, so look for a minute and then stop.
+  const lookUntil = Date.now() + 60_000;
   const adoptTimer = setInterval(() => {
-    if (windowId.startsWith('empty-')) return; // no stable identity, so nothing here could ever be ours
+    if (windowId.startsWith('empty-') || Date.now() > lookUntil) return void clearInterval(adoptTimer); // no stable identity: nothing here could be ours
     try {
       const more: Checklist[] = [];
       loadFromDisk(more, true);
       for (const c of more) {
         const mine = store.adopt(c);
-        if (!mine.sessionId.startsWith('demo-')) vscode.commands.executeCommand('setContext', 'checklistBridge.claudeUsed', true);
+        if (!mine) continue;
+        noteClaudeUsed(mine);
         if (!mine.hidden && !mine.closed) panels.show(mine);
       }
     } catch (e) {
