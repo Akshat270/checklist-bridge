@@ -3,6 +3,7 @@ const Module = require('module');
 const path = require('path');
 const [name, folder, extDir, storage, focused] = process.argv.slice(2);
 const noop = { dispose() {} };
+let tree;
 const commands = {};
 const terminals = []; const termOpen = [];
 const panels = [];
@@ -42,7 +43,7 @@ const vscode = {
     onDidChangeWindowState: (f) => ((focusListener = f), noop),
     createOutputChannel: () => ({ appendLine: (s) => say({ log: `[${name}] ${s}` }), show() {}, dispose() {} }),
     createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
-    createTreeView: () => ({ dispose() {}, onDidChangeVisibility: ev() }),
+    createTreeView: (_id, o) => ((tree = o.treeDataProvider), { dispose() {}, onDidChangeVisibility: ev() }),
     showInformationMessage: async (m) => (say({ log: `[${name}] NOTIFY ${m}` }), undefined),
     showWarningMessage: async (m) => (say({ log: `[${name}] WARN ${m}` }), /^Close /.test(m) ? 'Close checklist' : undefined),
     showQuickPick: async () => undefined,
@@ -87,6 +88,7 @@ process.on('message', (m) => {
   if (m.cmd === 'addTerminal') { const t = { name: 'claude', processId: Promise.resolve(m.pid), show() {}, sendText: (x) => say({ termText: x }) }; terminals.push(t); termOpen.forEach((fn) => fn(t)); setTimeout(() => say({ done: 1 }), 300); }
   if (m.cmd === 'user') { const p = panels.find((x) => !x.gone && x.title === m.title); p.user({ ...m.msg }); setTimeout(() => say({ done: 1 }), 50); }
   if (m.cmd === 'closeTab') { panels.find((x) => !x.gone && x.title === m.title).dispose(); setTimeout(() => say({ done: 1 }), 50); }
+  if (m.cmd === 'clickItem') { const c = tree.getChildren().find((x) => x.title === m.title); const k = tree.getTreeItem(c).command; Promise.resolve(commands[k.command](...k.arguments)).then(() => setTimeout(() => say({ done: 1 }), 50)); }
   if (m.cmd === 'command') { Promise.resolve(commands[m.name](...(m.args || []))).then(() => setTimeout(() => say({ done: 1 }), 50)); }
   if (m.cmd === 'restoreTab') { const p = vscode.window.createWebviewPanel('checklistBridge.checklist', 'restored'); Promise.resolve(serializer ? serializer.deserializeWebviewPanel(p, { listId: m.listId }) : p.dispose()).then(() => setTimeout(() => say({ done: 1 }), 100)); }
   if (m.cmd === 'shutdown') { panels.filter((p) => !p.gone).forEach((p) => p.dispose()); ext.deactivate(); setTimeout(() => process.exit(0), 300); }
