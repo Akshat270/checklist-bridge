@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
 
-interface OwnerRecord { pid: number; token: string }
+interface OwnerRecord { pid: number; token: string; window?: string }
 
 function alive(pid: number) {
   try {
@@ -25,9 +25,10 @@ function alive(pid: number) {
 
 export class Ownership {
   private owned = new Set<string>();
+  private lastHeldBy = new Map<string, string | undefined>(); // which window held each checklist when we last looked
   readonly token = randomUUID();
 
-  constructor(private dir: string, private pid = process.pid) {
+  constructor(private dir: string, private pid = process.pid, private windowId?: string) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
@@ -39,11 +40,26 @@ export class Ownership {
     return this.owned.has(id);
   }
 
-  /** Take a checklist if no other live window has it. Returns true if this window now owns it. */
-  claim(id: string): boolean {
+  /**
+   * Take a checklist if no other live window has it. Returns true if this window now owns it.
+   * With `onlyFromMyWindow`, a checklist last held by a different window is left alone even if that
+   * window is gone: used when looking again after startup, to catch up with an earlier copy of this
+   * window (a reload) without taking over what a closing neighbour leaves behind.
+   */
+  claim(id: string, onlyFromMyWindow = false): boolean {
     if (this.owned.has(id)) return true;
     const f = this.file(id);
-    const mine = JSON.stringify({ pid: this.pid, token: this.token } satisfies OwnerRecord);
+    if (onlyFromMyWindow) {
+      let last = this.lastHeldBy.get(id); // the file is gone once its window handed it back
+      try {
+        last = (JSON.parse(fs.readFileSync(f, 'utf8')) as OwnerRecord).window;
+        this.lastHeldBy.set(id, last);
+      } catch {
+        /* handed back or unreadable: go by what we saw before */
+      }
+      if (!this.windowId || last !== this.windowId) return false;
+    }
+    const mine = JSON.stringify({ pid: this.pid, token: this.token, window: this.windowId } satisfies OwnerRecord);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         fs.writeFileSync(f, mine, { flag: 'wx' }); // only succeeds if nobody owns it
@@ -61,6 +77,7 @@ export class Ownership {
       } catch {
         /* unreadable or just removed: treat as stale */
       }
+      if (rec) this.lastHeldBy.set(id, rec.window);
       if (rec?.token === this.token) {
         this.owned.add(id);
         return true;

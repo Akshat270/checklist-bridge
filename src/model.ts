@@ -290,6 +290,16 @@ export class ChecklistStore {
     for (const c of initial) this.lists.set(c.id, normalize(c));
   }
 
+  /** Take in a checklist loaded after startup (one another window had until now). */
+  adopt(c: Checklist): Checklist {
+    const have = this.lists.get(c.id);
+    if (have) return have;
+    const n = normalize(c);
+    this.lists.set(n.id, n);
+    this.emit({ checklist: n, kind: 'updated' });
+    return n;
+  }
+
   onChange(fn: (e: ChangeEvent) => void) {
     this.listeners.push(fn);
   }
