@@ -91,7 +91,7 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
   // The new window starts while the old one is still shutting down and holds the checklist. This also
   // covers a reload straight after Claude made it, when its file isn't on disk yet at the first look.
   {
-    const until = async (fn, ms = 20000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v || Date.now() - t0 > ms) return v; await sleep(200); } };
+    const until = async (fn, ms = 12000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v || Date.now() - t0 > ms) return v; await sleep(200); } };
     for (const [label, wait] of [['an established checklist', true], ['one made just before the reload', false]]) {
       fs.rmSync(ST, { recursive: true, force: true });
       const A = win(); await A.wait('ready');
@@ -105,6 +105,41 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     }
   }
 
+  // VS Code is still holding this checklist's tab: taking the checklist back must not open a second one.
+  {
+    fs.rmSync(ST, { recursive: true, force: true });
+    const A = win(); await A.wait('ready');
+    await chatAdd(A.id);
+    for (let i = 0; i < 60 && !onDisk().length; i++) await sleep(200);
+    const listId = onDisk()[0].id;
+    const B = win({ TABS: JSON.stringify(['Persist me']) }); await B.wait('ready');
+    A.send({ cmd: 'quit' }); await A.exited;
+    await sleep(5000);
+    check(B.opened === 0 && (await B.panels()).length === 0, 'taking a checklist back leaves a tab VS Code is still holding alone');
+    B.send({ cmd: 'restoreTab', listId }); await B.wait('done');
+    check((await B.panels()).length === 1 && B.opened === 1, 'and clicking that tab then brings the checklist back, once');
+    B.send({ cmd: 'quit' }); await B.exited;
+  }
+
+  // A checklist file that can't be read at first (locked for a moment) is picked up once it can.
+  {
+    fs.rmSync(ST, { recursive: true, force: true });
+    let A = win(); await A.wait('ready');
+    await chatAdd(A.id);
+    const file = () => { const d = path.join(ST, 'checklists'); return fs.readdirSync(d).filter((f) => f.endsWith('.json')).map((f) => path.join(d, f))[0]; };
+    await (async () => { for (let i = 0; i < 60 && !onDisk().length; i++) await sleep(200); })();
+    A.send({ cmd: 'quit' }); await A.exited;
+    const f = file(), good = fs.readFileSync(f, 'utf8');
+    fs.writeFileSync(f, '{ not json');
+    const B = win(); await B.wait('ready'); await sleep(2500);
+    check((await B.panels()).length === 0, 'an unreadable checklist file is skipped, without stopping the window');
+    fs.writeFileSync(f, good);
+    let ps = [];
+    for (let i = 0; i < 60 && !ps.length; i++) { await sleep(200); ps = await B.panels(); }
+    check(ps.length === 1, 'and the checklist appears once the file can be read');
+    B.send({ cmd: 'quit' }); await B.exited;
+  }
+
   // Who may take a checklist back when looking again after startup.
   {
     const { ChecklistStore } = require(EXT + '/dist/model.js');
@@ -115,7 +150,6 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     const { Ownership } = require(EXT + '/dist/ownership.js');
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cbown-')), f = (id) => path.join(d, id + '.owner');
     const held = (id, rec) => fs.writeFileSync(f(id), JSON.stringify({ pid: process.pid, token: 'other', ...rec }));
-    const again = (win, id) => { const o = new Ownership(d, process.pid, win); o.claim(id); const first = o.owns(id); const r = o.claim(id, true); return { first, r }; };
     held('old'); // written by 0.5.0: names no window
     const o1 = new Ownership(d, process.pid, 'ws-1'); o1.claim('old'); fs.rmSync(f('old'));
     check(o1.claim('old', true), 'a folder window takes back a checklist an older version had claimed, once it is handed back');
@@ -125,6 +159,15 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     held('theirs', { window: 'ws-2' });
     const o3 = new Ownership(d, process.pid, 'ws-1'); o3.claim('theirs'); fs.rmSync(f('theirs'));
     check(!o3.claim('theirs', true), "a window does not take what a different window held when it closes");
+    // The holder lets go before the checklist's own file exists, and we only noticed the claim before that.
+    held('early', { window: 'ws-1' });
+    const o5 = new Ownership(d, process.pid, 'ws-1'); o5.observe(); fs.rmSync(f('early'));
+    check(o5.claim('early', true), 'a claim noticed before its checklist file exists still lets us take it back');
+    held('unnoticed', { window: 'ws-1' }); fs.rmSync(f('unnoticed'));
+    check(!new Ownership(d, process.pid, 'ws-1').claim('unnoticed', true), 'but one we never noticed is left alone');
+    held('moved', { window: 'ws-2' });
+    const o6 = new Ownership(d, process.pid, 'ws-1'); o6.observe(); held('moved', { window: 'ws-1' }); o6.observe(); fs.rmSync(f('moved'));
+    check(o6.claim('moved', true), 'who held a checklist is kept up to date, not just noted once');
     held('legacy');
     const o4 = new Ownership(d, process.pid, 'empty-ab12'); o4.claim('legacy'); fs.rmSync(f('legacy'));
     check(!o4.claim('legacy', true), 'a folderless window never takes anything back this way');

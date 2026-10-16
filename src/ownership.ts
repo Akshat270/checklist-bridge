@@ -53,7 +53,7 @@ export class Ownership {
     }
     for (const n of names) {
       const id = n.slice(0, -'.owner'.length);
-      if (this.owned.has(id) || this.lastHeldBy.has(id)) continue;
+      if (this.owned.has(id)) continue;
       try {
         const rec = JSON.parse(fs.readFileSync(path.join(this.dir, n), 'utf8')) as OwnerRecord;
         if (rec.token !== this.token) this.lastHeldBy.set(id, rec.window);
@@ -120,6 +120,7 @@ export class Ownership {
   /** Stop owning a checklist (deleted, or the window is closing). */
   release(id: string) {
     if (!this.owned.delete(id)) return;
+    this.lastHeldBy.set(id, this.windowId); // so we can take it back if we let go too soon (a failed read)
     try {
       const rec: OwnerRecord = JSON.parse(fs.readFileSync(this.file(id), 'utf8'));
       if (rec.token === this.token) fs.rmSync(this.file(id), { force: true });
