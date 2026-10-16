@@ -380,12 +380,6 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(register),
 
-    vscode.commands.registerCommand('checklistBridge.toggle', (arg) => {
-      const c = resolve(arg);
-      if (!c) return;
-      panels.isOpen(c.id) ? panels.hide(c.id) : panels.show(c, { focus: true });
-      tree.refresh();
-    }),
     vscode.commands.registerCommand('checklistBridge.show', (arg) => {
       const c = resolve(arg);
       if (c) panels.show(c, { focus: true });
@@ -589,6 +583,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // Only checklists last held by this same window (same folder). Windows without a folder have no
   // stable identity, and there a closing window's checklists go to the next window that starts.
   const adoptTimer = setInterval(() => {
+    if (windowId.startsWith('empty-')) return; // no stable identity, so nothing here could ever be ours
     try {
       const more: Checklist[] = [];
       loadFromDisk(more, true);

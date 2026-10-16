@@ -101,6 +101,26 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     B.send({ cmd: 'quit' }); await B.exited;
   }
 
+  // Who may take a checklist back when looking again after startup.
+  {
+    const { Ownership } = require(EXT + '/dist/ownership.js');
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cbown-')), f = (id) => path.join(d, id + '.owner');
+    const held = (id, rec) => fs.writeFileSync(f(id), JSON.stringify({ pid: process.pid, token: 'other', ...rec }));
+    const again = (win, id) => { const o = new Ownership(d, process.pid, win); o.claim(id); const first = o.owns(id); const r = o.claim(id, true); return { first, r }; };
+    held('old'); // written by 0.5.0: names no window
+    const o1 = new Ownership(d, process.pid, 'ws-1'); o1.claim('old'); fs.rmSync(f('old'));
+    check(o1.claim('old', true), 'a folder window takes back a checklist an older version had claimed, once it is handed back');
+    held('mine', { window: 'ws-1' });
+    const o2 = new Ownership(d, process.pid, 'ws-1'); o2.claim('mine'); fs.rmSync(f('mine'));
+    check(o2.claim('mine', true), 'a window takes back what its own earlier copy held');
+    held('theirs', { window: 'ws-2' });
+    const o3 = new Ownership(d, process.pid, 'ws-1'); o3.claim('theirs'); fs.rmSync(f('theirs'));
+    check(!o3.claim('theirs', true), "a window does not take what a different window held when it closes");
+    held('legacy');
+    const o4 = new Ownership(d, process.pid, 'empty-ab12'); o4.claim('legacy'); fs.rmSync(f('legacy'));
+    check(!o4.claim('legacy', true), 'a folderless window never takes anything back this way');
+  }
+
   const leftovers = fs.readdirSync(path.join(ST, 'checklists')).filter((f) => f.includes('.tmp'));
   check(!leftovers.length, 'no temp files left behind');
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
