@@ -161,7 +161,7 @@ node test/run.js reload  # just one (by file name prefix)
 
 The suites in `test/` run the compiled extension inside a stand-in VS Code window (`test/harness/fakewin.js`) and talk to it through the real connector, the way Claude Code does: tasks, questions, Send now, window routing, reloads, saving, updates and the Claude Code setup. The panel tests render the real webview in Chromium and need Playwright (`npx playwright install chromium`); they're skipped without it. GitHub runs everything on each push.
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
 ---
 
