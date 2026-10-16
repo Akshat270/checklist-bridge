@@ -57,7 +57,10 @@ export class Ownership {
       } catch {
         /* handed back or unreadable: go by what we saw before */
       }
-      if (!this.windowId || last !== this.windowId) return false;
+      // Claims written by 0.5.0 name no window. For a folder window (stable id) that is still ours to
+      // take, so the first reload after an update works too. A folderless window never matches.
+      const oldClaim = last === undefined && this.lastHeldBy.has(id);
+      if (!this.windowId || (last !== this.windowId && !(oldClaim && this.windowId.startsWith('ws-')))) return false;
     }
     const mine = JSON.stringify({ pid: this.pid, token: this.token, window: this.windowId } satisfies OwnerRecord);
     for (let attempt = 0; attempt < 2; attempt++) {
