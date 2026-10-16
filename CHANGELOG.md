@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Steps that must be done in order now show in order.** When Claude says a group of tasks has to be done one after another, they show together as numbered steps (Step 1, Step 2…) in Claude's order. An *important* or *urgent* tag can no longer move a later step to the top or make it the next task. Tasks that can be done in any order are still sorted by their tags.
+- **Task ids moved to the right edge of each row** (t1, q2…), in a quiet column, so they no longer sit in front of the title. Click one to copy it, as before.
 
 ## 0.5.1
 - Fixed checklists going missing after **Reload Window**. If the old window was slow to close, the new one skipped your checklists and never looked again, so the tab stayed closed and the list was empty. It now keeps looking and brings them back as soon as they are free.
