@@ -80,6 +80,8 @@
   const tagRank = (t) => (t.tags.includes('urgent') ? 0 : t.tags.includes('important') ? 1 : 2);
   // Tasks in an ordered group: step number, and whether it is the step to do now. Rebuilt on every render.
   let steps = new Map();
+  // Steps drawn with a line down to the next step (every shown step of an ordered group except the last). Rebuilt on every render.
+  let linked = new Set();
   const inLaterStep = (t) => steps.has(t.id) && !steps.get(t.id).head;
   // Tags rank tasks that can be done in any order. A later step in a sequence never jumps the queue.
   const rank = (t) => (inLaterStep(t) ? 2 : tagRank(t));
@@ -260,7 +262,7 @@
     const isCurrent = t.id === currentId;
     const open = isOpen(t);
     const el = h('div', {
-      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
+      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' link' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
       id: `task-${t.id}`,
       'data-id': t.id,
       onmouseenter: () => (lastHover = t.id),
@@ -303,8 +305,8 @@
         },
       },
       tick,
-      h('div', {}, h('div', { class: 'text' }, idTag(t.id), t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent))),
-      h('div', { class: 'right' }, open ? null : quickShare, open ? null : prioMark(t))
+      h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent))),
+      h('div', { class: 'right' }, open ? null : quickShare, open ? null : prioMark(t), idTag(t.id))
     );
     el.append(row);
 
@@ -407,13 +409,14 @@
           },
         },
         h('span', { class: `mark ${s.done ? 'done' : 'notdone'}`, title: s.done ? 'Shared as done' : 'Shared as not done', html: s.done ? I.check : I.minus }),
-        h('div', {}, h('div', { class: 'text' }, idTag(t.id), t.text), h('div', { class: 'meta' }, chipsFor(t, open, false))),
+        h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, false))),
         h(
           'div',
           { class: 'right' },
           t.seenAt
             ? h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye })
-            : h('span', { class: 'status', title: 'Claude hasn’t read this yet', html: I.clock })
+            : h('span', { class: 'status', title: 'Claude hasn’t read this yet', html: I.clock }),
+          idTag(t.id)
         )
       )
     );
@@ -475,7 +478,8 @@
     el.append(
       h('div', { class: 'qhead' },
         h('span', { class: 'qicon', html: I.ask }),
-        h('div', {}, h('div', { class: 'qtext', id: `qt-${q.id}` }, idTag(q.id), q.question), q.why && h('p', { class: 'qwhy' }, q.why), tags)
+        h('div', {}, h('div', { class: 'qtext', id: `qt-${q.id}` }, q.question), q.why && h('p', { class: 'qwhy' }, q.why), tags),
+        idTag(q.id)
       )
     );
 
@@ -624,7 +628,8 @@
     el.append(
       h('div', { class: 'qhead' },
         h('span', { class: 'mark done small', html: I.check }),
-        h('div', {}, h('div', { class: 'qtext muted' }, idTag(q.id), q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id))
+        h('div', {}, h('div', { class: 'qtext muted' }, q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id)),
+        idTag(q.id)
       ),
       h(
         'div',
@@ -652,8 +657,8 @@
         'div',
         { class: 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onclick: () => toggle(q) },
         h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, html: q.retired ? I.minus : I.ask }),
-        h('div', {}, h('div', { class: 'text' }, idTag(q.id), q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
-        h('div', { class: 'right' }, q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye }))
+        h('div', {}, h('div', { class: 'text' }, q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
+        h('div', { class: 'right' }, q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye }), idTag(q.id))
       )
     );
     if (open)
@@ -734,7 +739,7 @@
   }
 
   function row(t, renderFn, extraKey) {
-    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
+    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
     let r = rendered.get(t.id);
     if (!r || r.key !== key) {
       r = { key, el: renderFn(t) };
@@ -754,6 +759,7 @@
     $('#task-count').textContent = [list.tasks.length && plural(list.tasks.length, 'task', 'tasks'), liveQs && plural(liveQs, 'question', 'questions')].filter(Boolean).join(', ');
 
     steps = stepsOf(list);
+    linked = new Set();
     const groups = todoGroups();
     currentId = pickCurrent(groups);
     renderProgress();
@@ -790,6 +796,7 @@
     for (const g of groups) {
       const rest = g.tasks.filter((t) => t.id !== currentId);
       if (!rest.length) continue;
+      if (g.ordered && !ui.collapsed[g.name]) rest.slice(0, -1).forEach((t) => linked.add(t.id));
       const box = h('section', { class: 'section' });
       if (g.name) {
         const open = !ui.collapsed[g.name];
