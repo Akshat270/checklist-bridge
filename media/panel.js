@@ -88,7 +88,6 @@
   const hasContent = (t) => !!noteOf(t).trim() || t.draft.images.length > 0;
   const ready = (t) => !t.shared && (t.draft.done || hasContent(t));
 
-  /** To-do tasks in display order: ungrouped first, then Claude's group order; urgent before important before the rest. */
   /** Step number and total for each unshared task of an ordered group; `head` is the step to do now. */
   function stepsOf(l) {
     const out = new Map();
@@ -100,6 +99,7 @@
     return out;
   }
 
+  /** To-do tasks in display order: ungrouped first, then Claude's group order; urgent before important before the rest. Ordered groups keep Claude's order. */
   function todoGroups() {
     const todo = list.tasks.filter((t) => !t.shared);
     const sortRank = (arr) => arr.map((t, i) => ({ t, i })).sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i).map((x) => x.t);

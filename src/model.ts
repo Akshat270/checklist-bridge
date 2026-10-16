@@ -596,6 +596,16 @@ export class ChecklistStore {
     return n ? `Note: ${n} item${n === 1 ? ' was' : 's were'} shared since your last read. Call checklist_read.` : undefined;
   }
 
+  /** Marks groups as sequences. A group only counts if one of its tasks exists, so no empty group is left behind. */
+  private markOrdered(c: Checklist, names: unknown, notes: string[]) {
+    for (const g of Array.isArray(names) ? names : []) {
+      const name = str(g, 48);
+      if (!name) continue;
+      if (!c.tasks.some((t) => t.group === name)) notes.push(`${name}: no task is in a group with exactly this name, so it was not marked as ordered.`);
+      else if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
+    }
+  }
+
   private toolAdd(sessionId: string, meta: CallMeta, args: any): ToolResult {
     const raw = Array.isArray(args.tasks) ? args.tasks : [];
     if (!raw.length) return err('`tasks` must be a non-empty array.');
@@ -626,14 +636,8 @@ export class ChecklistStore {
       ids.push(t.id);
     }
 
-    // A group only becomes ordered if one of its tasks exists, so no empty group is left behind.
     const notes: string[] = [];
-    for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : []) {
-      const name = str(g, 48);
-      if (!name) continue;
-      if (!c.tasks.some((t) => t.group === name)) notes.push(`${name}: no task is in a group with exactly this name, so it was not marked as ordered.`);
-      else if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
-    }
+    this.markOrdered(c, args.ordered_groups, notes);
 
     this.emit({ checklist: c, kind: created ? 'created' : 'tasks-added', added: ids.length });
 
@@ -851,7 +855,7 @@ export class ChecklistStore {
       }
     };
 
-    const moved: Task[] = [];
+    const moved: Task[] = []; // tasks given a different group in this call
     for (const u of Array.isArray(args.updates) ? args.updates : []) {
       const t = c.tasks.find((x) => x.id === u?.id);
       if (!t) {
@@ -867,9 +871,10 @@ export class ChecklistStore {
       }
       applyTags(t, u);
       if (typeof u.group === 'string') {
+        const was = t.group;
         t.group = str(u.group, 48);
         if (t.group && !c.groupOrder.includes(t.group)) c.groupOrder.push(t.group);
-        if (t.group) moved.push(t);
+        if (t.group && t.group !== was) moved.push(t);
       }
       t.rev++;
     }
@@ -922,21 +927,19 @@ export class ChecklistStore {
       for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : [])
         if (off.includes(str(g, 48))) notes.push(`${g} was in both ordered_groups and unordered_groups, so it is ordered.`);
     }
-    if (Array.isArray(args.ordered_groups)) {
-      for (const g of args.ordered_groups) {
-        const name = str(g, 48);
-        if (!name) continue;
-        if (!c.tasks.some((t) => t.group === name)) notes.push(`${name}: no tasks in that group, so it was not marked as ordered.`);
-        else if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
-      }
-    }
+    this.markOrdered(c, args.ordered_groups, notes);
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
     c.orderedGroups = c.orderedGroups.filter((g) => c.groupOrder.includes(g));
-    // Steps follow the order the tasks were added, so a task moved into an ordered group keeps its old place in line.
+    // A task moved into an ordered group becomes its last step. To change the order, move tasks out and back in.
     for (const t of moved) {
       if (!t.group || !c.orderedGroups.includes(t.group)) continue;
+      const others = c.tasks.filter((x) => x !== t);
+      let at = -1;
+      others.forEach((x, i) => { if (x.group === t.group) at = i; });
+      others.splice(at < 0 ? others.length : at + 1, 0, t);
+      c.tasks = others;
       const whole = c.tasks.filter((x) => x.group === t.group);
-      notes.push(`${t.id} is now step ${whole.indexOf(t) + 1} of ${whole.length} in "${t.group}" (steps follow the order the tasks were added).`);
+      notes.push(`${t.id} is now the last step (step ${whole.indexOf(t) + 1} of ${whole.length}) in "${t.group}". To change the order, move tasks out of the group and back in.`);
     }
 
     this.emit({ checklist: c, kind: 'updated' });
