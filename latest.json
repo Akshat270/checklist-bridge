@@ -1,6 +1,6 @@
 {
-  "version": "0.5.0",
-  "vsix": "releases/checklist-bridge-0.5.0.vsix",
-  "sha256": "598d82cbe9963d2696355e5c0c813a8c6a06c005399c76fb8fe2be3f8e31be77",
-  "notes": "Connects to Claude Code automatically; visible task and question ids (t1, q2); security fix for project settings; windows without a folder keep their own checklists."
+  "version": "0.5.1",
+  "vsix": "releases/checklist-bridge-0.5.1.vsix",
+  "sha256": "f96f456a36be49d93c44fa671e3eca5affed732634ea34ae6ea1047e7a701878",
+  "notes": "Checklists come back after Reload Window; clicking an open checklist in the list brings it to the front."
 }
