@@ -77,20 +77,31 @@
   }
 
   const noteOf = (t) => notes[t.id] ?? t.draft.note;
-  const rank = (t) => (t.tags.includes('urgent') ? 0 : t.tags.includes('important') ? 1 : 2);
+  const tagRank = (t) => (t.tags.includes('urgent') ? 0 : t.tags.includes('important') ? 1 : 2);
+  // Tasks in an ordered group: step number, and whether it is the step to do now. Rebuilt on every render.
+  let steps = new Map();
+  const inLaterStep = (t) => steps.has(t.id) && !steps.get(t.id).head;
+  // Tags rank tasks that can be done in any order. A later step in a sequence never jumps the queue.
+  const rank = (t) => (inLaterStep(t) ? 2 : tagRank(t));
   const hasContent = (t) => !!noteOf(t).trim() || t.draft.images.length > 0;
   const ready = (t) => !t.shared && (t.draft.done || hasContent(t));
 
   /** To-do tasks in display order: ungrouped first, then Claude's group order; urgent before important before the rest. */
   function todoGroups() {
     const todo = list.tasks.filter((t) => !t.shared);
+    steps = new Map();
+    for (const g of list.orderedGroups || []) {
+      const all = list.tasks.filter((t) => t.group === g);
+      const open = all.filter((t) => !t.shared);
+      all.forEach((t, i) => { if (!t.shared) steps.set(t.id, { n: i + 1, head: t === open[0] }); });
+    }
     const sortRank = (arr) => arr.map((t, i) => ({ t, i })).sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i).map((x) => x.t);
     const out = [];
     const loose = todo.filter((t) => !t.group);
     if (loose.length) out.push({ name: null, tasks: sortRank(loose) });
     for (const g of list.groupOrder) {
       const ts = todo.filter((t) => t.group === g);
-      if (ts.length) out.push({ name: g, tasks: sortRank(ts) });
+      if (ts.length) out.push({ name: g, ordered: steps.has(ts[0].id), tasks: steps.has(ts[0].id) ? ts : sortRank(ts) });
     }
     return out;
   }
@@ -99,7 +110,9 @@
     const ordered = groups.flatMap((g) => g.tasks);
     if (!ordered.length) return null;
     const best = Math.min(...ordered.map(rank));
-    return ordered.find((t) => rank(t) === best).id;
+    const tied = ordered.filter((t) => rank(t) === best);
+    // On a tie the next step of a sequence comes before a loose task.
+    return (tied.find((t) => steps.has(t.id)) || tied[0]).id;
   }
 
   const isOpen = (t) => (t.id in ui.expanded ? ui.expanded[t.id] : t.id === currentId || (!t.shared && hasContent(t)));
@@ -219,9 +232,10 @@
     const out = [];
     const tags = [...t.tags].sort((a, b) => (b === 'urgent') - (a === 'urgent') || (b === 'important') - (a === 'important'));
     for (const g of tags) {
-      if (!open && (g === 'urgent' || g === 'important')) continue; // shown as the priority mark instead
+      if (!open && (g === 'urgent' || g === 'important') && !inLaterStep(t)) continue; // shown as the priority mark instead
       out.push(h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)));
     }
+    if (steps.has(t.id)) out.push(h('span', { class: 'chip soft step', title: 'Do the steps in this order' }, `Step ${steps.get(t.id).n}`));
     if (isCurrent && t.group) out.push(h('span', { class: 'chip soft' }, t.group));
     const note = (t.shared ? t.shared.note : noteOf(t)).trim();
     const pics = (t.shared ? t.shared.images : t.draft.images).length;
@@ -231,6 +245,7 @@
   }
 
   function prioMark(t) {
+    if (inLaterStep(t)) return null;
     if (t.tags.includes('urgent')) return h('span', { title: 'Urgent', html: I.urgent });
     if (t.tags.includes('important')) return h('span', { title: 'Important', html: I.important });
     return null;
@@ -714,7 +729,7 @@
   }
 
   function row(t, renderFn, extraKey) {
-    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${extraKey || ''}`;
+    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${steps.has(t.id) ? steps.get(t.id).n + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
     let r = rendered.get(t.id);
     if (!r || r.key !== key) {
       r = { key, el: renderFn(t) };
@@ -772,7 +787,7 @@
       const box = h('section', { class: 'section' });
       if (g.name) {
         const open = !ui.collapsed[g.name];
-        box.append(sectionHead(g.name, g.name, rest.length, open));
+        box.append(sectionHead(g.name, g.name, rest.length, open, g.ordered ? 'in this order' : undefined));
         if (open) rest.forEach((t) => box.append(row(t, renderTodo)));
       } else {
         rest.forEach((t) => box.append(row(t, renderTodo)));
