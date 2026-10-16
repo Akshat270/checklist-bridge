@@ -42,30 +42,38 @@ export async function activate(ctx: vscode.ExtensionContext) {
   fs.mkdirSync(dir, { recursive: true });
   const images = new ImageFiles(path.join(dir, 'images'), log);
   // Windows with no folder open share this storage, so each checklist belongs to one window.
-  const owners = new Ownership(dir);
+  const owners = new Ownership(dir, process.pid, windowId);
   ownersRef = owners;
   const initial: Checklist[] = [];
   const onDisk: string[] = []; // every checklist file, loaded or not, so their screenshots are kept
   const inlineImages: string[] = []; // saved by an older version, with screenshots inside the JSON
-  let othersSkipped = 0;
-  for (const n of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
-    const id = n.slice(0, -'.json'.length);
-    onDisk.push(id);
-    if (!owners.claim(id)) {
-      othersSkipped++;
-      continue;
+  const loaded = new Set<string>();
+  /** Reads every checklist file this window can take. Returns how many belong to another live window. */
+  const loadFromDisk = (into: Checklist[], later = false) => {
+    let skipped = 0;
+    for (const n of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+      const id = n.slice(0, -'.json'.length);
+      if (loaded.has(id)) continue;
+      if (!onDisk.includes(id)) onDisk.push(id);
+      if (!owners.claim(id, later)) {
+        skipped++;
+        continue;
+      }
+      try {
+        const raw = fs.readFileSync(path.join(dir, n), 'utf8');
+        const c = JSON.parse(raw) as Checklist;
+        if (raw.includes('"data":"')) inlineImages.push(c.id);
+        images.index(c);
+        into.push(c);
+        loaded.add(id);
+      } catch (e) {
+        owners.release(id);
+        log(`Skipped an unreadable checklist file ${n}: ${e}`);
+      }
     }
-    try {
-      const raw = fs.readFileSync(path.join(dir, n), 'utf8');
-      const c = JSON.parse(raw) as Checklist;
-      if (raw.includes('"data":"')) inlineImages.push(c.id);
-      images.index(c);
-      initial.push(c);
-    } catch (e) {
-      owners.release(id);
-      log(`Skipped an unreadable checklist file ${n}: ${e}`);
-    }
-  }
+    return skipped;
+  };
+  const othersSkipped = loadFromDisk(initial);
   if (othersSkipped) log(`${othersSkipped} checklist${othersSkipped === 1 ? ' belongs' : 's belong'} to another open window.`);
   try {
     images.cleanup(initial, onDisk);
@@ -576,6 +584,23 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
   }, 1500);
   ctx.subscriptions.push({ dispose: () => clearTimeout(reopen) });
+  // After a reload the old window may still hold its checklists for a moment. Keep looking, and take
+  // each one as soon as it is free, so a checklist never goes missing because we asked too early.
+  // Only checklists last held by this same window (same folder). Windows without a folder have no
+  // stable identity, and there a closing window's checklists go to the next window that starts.
+  const adoptTimer = setInterval(() => {
+    try {
+      const more: Checklist[] = [];
+      loadFromDisk(more, true);
+      for (const c of more) {
+        const mine = store.adopt(c);
+        if (!mine.hidden && !mine.closed) panels.show(mine);
+      }
+    } catch (e) {
+      log(`Could not look for checklists: ${e}`);
+    }
+  }, 2000);
+  ctx.subscriptions.push({ dispose: () => clearInterval(adoptTimer) });
 
   // Connect automatically the first time (or once Claude Code gets installed), keep a working connection
   // healthy, and respect the user's choice if they disconnected.

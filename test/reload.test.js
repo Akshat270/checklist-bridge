@@ -88,6 +88,19 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
   check(r.beforeClick === 1, 'two checklists with the same title, one tab waiting: the other one is reopened');
   check(r.ps.length === 2, 'and clicking the waiting tab brings back the second, without duplicates');
 
+  // The new window starts while the old one is still shutting down and holds the checklist.
+  {
+    fs.rmSync(ST, { recursive: true, force: true });
+    const A = win(); await A.wait('ready');
+    await chatAdd(A.id); await sleep(1500); // let it be saved, as it long has been in a real reload
+    const B = win(); await B.wait('ready');
+    A.send({ cmd: 'quit' }); await A.exited;
+    await sleep(3500);
+    const ps = await B.panels();
+    check(ps.length === 1 && ps[0].tasks.length === 2, 'reload while the old window still holds the checklist: it appears once the old window lets go');
+    B.send({ cmd: 'quit' }); await B.exited;
+  }
+
   const leftovers = fs.readdirSync(path.join(ST, 'checklists')).filter((f) => f.includes('.tmp'));
   check(!leftovers.length, 'no temp files left behind');
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
