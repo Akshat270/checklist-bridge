@@ -28,6 +28,7 @@ function win(name, folder, focused) {
     panels: async () => (w.send({ cmd: 'panels' }), (await wait('panels')).panels),
     user: async (title, msg) => (w.send({ cmd: 'user', title, msg }), wait('done')),
     closeTab: async (title) => (w.send({ cmd: 'closeTab', title }), wait('done')),
+    clickItem: async (title) => (w.send({ cmd: 'clickItem', title }), wait('done')),
     command: async (name, args) => (w.send({ cmd: 'command', name, args }), wait('done')),
     focus: () => w.send({ cmd: 'focus' }),
     quit: () => new Promise((r) => { w.on('exit', r); w.send({ cmd: 'quit' }); }),
@@ -83,6 +84,10 @@ function chat(label, cwd, env = {}) {
   check(!(await U.panels()).some((p) => p.title === 'SP-API keys'), 'hidden checklist stays hidden when Claude adds tasks');
   await U.command('checklistBridge.showAll');
   check((await U.panels()).some((p) => p.title === 'SP-API keys' && p.tasks.length === 2), 'Show all brings it back with the new task');
+
+  // Clicking a checklist in the sidebar list opens it; clicking one that is already open must not close it.
+  await U.clickItem('SP-API keys');
+  check((await U.panels()).some((p) => p.title === 'SP-API keys'), 'clicking an open checklist in the list keeps it open');
 
   // Reload the Unilytic window: checklists restored, chat 1 keeps working with its checklist.
   await U.quit();
