@@ -50,6 +50,8 @@ export class Ownership {
     if (this.owned.has(id)) return true;
     const f = this.file(id);
     if (onlyFromMyWindow) {
+      // Only works for checklists seen held at startup: one created in the last moments before a reload
+      // isn't on disk yet at the first look, so it is never seen and never taken back this way.
       let last = this.lastHeldBy.get(id); // the file is gone once its window handed it back
       try {
         last = (JSON.parse(fs.readFileSync(f, 'utf8')) as OwnerRecord).window;

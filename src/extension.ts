@@ -589,6 +589,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       loadFromDisk(more, true);
       for (const c of more) {
         const mine = store.adopt(c);
+        if (!mine.sessionId.startsWith('demo-')) vscode.commands.executeCommand('setContext', 'checklistBridge.claudeUsed', true);
         if (!mine.hidden && !mine.closed) panels.show(mine);
       }
     } catch (e) {
