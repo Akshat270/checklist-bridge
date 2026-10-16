@@ -36,6 +36,18 @@ function build() {
   await s.handleTool(S, {}, 'checklist_edit', { remove: ['t1', 't2', 't3'] });
   check(c.orderedGroups.length === 0, 'an ordered group with no tasks left is forgotten');
 
+  // Findings from review: nothing is left behind by a name no task uses; moving a task and conflicting lists are explained.
+  let r = await s.handleTool(S, {}, 'checklist_add_tasks', { ordered_groups: ['Typo '], tasks: [{ text: 'x', group: 'Other' }] });
+  check(!c.orderedGroups.includes('Typo ') && !c.groupOrder.includes('Typo ') && /exactly this name/.test(text(r)), 'a name no task uses is not kept, and Claude is told');
+  await s.handleTool(S, {}, 'checklist_add_tasks', { ordered_groups: ['Run'], tasks: [{ text: 'first', group: 'Run' }, { text: 'second', group: 'Run' }] });
+  r = text(await s.handleTool(S, {}, 'checklist_read', {}));
+  check(/\(step 1 of 2\) first/.test(r) && /\(step 2 of 2\) second/.test(r), 'checklist_read shows step numbers for an ordered group');
+  const early = c.tasks.find((x) => x.text === 'x').id;
+  r = text(await s.handleTool(S, {}, 'checklist_edit', { updates: [{ id: early, group: 'Run' }] }));
+  check(/is now step 1 of 3 in "Run"/.test(r), 'moving a task into an ordered group says where it landed');
+  r = text(await s.handleTool(S, {}, 'checklist_edit', { ordered_groups: ['Run'], unordered_groups: ['Run'] }));
+  check(c.orderedGroups.includes('Run') && /both/.test(r), 'a group in both lists stays ordered, with a note');
+
   const old = JSON.parse(JSON.stringify(build().s.get(id) || c)); delete old.orderedGroups;
   check(normalize(old).orderedGroups.length === 0, 'a checklist saved before this change still loads');
 
@@ -61,7 +73,7 @@ function build() {
   const order = await ids(page);
   check(order.indexOf('t1') < order.indexOf('t2') && order.indexOf('t2') < order.indexOf('t3'), `steps stay in Claude's order (${order})`);
   const steps = await page.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
-  check(steps === 'Step 1,Step 2,Step 3', `steps are numbered (${steps})`);
+  check(steps === 'Step 1 of 3,Step 2 of 3,Step 3 of 3', `steps are numbered (${steps})`);
   check(await page.$eval('#task-t3', (e) => !e.querySelector('.prio')), 'the last step gets no priority mark');
   check(await page.$eval('#task-t6', (e) => !!e.querySelector('.prio')), 'a task that can be done in any order keeps its priority mark');
   await page.close();

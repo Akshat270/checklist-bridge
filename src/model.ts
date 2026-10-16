@@ -272,7 +272,8 @@ export const SERVER_INSTRUCTIONS =
   '(run a command, set an env var, create an account or API key, click through a dashboard, test a page, tell you a value), ' +
   'add it with checklist_add_tasks instead of writing the steps in your reply. Whenever the user has to make a decision that can ' +
   'wait while you keep working, ask it with checklist_ask (options, details, your recommendation) instead of listing options in your ' +
-  'reply. If tasks must be done in a fixed order, put them in one group and list it in ordered_groups; tags (urgent, important) only rank ' +
+  'reply. If tasks must be done in a fixed order, put them in one group, add them in that order and list the group in ordered_groups ' +
+  '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups); tags (urgent, important) only rank ' +
   'tasks that can be done in any order. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
   'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
   'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
@@ -606,12 +607,6 @@ export class ChecklistStore {
     const { c, created } = this.ensureList(sessionId, meta, args.title);
     const ids: string[] = [];
     const now = Date.now();
-    for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : []) {
-      const name = str(g, 48);
-      if (!name) continue;
-      if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
-      if (!c.groupOrder.includes(name)) c.groupOrder.push(name);
-    }
     for (const r of raw) {
       const text = (typeof r === 'string' ? str(r, 300) : str(r?.text, 300))!;
       const group = str(r?.group, 48);
@@ -631,12 +626,22 @@ export class ChecklistStore {
       ids.push(t.id);
     }
 
+    // A group only becomes ordered if one of its tasks exists, so no empty group is left behind.
+    const notes: string[] = [];
+    for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : []) {
+      const name = str(g, 48);
+      if (!name) continue;
+      if (!c.tasks.some((t) => t.group === name)) notes.push(`${name}: no task is in a group with exactly this name, so it was not marked as ordered.`);
+      else if (!c.orderedGroups.includes(name)) c.orderedGroups.push(name);
+    }
+
     this.emit({ checklist: c, kind: created ? 'created' : 'tasks-added', added: ids.length });
 
     const range = ids.length === 1 ? ids[0] : `${ids[0]}–${ids[ids.length - 1]}`;
     const lines = [
       `Added ${ids.length} task${ids.length === 1 ? '' : 's'} (${range}) to the checklist "${c.title}" in VS Code.`,
       'The user will share them one by one when ready; you can keep working meanwhile. Use checklist_read to see what they shared.',
+      ...notes,
     ];
     const fresh = this.freshNote(c);
     if (fresh) lines.push(fresh);
@@ -799,7 +804,11 @@ export class ChecklistStore {
       out.push('', 'Tasks waiting on the user (not shared yet, so you cannot know their state):');
       for (const g of groupsOf(c, waiting)) {
         if (g.name) out.push(`  ${g.name}${g.ordered ? ' (to be done in this order)' : ''}:`);
-        for (const t of g.tasks) out.push(`${g.name ? '  ' : ''}- ${t.id} ${t.text}${t.tags.length ? ` [${t.tags.join(', ')}]` : ''}`);
+        const whole = g.ordered ? c.tasks.filter((x) => x.group === g.name) : [];
+        for (const t of g.tasks) {
+          const step = g.ordered ? ` (step ${whole.indexOf(t) + 1} of ${whole.length})` : '';
+          out.push(`${g.name ? '  ' : ''}- ${t.id}${step} ${t.text}${t.tags.length ? ` [${t.tags.join(', ')}]` : ''}`);
+        }
       }
     }
 
@@ -842,6 +851,7 @@ export class ChecklistStore {
       }
     };
 
+    const moved: Task[] = [];
     for (const u of Array.isArray(args.updates) ? args.updates : []) {
       const t = c.tasks.find((x) => x.id === u?.id);
       if (!t) {
@@ -859,6 +869,7 @@ export class ChecklistStore {
       if (typeof u.group === 'string') {
         t.group = str(u.group, 48);
         if (t.group && !c.groupOrder.includes(t.group)) c.groupOrder.push(t.group);
+        if (t.group) moved.push(t);
       }
       t.rev++;
     }
@@ -908,6 +919,8 @@ export class ChecklistStore {
     if (Array.isArray(args.unordered_groups)) {
       const off = args.unordered_groups.map((g: unknown) => str(g, 48));
       c.orderedGroups = c.orderedGroups.filter((g) => !off.includes(g));
+      for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : [])
+        if (off.includes(str(g, 48))) notes.push(`${g} was in both ordered_groups and unordered_groups, so it is ordered.`);
     }
     if (Array.isArray(args.ordered_groups)) {
       for (const g of args.ordered_groups) {
@@ -919,6 +932,12 @@ export class ChecklistStore {
     }
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
     c.orderedGroups = c.orderedGroups.filter((g) => c.groupOrder.includes(g));
+    // Steps follow the order the tasks were added, so a task moved into an ordered group keeps its old place in line.
+    for (const t of moved) {
+      if (!t.group || !c.orderedGroups.includes(t.group)) continue;
+      const whole = c.tasks.filter((x) => x.group === t.group);
+      notes.push(`${t.id} is now step ${whole.indexOf(t) + 1} of ${whole.length} in "${t.group}" (steps follow the order the tasks were added).`);
+    }
 
     this.emit({ checklist: c, kind: 'updated' });
     return ok(['Checklist updated.', ...notes].join('\n'));
