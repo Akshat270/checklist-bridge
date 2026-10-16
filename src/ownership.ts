@@ -25,7 +25,9 @@ function alive(pid: number) {
 
 export class Ownership {
   private owned = new Set<string>();
-  private lastHeldBy = new Map<string, string | undefined>(); // which window held each checklist when we last looked
+  // Claims by other windows we have noticed, and which window each came from. An entry goes once the
+  // checklist is ours, or its claim file has been gone for a minute with nothing to take.
+  private seen = new Map<string, { window?: string; at: number }>();
   readonly token = randomUUID();
 
   constructor(private dir: string, private pid = process.pid, private windowId?: string) {
@@ -45,22 +47,32 @@ export class Ownership {
    * holder hands it back before its checklist file shows up (a window saves and lets go as it closes).
    */
   observe() {
+    const now = Date.now();
+    const present = new Set<string>();
     let names: string[] = [];
     try {
       names = fs.readdirSync(this.dir).filter((n) => n.endsWith('.owner'));
     } catch {
-      return;
+      /* nothing to look at */
     }
     for (const n of names) {
       const id = n.slice(0, -'.owner'.length);
       if (this.owned.has(id)) continue;
       try {
         const rec = JSON.parse(fs.readFileSync(path.join(this.dir, n), 'utf8')) as OwnerRecord;
-        if (rec.token !== this.token) this.lastHeldBy.set(id, rec.window);
+        if (rec.token === this.token) continue;
+        present.add(id);
+        this.seen.set(id, { window: rec.window, at: now });
       } catch {
         /* just removed or unreadable: nothing to note */
       }
     }
+    for (const [id, e] of this.seen) if (this.owned.has(id) || (!present.has(id) && now - e.at > 60_000)) this.seen.delete(id);
+  }
+
+  /** How many checklists held by other windows we are keeping an eye on. */
+  waitingOn() {
+    return this.seen.size;
   }
 
   /**
@@ -73,17 +85,17 @@ export class Ownership {
     if (this.owned.has(id)) return true;
     const f = this.file(id);
     if (onlyFromMyWindow) {
-      let last = this.lastHeldBy.get(id); // the file is gone once its window handed it back
       try {
-        last = (JSON.parse(fs.readFileSync(f, 'utf8')) as OwnerRecord).window;
-        this.lastHeldBy.set(id, last);
+        this.seen.set(id, { window: (JSON.parse(fs.readFileSync(f, 'utf8')) as OwnerRecord).window, at: Date.now() });
       } catch {
         /* handed back or unreadable: go by what we saw before */
       }
+      const e = this.seen.get(id); // the file is gone once its window handed it back
+      const last = e?.window;
       // Claims written by 0.5.0 name no window. For a folder window (stable id) that is still ours to
       // take, so the first reload after an update works too. A folder window's storage belongs to its
       // workspace alone, so nobody else can have held it. A folderless window never matches.
-      const oldClaim = last === undefined && this.lastHeldBy.has(id);
+      const oldClaim = !!e && last === undefined;
       if (!this.windowId || (last !== this.windowId && !(oldClaim && this.windowId.startsWith('ws-')))) return false;
     }
     const mine = JSON.stringify({ pid: this.pid, token: this.token, window: this.windowId } satisfies OwnerRecord);
@@ -91,6 +103,7 @@ export class Ownership {
       try {
         fs.writeFileSync(f, mine, { flag: 'wx' }); // only succeeds if nobody owns it
         this.owned.add(id);
+        this.seen.delete(id);
         return true;
       } catch (e: any) {
         if (e?.code !== 'EEXIST') throw e;
@@ -104,9 +117,10 @@ export class Ownership {
       } catch {
         /* unreadable or just removed: treat as stale */
       }
-      if (rec) this.lastHeldBy.set(id, rec.window);
+      if (rec) this.seen.set(id, { window: rec.window, at: Date.now() });
       if (rec?.token === this.token) {
         this.owned.add(id);
+        this.seen.delete(id);
         return true;
       }
       const bootedAt = Date.now() - os.uptime() * 1000 - 60_000;
@@ -120,7 +134,6 @@ export class Ownership {
   /** Stop owning a checklist (deleted, or the window is closing). */
   release(id: string) {
     if (!this.owned.delete(id)) return;
-    this.lastHeldBy.set(id, this.windowId); // so we can take it back if we let go too soon (a failed read)
     try {
       const rec: OwnerRecord = JSON.parse(fs.readFileSync(this.file(id), 'utf8'));
       if (rec.token === this.token) fs.rmSync(this.file(id), { force: true });

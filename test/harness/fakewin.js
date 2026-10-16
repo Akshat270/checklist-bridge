@@ -35,7 +35,7 @@ const vscode = {
     state: { focused: focused === '1' },
     terminals,
     // Tabs VS Code is still holding from before the restart, not yet handed back (env TABS='["title"]').
-    tabGroups: { all: [{ tabs: JSON.parse(process.env.TABS || '[]').map((label) => ({ label, input: { viewType: 'mainThreadWebview-checklistBridge.checklist' } })) }] },
+    tabGroups: { get all() { const tab = (label) => ({ label, input: { viewType: 'mainThreadWebview-checklistBridge.checklist' } }); return [{ tabs: [...JSON.parse(process.env.TABS || '[]'), ...panels.filter((p) => !p.gone).map((p) => p.title)].map(tab) }]; } },
     onDidOpenTerminal: (fn) => (termOpen.push(fn), noop),
     onDidCloseTerminal: () => noop,
     setStatusBarMessage: (m) => (say({ log: `[${name}] STATUS ${m}` }), noop),
@@ -63,7 +63,7 @@ const vscode = {
     },
   },
   commands: { registerCommand: (n, f) => ((commands[n] = f), noop), executeCommand: (n, ...a) => { if (n === 'setContext') { say({ context: { [a[0]]: a[1] } }); return Promise.resolve(); } if (n.startsWith('workbench.')) { say({ log: `[${name}] VSCODE ${n} ${a.map(String).join(' ')}` }); return Promise.resolve(); } return commands[n](...a); } },
-  workspace: { name, workspaceFolders: [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: (section) => config(section) },
+  workspace: { name, workspaceFolders: process.env.CB_FOLDERLESS ? undefined : [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: (section) => config(section) },
   env: { clipboard: { writeText: async (t) => say({ clipboard: t }) }, openExternal: async (u) => (say({ opened: String(u) }), true) },
   extensions: { getExtension: (id) => (process.env.HAS_OLD === '1' && id === 'akshat.checklist-bridge' ? { id } : undefined) },
 };
