@@ -44,7 +44,7 @@ function build() {
   check(/\(step 1 of 2\) first/.test(r) && /\(step 2 of 2\) second/.test(r), 'checklist_read shows step numbers for an ordered group');
   const early = c.tasks.find((x) => x.text === 'x').id;
   r = text(await s.handleTool(S, {}, 'checklist_edit', { updates: [{ id: early, group: 'Run' }] }));
-  check(/is now step 1 of 3 in "Run"/.test(r), 'moving a task into an ordered group says where it landed');
+  check(/is now the last step \(step 3 of 3\) in "Run"/.test(r) && c.tasks.filter((x) => x.group === 'Run').pop().id === early, 'a task moved into an ordered group becomes its last step, and Claude is told');
   r = text(await s.handleTool(S, {}, 'checklist_edit', { ordered_groups: ['Run'], unordered_groups: ['Run'] }));
   check(c.orderedGroups.includes('Run') && /both/.test(r), 'a group in both lists stays ordered, with a note');
 
