@@ -87,14 +87,19 @@
   const ready = (t) => !t.shared && (t.draft.done || hasContent(t));
 
   /** To-do tasks in display order: ungrouped first, then Claude's group order; urgent before important before the rest. */
+  /** Step number and total for each unshared task of an ordered group; `head` is the step to do now. */
+  function stepsOf(l) {
+    const out = new Map();
+    for (const g of l.orderedGroups || []) {
+      const all = l.tasks.filter((t) => t.group === g);
+      const open = all.filter((t) => !t.shared);
+      all.forEach((t, i) => { if (!t.shared) out.set(t.id, { n: i + 1, of: all.length, head: t === open[0] }); });
+    }
+    return out;
+  }
+
   function todoGroups() {
     const todo = list.tasks.filter((t) => !t.shared);
-    steps = new Map();
-    for (const g of list.orderedGroups || []) {
-      const all = list.tasks.filter((t) => t.group === g);
-      const open = all.filter((t) => !t.shared);
-      all.forEach((t, i) => { if (!t.shared) steps.set(t.id, { n: i + 1, head: t === open[0] }); });
-    }
     const sortRank = (arr) => arr.map((t, i) => ({ t, i })).sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i).map((x) => x.t);
     const out = [];
     const loose = todo.filter((t) => !t.group);
@@ -112,7 +117,7 @@
     const best = Math.min(...ordered.map(rank));
     const tied = ordered.filter((t) => rank(t) === best);
     // On a tie the next step of a sequence comes before a loose task.
-    return (tied.find((t) => steps.has(t.id)) || tied[0]).id;
+    return (tied.find((t) => steps.has(t.id) && steps.get(t.id).head) || tied[0]).id;
   }
 
   const isOpen = (t) => (t.id in ui.expanded ? ui.expanded[t.id] : t.id === currentId || (!t.shared && hasContent(t)));
@@ -235,7 +240,7 @@
       if (!open && (g === 'urgent' || g === 'important') && !inLaterStep(t)) continue; // shown as the priority mark instead
       out.push(h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)));
     }
-    if (steps.has(t.id)) out.push(h('span', { class: 'chip soft step', title: 'Do the steps in this order' }, `Step ${steps.get(t.id).n}`));
+    if (steps.has(t.id)) out.push(h('span', { class: 'chip soft step', title: 'Do the steps in this order' }, `Step ${steps.get(t.id).n} of ${steps.get(t.id).of}`));
     if (isCurrent && t.group) out.push(h('span', { class: 'chip soft' }, t.group));
     const note = (t.shared ? t.shared.note : noteOf(t)).trim();
     const pics = (t.shared ? t.shared.images : t.draft.images).length;
@@ -729,7 +734,7 @@
   }
 
   function row(t, renderFn, extraKey) {
-    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${steps.has(t.id) ? steps.get(t.id).n + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
+    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
     let r = rendered.get(t.id);
     if (!r || r.key !== key) {
       r = { key, el: renderFn(t) };
@@ -748,6 +753,7 @@
     const liveQs = list.questions.filter((q) => !q.retired).length;
     $('#task-count').textContent = [list.tasks.length && plural(list.tasks.length, 'task', 'tasks'), liveQs && plural(liveQs, 'question', 'questions')].filter(Boolean).join(', ');
 
+    steps = stepsOf(list);
     const groups = todoGroups();
     currentId = pickCurrent(groups);
     renderProgress();
