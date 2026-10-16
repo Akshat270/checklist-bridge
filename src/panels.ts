@@ -55,6 +55,10 @@ export class Panels {
     }
   }
 
+  openIds() {
+    return [...this.open.keys()];
+  }
+
   isOpen(id: string) {
     return this.open.has(id);
   }

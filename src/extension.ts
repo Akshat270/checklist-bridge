@@ -47,16 +47,36 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const initial: Checklist[] = [];
   const onDisk: string[] = []; // every checklist file, loaded or not, so their screenshots are kept
   const inlineImages: string[] = []; // saved by an older version, with screenshots inside the JSON
-  const loaded = new Set<string>(); // ours already, or given up on
-  const readFailures = new Map<string, number>();
+  const loaded = new Set<string>(); // ours already, or deleted here
+  const retries = new Map<string, number>(); // files we hold but couldn't read yet (locked for a moment?)
+  const read = (id: string, n: string, into: Checklist[]) => {
+    try {
+      const raw = fs.readFileSync(path.join(dir, n), 'utf8');
+      const c = JSON.parse(raw) as Checklist;
+      if (raw.includes('"data":"')) inlineImages.push(c.id);
+      images.index(c);
+      into.push(c);
+      loaded.add(id);
+      retries.delete(id);
+    } catch (e) {
+      const tries = (retries.get(id) ?? 0) + 1;
+      retries.set(id, tries);
+      if (tries === 1) log(`Could not read checklist file ${n}, will keep trying for a while: ${e}`);
+    }
+  };
   /** Reads every checklist file this window can take. Returns how many belong to another live window. */
   const loadFromDisk = (into: Checklist[], later = false) => {
     let skipped = 0;
     owners.observe();
     for (const n of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
       const id = n.slice(0, -'.json'.length);
-      if (loaded.has(id) || owners.owns(id)) continue; // already ours (loaded, or created here since)
+      if (loaded.has(id)) continue;
       if (!onDisk.includes(id)) onDisk.push(id);
+      if (retries.has(id)) {
+        read(id, n, into); // its claim is ours, only reading it failed
+        continue;
+      }
+      if (owners.owns(id)) continue; // created here since
       let mine = false;
       try {
         mine = owners.claim(id, later);
@@ -67,25 +87,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
         skipped++;
         continue;
       }
-      try {
-        const raw = fs.readFileSync(path.join(dir, n), 'utf8');
-        const c = JSON.parse(raw) as Checklist;
-        if (raw.includes('"data":"')) inlineImages.push(c.id);
-        images.index(c);
-        into.push(c);
-        loaded.add(id);
-      } catch (e) {
-        // Maybe only locked for a moment (antivirus, sync): let go and try again a few times.
-        owners.release(id);
-        const tries = (readFailures.get(id) ?? 0) + 1;
-        readFailures.set(id, tries);
-        if (tries >= 5) loaded.add(id);
-        if (tries === 1 || tries >= 5) log(`Could not read checklist file ${n}${tries >= 5 ? ', giving up' : ', will try again'}: ${e}`);
-      }
+      read(id, n, into);
     }
     return skipped;
   };
   const othersSkipped = loadFromDisk(initial);
+  let skippedLast = othersSkipped;
   if (othersSkipped) log(`${othersSkipped} checklist${othersSkipped === 1 ? ' belongs' : 's belong'} to another open window.`);
   try {
     images.cleanup(initial, onDisk);
@@ -180,6 +187,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
   store.onChange((e) => {
     const c = e.checklist;
     if (e.kind === 'removed') {
+      loaded.add(c.id); // deleted here: never read it back, even if its file lingers
+      retries.delete(c.id);
       saver.remove(c.id);
       owners.release(c.id);
       return refreshChrome();
@@ -594,6 +603,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
     for (const t of (vscode.window.tabGroups?.all ?? []).flatMap((g) => g.tabs))
       if (String((t.input as { viewType?: string } | undefined)?.viewType ?? '').endsWith(VIEW_TYPE))
         waiting.set(t.label, (waiting.get(t.label) ?? 0) + 1);
+    // Tabs of checklists we have open are not waiting for anything.
+    for (const id of panels.openIds()) {
+      const t = store.get(id)?.title;
+      if (t && waiting.get(t)) waiting.set(t, waiting.get(t)! - 1);
+    }
     for (const c of lists) {
       if (c.hidden || c.closed || panels.isOpen(c.id)) continue;
       const n = waiting.get(c.title) ?? 0;
@@ -607,13 +621,23 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // each one as soon as it is free, so a checklist never goes missing because we asked too early.
   // Only checklists last held by this same window (same folder). Windows without a folder have no
   // stable identity, and there a closing window's checklists go to the next window that starts.
-  // Every 2 s for the first minute, then every 30 s in case the old window was very slow to let go.
+  // Keep looking while there is something to wait for: a checklist the old window still holds, or a
+  // file we couldn't read yet. Every 2 s for the first minute, then every 30 s, for up to 10 minutes.
+  // Only windows with a stable id can take back what an earlier copy of them held; folderless ones
+  // just retry their own unreadable files.
   const lookStart = Date.now();
+  const stable = !windowId.startsWith('empty-');
   let lookTimer: NodeJS.Timeout | undefined;
+  const scheduleLook = () => {
+    const age = Date.now() - lookStart;
+    if (!(retries.size > 0 || (stable && (skippedLast > 0 || owners.waitingOn() > 0)))) return;
+    if (age > 10 * 60_000) return void (retries.size && log(`Gave up reading ${retries.size} checklist file(s).`));
+    lookTimer = setTimeout(lookAgain, age < 60_000 ? 2000 : 30_000);
+  };
   const lookAgain = () => {
     try {
       const more: Checklist[] = [];
-      loadFromDisk(more, true);
+      skippedLast = loadFromDisk(more, true);
       const adopted: Checklist[] = [];
       for (const c of more) {
         const mine = store.adopt(c);
@@ -625,9 +649,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
     } catch (e) {
       log(`Could not look for checklists: ${e}`);
     }
-    lookTimer = setTimeout(lookAgain, Date.now() - lookStart < 60_000 ? 2000 : 30_000);
+    scheduleLook();
   };
-  if (!windowId.startsWith('empty-')) lookTimer = setTimeout(lookAgain, 2000); // no stable identity: nothing here could be ours
+  scheduleLook();
   ctx.subscriptions.push({ dispose: () => lookTimer && clearTimeout(lookTimer) });
 
   // Connect automatically the first time (or once Claude Code gets installed), keep a working connection

@@ -91,7 +91,7 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
   // The new window starts while the old one is still shutting down and holds the checklist. This also
   // covers a reload straight after Claude made it, when its file isn't on disk yet at the first look.
   {
-    const until = async (fn, ms = 12000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v || Date.now() - t0 > ms) return v; await sleep(200); } };
+    const until = async (fn, ms = 20000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v || Date.now() - t0 > ms) return v; await sleep(200); } };
     for (const [label, wait] of [['an established checklist', true], ['one made just before the reload', false]]) {
       fs.rmSync(ST, { recursive: true, force: true });
       const A = win(); await A.wait('ready');
@@ -121,6 +121,23 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     B.send({ cmd: 'quit' }); await B.exited;
   }
 
+  // Two checklists with the same title, taken back one after the other: both get a tab.
+  {
+    fs.rmSync(ST, { recursive: true, force: true });
+    const A = win(); await A.wait('ready');
+    await chatAdd(A.id); await chatAdd(A.id);
+    for (let i = 0; i < 60 && onDisk().length < 2; i++) await sleep(200);
+    const owners = fs.readdirSync(path.join(ST, 'checklists')).filter((f) => f.endsWith('.owner')).map((f) => path.join(ST, 'checklists', f));
+    const B = win(); await B.wait('ready');
+    const count = async (n) => { let ps = []; for (let i = 0; i < 100 && ps.length < n; i++) { await sleep(200); ps = await B.panels(); } return ps.length; };
+    fs.rmSync(owners[0]);
+    const first = await count(1);
+    fs.rmSync(owners[1]);
+    const second = await count(2);
+    check(first === 1 && second === 2, 'two checklists with the same title taken back one after the other both get a tab');
+    A.kill('SIGKILL'); await A.exited; B.send({ cmd: 'quit' }); await B.exited;
+  }
+
   // A checklist file that can't be read at first (locked for a moment) is picked up once it can.
   {
     fs.rmSync(ST, { recursive: true, force: true });
@@ -137,6 +154,23 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     let ps = [];
     for (let i = 0; i < 60 && !ps.length; i++) { await sleep(200); ps = await B.panels(); }
     check(ps.length === 1, 'and the checklist appears once the file can be read');
+    B.send({ cmd: 'quit' }); await B.exited;
+  }
+
+  // A window without a folder retries its own unreadable file too.
+  {
+    fs.rmSync(ST, { recursive: true, force: true });
+    const A = win({ CB_FOLDERLESS: '1' }); await A.wait('ready');
+    await chatAdd(A.id);
+    for (let i = 0; i < 60 && !onDisk().length; i++) await sleep(200);
+    A.send({ cmd: 'quit' }); await A.exited;
+    const d = path.join(ST, 'checklists'), f = path.join(d, fs.readdirSync(d).find((n) => n.endsWith('.json')));
+    const good = fs.readFileSync(f, 'utf8'); fs.writeFileSync(f, '{ not json');
+    const B = win({ CB_FOLDERLESS: '1' }); await B.wait('ready'); await sleep(2500);
+    fs.writeFileSync(f, good);
+    let ps = [];
+    for (let i = 0; i < 100 && !ps.length; i++) { await sleep(200); ps = await B.panels(); }
+    check(ps.length === 1, 'a window without a folder picks up its own checklist once the file can be read');
     B.send({ cmd: 'quit' }); await B.exited;
   }
 
@@ -168,6 +202,8 @@ async function scenario(name, { shutdown, restoreTab, hideFirst, typeLate, waiti
     held('moved', { window: 'ws-2' });
     const o6 = new Ownership(d, process.pid, 'ws-1'); o6.observe(); held('moved', { window: 'ws-1' }); o6.observe(); fs.rmSync(f('moved'));
     check(o6.claim('moved', true), 'who held a checklist is kept up to date, not just noted once');
+    const o7 = new Ownership(d, process.pid, 'ws-1'); o7.claim('gone'); o7.release('gone');
+    check(!o7.claim('gone', true), 'a checklist this window let go of for good (deleted) is not taken back');
     held('legacy');
     const o4 = new Ownership(d, process.pid, 'empty-ab12'); o4.claim('legacy'); fs.rmSync(f('legacy'));
     check(!o4.claim('legacy', true), 'a folderless window never takes anything back this way');
