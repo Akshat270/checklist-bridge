@@ -115,6 +115,8 @@ svg { display: block; flex: none; }
 .task + .task { margin-top: 1px; }
 /* Steps of an ordered group: a hairline from one checkbox down to the next, and none after the last step. */
 .task.link::before { content: ''; position: absolute; left: 17.25px; top: 29px; bottom: -10px; width: 1.5px; background: var(--line-strong); }
+/* An open step is a card: the line does not run through it, only from its bottom edge to the next step. */
+.task.link.open::before { top: 100%; }
 .row {
   /* minmax(0, 1fr): the text column may shrink below its longest word or label, so the right side stays inside the card. */
   display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; column-gap: 10px;

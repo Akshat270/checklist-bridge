@@ -98,6 +98,7 @@ function build() {
   page = await open(list);
   check((await next(page)) === 't1', 'the first step is the next task, not the one tagged important');
   check((await where(page)) === 'Release', 'the next task, being a step, stays in its Release section instead of being pinned above');
+  check(await page.$eval('#task-t1', (e) => e.classList.contains('link') && parseFloat(getComputedStyle(e, '::before').top) >= e.offsetHeight - 1), 'the line between steps does not run through an open step, only below it');
   check(await page.$eval('#task-t1', (e) => e.classList.contains('open') && !!e.closest('section').querySelector('#task-t2') && !e.querySelector('.chip.soft:not(.step)')), 'it is open in its place, ahead of the later steps, without a repeated group chip');
   await page.close();
   list.tasks[0].shared = { at: 1, done: true, note: '', images: [] };
