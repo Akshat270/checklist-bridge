@@ -118,11 +118,12 @@ async function compose(b) {
   h1{font-size:60px;line-height:1.04;margin:18px 0 22px;font-weight:800;letter-spacing:-.02em}
   p{font-size:23px;line-height:1.4;color:#b9bad0}
   .pills{display:flex;gap:10px;margin-top:30px;flex-wrap:wrap}.pills span{border:1px solid #3a3a5a;background:#1d1d2e;border-radius:99px;padding:8px 16px;font-size:16px;color:#cfd0e6}
-  .p{position:absolute;border-radius:14px;box-shadow:0 30px 70px #000a,0 0 0 1px #ffffff1a;overflow:hidden;width:262px}
+  .p{position:absolute;border-radius:14px;box-shadow:0 30px 70px #000a,0 0 0 1px #ffffff1a;overflow:hidden;width:272px;height:560px}
+  .p:after{content:'';position:absolute;left:0;right:0;bottom:0;height:90px;background:linear-gradient(transparent,#14141f)}
   .p img{display:block;width:100%}
   </style><div class="l"><div class="k">For Claude Code in VS Code</div><h1>Stop hunting for manual steps in the chat.</h1><p>Every Claude chat gets its own checklist for the things only you can do, and the decisions you can make later.</p><div class="pills"><span>Tasks &amp; questions</span><span>Notes &amp; screenshots</span><span>Claude sees only what you share</span></div></div>
-  <div class="p" style="left:700px;top:40px;transform:rotate(-2deg)"><img src="${img('checklist-steps.png')}"></div>
-  <div class="p" style="left:985px;top:110px;transform:rotate(2deg)"><img src="${img('checklist-decide.png')}"></div>`;
+  <div class="p" style="left:690px;top:50px"><img src="${img('checklist-steps.png')}"></div>
+  <div class="p" style="left:978px;top:50px"><img src="${img('checklist-decide.png')}"></div>`;
   const how = `<style>${base}
   body{width:1280px;height:290px;background:#14141f;padding:34px 40px;position:relative}
   .row{display:flex;gap:18px;align-items:stretch}.c{flex:1;background:#1d1d2e;border:1px solid #33334f;border-radius:16px;padding:22px 22px 20px;position:relative}
@@ -135,7 +136,7 @@ async function compose(b) {
   <div class="c"><div class="n">3</div><h3>You press Share</h3><p>One task at a time, or Share all. Change your mind and you can take it back.</p></div>
   <div class="c"><div class="n">4</div><h3>Claude reads what you shared</h3><p>Done, not done, your notes and screenshots. Nothing is assumed.</p></div></div>`;
   for (const [name, html, w, h] of [['hero.png', hero, 1280, 640], ['how-it-works.png', how, 1280, 290]]) {
-    const p = await b.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+    const p = await b.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 2 });
     await p.setContent(`<!doctype html><html><body>${html}</body></html>`);
     await p.waitForTimeout(200);
     await p.screenshot({ path: path.join(OUT, name) });
