@@ -1,10 +1,11 @@
 # Changelog
 
 ## Unreleased
-- **Steps that must be done in order now show in order.** When Claude says a group of tasks has to be done one after another, they show together as numbered steps (Step 1, Step 2…) in Claude's order. An *important* or *urgent* tag can no longer move a later step to the top or make it the next task. Tasks that can be done in any order are still sorted by their tags. When the next task is one of the steps, it stays in its group, open, in its place in the order, and the line between steps does not run through it.
-- **Claude can reorder the steps of an ordered group** if it gets the order wrong or something changes. The steps are renumbered and shown in the new order.
-- **Smaller open tasks.** The *Add image* button is now a small picture icon in the corner of the note box, so an open task no longer has a row of its own for it. The *Share* buttons still appear once you tick the task or write a note. You can still paste an image into the note.
-- **Task ids moved to the right edge of each row** (t1, q2…), in a quiet column, so they no longer sit in front of the title. Click one to copy it, as before.
+- **Steps that must be done in order now show in order.** Claude can mark a group of tasks as steps. They show as Step 1, Step 2 and so on, in Claude's order. An *important* or *urgent* tag no longer moves a later step to the top.
+- The next task stays in its group when it is a step. Tasks that can be done in any order are still sorted by their tags.
+- Claude can reorder the steps later if the plan changes. Steps you have already shared stay where they are.
+- **Open tasks are shorter.** *Add image* is now a small picture icon in the corner of the note box. You can still paste an image into the note.
+- **Task ids** (t1, q2…) now sit at the right edge of each row, not in front of the title. Click one to copy it, as before.
 
 ## 0.5.1
 - Fixed checklists going missing after **Reload Window**. If the old window was slow to close, the new one skipped your checklists and never looked again, so the tab stayed closed and the list was empty. It now keeps looking and brings them back as soon as they are free.

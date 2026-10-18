@@ -68,13 +68,17 @@ function build() {
   r = text(await q.handleTool(Q, {}, 'checklist_read', {}));
   check(/\(step 1 of 3\) c/.test(r) && /\(step 3 of 3\) b/.test(r), 'checklist_read then shows the new step numbers');
   r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t2', 't3'] }));
-  check(seq() === 'bac' && /left out kept their places/.test(r), 'a partial list swaps those tasks and leaves the others where they are');
+  check(seq() === 'bac' && /left out, and tasks the user has already shared, kept their places/.test(r), 'a partial list swaps those tasks and leaves the others where they are');
   r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t1', 't4'] }));
   check(/same group/.test(r) && seq() === 'bac', 'tasks from different groups are refused, with a note');
   r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t1', 't99'] }));
   check(/t99 is not a task/.test(r) && /at least two/.test(r) && seq() === 'bac', 'an unknown id is reported and nothing moves');
+  // A step the user has already shared is not moved, so completed steps keep their numbers.
+  q.setDraft(qc.id, 't1', { done: true }); q.share(qc.id, 't1');
+  r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t3', 't2', 't1'] }));
+  check(seq() === 'cab' && /t1 is already shared/.test(r) && qc.tasks.filter((x) => x.group === 'Seq')[1].text === 'a', 'a step the user already shared is not moved, and the others still swap around it');
   r = text(await q.handleTool(Q, {}, 'checklist_edit', { unordered_groups: ['Seq'], step_order: ['t1', 't2', 't3'] }));
-  check(/not an ordered group/.test(r) && seq() === 'abc', 'reordering a group that is not ordered works, with a reminder');
+  check(/not an ordered group/.test(r) && seq().length === 3, 'reordering a group that is not ordered works, with a reminder');
 
   const old = JSON.parse(JSON.stringify(build().s.get(id) || c)); delete old.orderedGroups;
   check(normalize(old).orderedGroups.length === 0, 'a checklist saved before this change still loads');

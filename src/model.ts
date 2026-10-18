@@ -263,7 +263,7 @@ export const TOOLS = [
         step_order: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Task ids of ONE group in the order they should now come, e.g. ["t4","t2","t3"]. Use it to reorder the steps of an ordered group. Tasks you leave out keep their places.',
+          description: 'Task ids of ONE group in the order they should now come, e.g. ["t4","t2","t3"]. Use it to reorder the steps of an ordered group. Tasks you leave out, and tasks the user has already shared, keep their places.',
         },
         ordered_groups: { type: 'array', items: { type: 'string' }, description: 'Mark these groups as sequences: their tasks must be done in the order they were added.' },
         unordered_groups: { type: 'array', items: { type: 'string' }, description: 'Stop treating these groups as sequences.' },
@@ -617,16 +617,17 @@ export class ChecklistStore {
     const found: Task[] = [];
     for (const id of [...new Set(order.map((x) => String(x)))]) {
       const t = c.tasks.find((x) => x.id === id);
-      if (t) found.push(t);
-      else notes.push(`step_order: ${id} is not a task.`);
+      if (!t) notes.push(`step_order: ${id} is not a task.`);
+      else if (t.shared) notes.push(`step_order: ${id} is already shared by the user, so it stays where it is.`);
+      else found.push(t);
     }
-    if (found.length < 2) return void notes.push('step_order: list at least two tasks of the same group.');
+    if (found.length < 2) return void notes.push('step_order: list at least two tasks of the same group that the user has not shared yet.');
     const group = found[0].group;
     if (!group || found.some((t) => t.group !== group)) return void notes.push('step_order: all the tasks must be in the same group, so the order was not changed.');
     const slots = c.tasks.map((t, i) => (found.includes(t) ? i : -1)).filter((i) => i >= 0);
     slots.forEach((slot, k) => (c.tasks[slot] = found[k]));
     const whole = c.tasks.filter((t) => t.group === group);
-    notes.push(`"${group}" is now in this order: ${whole.map((t) => t.id).join(', ')}.` + (whole.length > found.length ? ' Tasks you left out kept their places.' : ''));
+    notes.push(`"${group}" is now in this order: ${whole.map((t) => t.id).join(', ')}.` + (whole.length > found.length ? ' Tasks you left out, and tasks the user has already shared, kept their places.' : ''));
     if (!c.orderedGroups.includes(group)) notes.push(`"${group}" is not an ordered group, so the order only matters once you list it in ordered_groups.`);
   }
 
