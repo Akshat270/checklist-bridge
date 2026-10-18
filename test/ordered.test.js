@@ -75,11 +75,16 @@ function build() {
     return page;
   }
   const ids = (page) => page.$$eval('.task', (xs) => xs.map((x) => x.dataset.id).join(' '));
-  const next = (page) => page.$eval('[aria-label="Next task"] .task', (x) => x.dataset.id).catch(() => null);
+  const next = (page) => page.$eval('.task.current', (x) => x.dataset.id).catch(() => null);
+  // Where the next task is shown: the section named by its heading, or pinned above as "Next task".
+  const where = (page) => page.$eval('.task.current', (x) => {
+    const sec = x.closest('section');
+    return sec.getAttribute('aria-label') === 'Next task' ? 'pinned' : (sec.querySelector('.section-head span') || {}).textContent;
+  }).catch(() => null);
 
   let list = JSON.parse(JSON.stringify(build().s.all()[0]));
   let page = await open(list);
-  check((await next(page)) === 't4', 'an important task that can be done in any order is still the next task');
+  check((await next(page)) === 't4' && (await where(page)) === 'pinned', 'an important task that can be done in any order is still the next task, pinned above');
   const order = await ids(page);
   check(order.indexOf('t1') < order.indexOf('t2') && order.indexOf('t2') < order.indexOf('t3'), `steps stay in Claude's order (${order})`);
   const steps = await page.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
@@ -92,10 +97,12 @@ function build() {
   list.tasks = list.tasks.filter((x) => !['t4', 't5', 't6'].includes(x.id));
   page = await open(list);
   check((await next(page)) === 't1', 'the first step is the next task, not the one tagged important');
+  check((await where(page)) === 'Release', 'the next task, being a step, stays in its Release section instead of being pinned above');
+  check(await page.$eval('#task-t1', (e) => e.classList.contains('open') && !!e.closest('section').querySelector('#task-t2') && !e.querySelector('.chip.soft:not(.step)')), 'it is open in its place, ahead of the later steps, without a repeated group chip');
   await page.close();
   list.tasks[0].shared = { at: 1, done: true, note: '', images: [] };
   page = await open(list);
-  check((await next(page)) === 't2', 'after step 1 is shared, step 2 is next');
+  check((await next(page)) === 't2' && (await where(page)) === 'Release', 'after step 1 is shared, step 2 is next, still in its section');
   await page.close();
 
   await b.close();

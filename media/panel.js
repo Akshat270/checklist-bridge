@@ -82,6 +82,8 @@
   let steps = new Map();
   // Steps drawn with a line down to the next step (every shown step of an ordered group except the last). Rebuilt on every render.
   let linked = new Set();
+  // The next task is one step of an ordered group: it stays in its group, in its place in the sequence, instead of being pinned above.
+  let currentInPlace = false;
   const inLaterStep = (t) => steps.has(t.id) && !steps.get(t.id).head;
   // Tags rank tasks that can be done in any order. A later step in a sequence never jumps the queue.
   const rank = (t) => (inLaterStep(t) ? 2 : tagRank(t));
@@ -243,7 +245,7 @@
       out.push(h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)));
     }
     if (steps.has(t.id)) out.push(h('span', { class: 'chip soft step', title: 'Do the steps in this order' }, `Step ${steps.get(t.id).n} of ${steps.get(t.id).of}`));
-    if (isCurrent && t.group) out.push(h('span', { class: 'chip soft' }, t.group));
+    if (isCurrent && t.group && !currentInPlace) out.push(h('span', { class: 'chip soft' }, t.group));
     const note = (t.shared ? t.shared.note : noteOf(t)).trim();
     const pics = (t.shared ? t.shared.images : t.draft.images).length;
     if (!open && note) out.push(h('span', { class: 'chip soft', title: 'Has a note', html: `${I.note}<span>Note</span>` }));
@@ -739,7 +741,7 @@
   }
 
   function row(t, renderFn, extraKey) {
-    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
+    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${t.id === currentId && currentInPlace}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
     let r = rendered.get(t.id);
     if (!r || r.key !== key) {
       r = { key, el: renderFn(t) };
@@ -791,10 +793,11 @@
     }
 
     const current = currentId && list.tasks.find((t) => t.id === currentId);
-    if (current) nodes.push(h('section', { class: 'section', 'aria-label': 'Next task' }, row(current, renderTodo)));
+    currentInPlace = !!current && steps.has(current.id) && !ui.collapsed[current.group]; // a collapsed group would hide it, so pin it then
+    if (current && !currentInPlace) nodes.push(h('section', { class: 'section', 'aria-label': 'Next task' }, row(current, renderTodo)));
 
     for (const g of groups) {
-      const rest = g.tasks.filter((t) => t.id !== currentId);
+      const rest = g.tasks.filter((t) => t.id !== currentId || currentInPlace);
       if (!rest.length) continue;
       if (g.ordered && !ui.collapsed[g.name]) rest.slice(0, -1).forEach((t) => linked.add(t.id));
       const box = h('section', { class: 'section' });
