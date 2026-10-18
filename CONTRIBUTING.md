@@ -16,7 +16,7 @@ npm test
 
 The panel tests also need a browser: `npx playwright install chromium`. Without it they're skipped.
 
-To try your build in a separate test copy of VS Code that leaves your installed extension and Claude Code settings alone, run `scripts/dev-window.ps1` (Windows) or `scripts/dev-window.sh` (macOS, Linux). Otherwise open the folder and press **F5** (Run Extension), or package it with `python3 scripts/release.py` and install `releases/checklist-bridge-latest.vsix` with *Extensions: Install from VSIX…*. Packaging changes `latest.json`; don't commit that unless you're making a release.
+To try your build in VS Code, open the folder and press **F5** (Run Extension), or package it with `python3 scripts/release.py` and install `releases/checklist-bridge-latest.vsix` with *Extensions: Install from VSIX…*. Packaging changes `latest.json`; don't commit that unless you're making a release.
 
 ## Making a change
 
