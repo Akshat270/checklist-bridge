@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Steps that must be done in order now show in order.** Claude can mark a group of tasks as steps. They show as Step 1, Step 2 and so on, in Claude's order. An *important* or *urgent* tag no longer moves a later step to the top.
+- **Roadmaps with stages.** Claude can mark groups as phases that must be done one after another, for example *Setting up*, then *Testing*, then *Wrapping up*. The phases show in order (Phase 1 of 3…), the steps are numbered across all of them (Step 4 of 7), and only the first open step is next.
 - The next task stays in its group when it is a step. Tasks that can be done in any order are still sorted by their tags.
 - Claude can reorder the steps later if the plan changes. Steps you have already shared stay where they are.
 - **Open tasks are shorter.** *Add image* is now a small picture icon in the corner of the note box. You can still paste an image into the note.

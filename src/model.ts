@@ -67,6 +67,8 @@ export interface Checklist {
   groupOrder: string[];
   /** Groups whose tasks must be done in the order Claude added them. */
   orderedGroups: string[];
+  /** A roadmap: groups that are stages, to be done one after another in this order. Each is also a sequence inside. */
+  phases: string[];
   questions: Question[];
   nextQ: number;
   hidden: boolean;
@@ -157,6 +159,11 @@ export const TOOLS = [
           type: 'array',
           items: { type: 'string' },
           description: 'Names of groups whose tasks must be done in the order you add them (a sequence). Other groups and tasks can be done in any order.',
+        },
+        phases: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'For a roadmap whose stages must be done one after another (e.g. "Set up", "Testing", "Wrap up"): the group names of the stages, in the order of the stages. The full list every time. Tasks inside each stage are done in the order you add them.',
         },
       },
       required: ['tasks'],
@@ -266,6 +273,7 @@ export const TOOLS = [
           description: 'Task ids of ONE group in the order they should now come, e.g. ["t4","t2","t3"]. Use it to reorder the steps of an ordered group. Tasks you leave out, and tasks the user has already shared, keep their places.',
         },
         ordered_groups: { type: 'array', items: { type: 'string' }, description: 'Mark these groups as sequences: their tasks must be done in the order they were added.' },
+        phases: { type: 'array', items: { type: 'string' }, description: 'Replace the roadmap: the group names of the stages, in the order of the stages. [] removes it. Use it to reorder the stages too.' },
         unordered_groups: { type: 'array', items: { type: 'string' }, description: 'Stop treating these groups as sequences.' },
       },
     },
@@ -278,7 +286,7 @@ export const SERVER_INSTRUCTIONS =
   'add it with checklist_add_tasks instead of writing the steps in your reply. Whenever the user has to make a decision that can ' +
   'wait while you keep working, ask it with checklist_ask (options, details, your recommendation) instead of listing options in your ' +
   'reply. If tasks must be done in a fixed order, put them in one group, add them in that order and list the group in ordered_groups ' +
-  '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups, and reorder its steps with step_order); tags (urgent, important) only rank ' +
+  '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups, and reorder its steps with step_order). If the stages themselves must be done one after another (set up, then testing, then wrap up), put each stage in its own group and list the groups in phases, in stage order; tags (urgent, important) only rank ' +
   'tasks that can be done in any order. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
   'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
   'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
@@ -293,6 +301,7 @@ export function normalize(c: Checklist): Checklist {
   c.tasks ??= [];
   c.groupOrder ??= [];
   c.orderedGroups ??= [];
+  c.phases ??= [];
   return c;
 }
 
@@ -586,6 +595,7 @@ export class ChecklistStore {
       tasks: [],
       groupOrder: [],
       orderedGroups: [],
+      phases: [],
       questions: [],
       nextQ: 1,
       hidden: false,
@@ -599,6 +609,17 @@ export class ChecklistStore {
     const u = this.unread(c);
     const n = u.tasks.length + u.questions.length;
     return n ? `Note: ${n} item${n === 1 ? ' was' : 's were'} shared since your last read. Call checklist_read.` : undefined;
+  }
+
+  /** Sets the roadmap. A name only counts if a task is in that group, so no empty stage is left behind. [] removes the roadmap. */
+  private markPhases(c: Checklist, names: unknown, notes: string[]) {
+    if (!Array.isArray(names)) return;
+    const good: string[] = [];
+    for (const g of [...new Set(names.map((x) => str(x, 48)).filter((x): x is string => !!x))]) {
+      if (c.tasks.some((t) => t.group === g)) good.push(g);
+      else notes.push(`${g}: no task is in a group with exactly this name, so it is not a phase.`);
+    }
+    c.phases = good;
   }
 
   /** Marks groups as sequences. A group only counts if one of its tasks exists, so no empty group is left behind. */
@@ -628,7 +649,7 @@ export class ChecklistStore {
     slots.forEach((slot, k) => (c.tasks[slot] = found[k]));
     const whole = c.tasks.filter((t) => t.group === group);
     notes.push(`"${group}" is now in this order: ${whole.map((t) => t.id).join(', ')}.` + (whole.length > found.length ? ' Tasks you left out, and tasks the user has already shared, kept their places.' : ''));
-    if (!c.orderedGroups.includes(group)) notes.push(`"${group}" is not an ordered group, so the order only matters once you list it in ordered_groups.`);
+    if (!isSequence(c, group)) notes.push(`"${group}" is not an ordered group, so the order only matters once you list it in ordered_groups.`);
   }
 
   private toolAdd(sessionId: string, meta: CallMeta, args: any): ToolResult {
@@ -663,6 +684,7 @@ export class ChecklistStore {
 
     const notes: string[] = [];
     this.markOrdered(c, args.ordered_groups, notes);
+    this.markPhases(c, args.phases, notes);
 
     this.emit({ checklist: c, kind: created ? 'created' : 'tasks-added', added: ids.length });
 
@@ -832,8 +854,11 @@ export class ChecklistStore {
     if (waiting.length) {
       out.push('', 'Tasks waiting on the user (not shared yet, so you cannot know their state):');
       for (const g of groupsOf(c, waiting)) {
-        if (g.name) out.push(`  ${g.name}${g.ordered ? ' (to be done in this order)' : ''}:`);
-        const whole = g.ordered ? c.tasks.filter((x) => x.group === g.name) : [];
+        if (g.name) {
+          const how = g.phase ? ` (phase ${g.phase} of ${g.phases}: finish the earlier phases first, and do these in this order)` : g.ordered ? ' (to be done in this order)' : '';
+          out.push(`  ${g.name}${how}:`);
+        }
+        const whole = g.ordered ? sequenceOf(c, g.name!) : [];
         for (const t of g.tasks) {
           const step = g.ordered ? ` (step ${whole.indexOf(t) + 1} of ${whole.length})` : '';
           out.push(`${g.name ? '  ' : ''}- ${t.id}${step} ${t.text}${t.tags.length ? ` [${t.tags.join(', ')}]` : ''}`);
@@ -949,19 +974,26 @@ export class ChecklistStore {
     if (Array.isArray(args.unordered_groups)) {
       const off = args.unordered_groups.map((g: unknown) => str(g, 48));
       c.orderedGroups = c.orderedGroups.filter((g) => !off.includes(g));
+      for (const g of off) if (g && c.phases.includes(g) && !(Array.isArray(args.phases) && !args.phases.map((x: unknown) => str(x, 48)).includes(g)))
+        notes.push(`${g} is a phase, so it stays a sequence. Take it out of phases first.`);
       for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : []) {
         const name = str(g, 48);
         if (name && off.includes(name)) notes.push(`${name} was in both ordered_groups and unordered_groups, so it is ordered.`);
       }
     }
     this.markOrdered(c, args.ordered_groups, notes);
+    this.markPhases(c, args.phases, notes);
     const orderedBefore = [...c.orderedGroups];
+    const phasesBefore = [...c.phases];
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
     c.orderedGroups = c.orderedGroups.filter((g) => c.groupOrder.includes(g));
+    c.phases = c.phases.filter((g) => c.groupOrder.includes(g));
+    for (const g of phasesBefore.filter((x) => !c.phases.includes(x)))
+      notes.push(`${g} has no tasks left, so it is no longer a phase.`);
     for (const g of orderedBefore.filter((x) => !c.orderedGroups.includes(x)))
       notes.push(`${g} has no tasks left, so it is no longer an ordered group. If its tasks moved to another group, list that group in ordered_groups.`);
     // A task moved into an ordered group becomes its last step. step_order changes the order afterwards.
-    const arrived = [...new Set(moved)].filter((t) => t.group && c.orderedGroups.includes(t.group));
+    const arrived = [...new Set(moved)].filter((t) => t.group && isSequence(c, t.group));
     for (const t of arrived) {
       const others = c.tasks.filter((x) => x !== t);
       let at = -1;
@@ -971,8 +1003,8 @@ export class ChecklistStore {
     }
     this.reorderSteps(c, args.step_order, notes);
     for (const t of arrived) {
-      const whole = c.tasks.filter((x) => x.group === t.group);
-      notes.push(`${t.id} is now step ${whole.indexOf(t) + 1} of ${whole.length} in "${t.group}". Use step_order to change the order.`);
+      const seq = sequenceOf(c, t.group!);
+      notes.push(`${t.id} is now step ${seq.indexOf(t) + 1} of ${seq.length} in "${t.group}". Use step_order to change the order.`);
     }
 
     this.emit({ checklist: c, kind: 'updated' });
@@ -986,14 +1018,32 @@ export function answerText(q: Question, a: Answer): string {
   return labels.join(' + ') || '(no choice)';
 }
 
-/** Tasks bucketed by group, in display order (ungrouped first). */
-export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; ordered?: boolean; tasks: Task[] }[] {
-  const out: { name?: string; ordered?: boolean; tasks: Task[] }[] = [];
+/** True if the group's tasks must be done in order: an ordered group, or a phase of the roadmap. */
+export function isSequence(c: Checklist, group: string): boolean {
+  return c.orderedGroups.includes(group) || c.phases.includes(group);
+}
+
+/** The tasks of the sequence a group belongs to, in the order they are done: the whole roadmap for a phase, else the group. */
+export function sequenceOf(c: Checklist, group: string): Task[] {
+  if (c.phases.includes(group)) return c.phases.flatMap((g) => c.tasks.filter((t) => t.group === g));
+  return c.tasks.filter((t) => t.group === group);
+}
+
+/** Tasks bucketed by group, in display order (ungrouped first). The phases of the roadmap come together, in phase order, where the first one would be. */
+export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; ordered?: boolean; phase?: number; phases?: number; tasks: Task[] }[] {
+  const out: { name?: string; ordered?: boolean; phase?: number; phases?: number; tasks: Task[] }[] = [];
   const loose = tasks.filter((t) => !t.group);
   if (loose.length) out.push({ tasks: loose });
+  const names: string[] = [];
   for (const g of c.groupOrder) {
+    if (!c.phases.includes(g)) names.push(g);
+    else if (!names.some((n) => c.phases.includes(n))) names.push(...c.phases);
+  }
+  for (const g of names) {
     const ts = tasks.filter((t) => t.group === g);
-    if (ts.length) out.push({ name: g, ordered: c.orderedGroups.includes(g), tasks: ts });
+    if (!ts.length) continue;
+    const at = c.phases.indexOf(g);
+    out.push({ name: g, ordered: isSequence(c, g), ...(at >= 0 ? { phase: at + 1, phases: c.phases.length } : {}), tasks: ts });
   }
   return out;
 }

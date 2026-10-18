@@ -90,14 +90,19 @@
   const hasContent = (t) => !!noteOf(t).trim() || t.draft.images.length > 0;
   const ready = (t) => !t.shared && (t.draft.done || hasContent(t));
 
-  /** Step number and total for each unshared task of an ordered group; `head` is the step to do now. */
+  /**
+   * Step number and total for each unshared task of a sequence; `head` is the step to do now. The roadmap (phases) is one
+   * sequence across all its groups; every other ordered group is a sequence of its own.
+   */
   function stepsOf(l) {
     const out = new Map();
-    for (const g of l.orderedGroups || []) {
-      const all = l.tasks.filter((t) => t.group === g);
+    const number = (all) => {
       const open = all.filter((t) => !t.shared);
       all.forEach((t, i) => { if (!t.shared) out.set(t.id, { n: i + 1, of: all.length, head: t === open[0] }); });
-    }
+    };
+    const phases = l.phases || [];
+    if (phases.length) number(phases.flatMap((g) => l.tasks.filter((t) => t.group === g)));
+    for (const g of l.orderedGroups || []) if (!phases.includes(g)) number(l.tasks.filter((t) => t.group === g));
     return out;
   }
 
@@ -108,9 +113,18 @@
     const out = [];
     const loose = todo.filter((t) => !t.group);
     if (loose.length) out.push({ name: null, tasks: sortRank(loose) });
+    // The phases of the roadmap come together, in phase order, where the first of them would be.
+    const phases = list.phases || [];
+    const names = [];
     for (const g of list.groupOrder) {
+      if (!phases.includes(g)) names.push(g);
+      else if (!names.some((n) => phases.includes(n))) names.push(...phases);
+    }
+    for (const g of names) {
       const ts = todo.filter((t) => t.group === g);
-      if (ts.length) out.push({ name: g, ordered: steps.has(ts[0].id), tasks: steps.has(ts[0].id) ? ts : sortRank(ts) });
+      if (!ts.length) continue;
+      const at = phases.indexOf(g);
+      out.push({ name: g, ordered: steps.has(ts[0].id), phase: at >= 0 ? at + 1 : 0, phases: phases.length, tasks: steps.has(ts[0].id) ? ts : sortRank(ts) });
     }
     return out;
   }
@@ -800,7 +814,7 @@
       const box = h('section', { class: 'section' });
       if (g.name) {
         const open = !ui.collapsed[g.name];
-        box.append(sectionHead(g.name, g.name, rest.length, open, g.ordered ? 'in this order' : undefined));
+        box.append(sectionHead(g.name, g.name, rest.length, open, g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
         if (open) rest.forEach((t) => box.append(row(t, renderTodo)));
       } else {
         rest.forEach((t) => box.append(row(t, renderTodo)));
