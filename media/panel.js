@@ -120,6 +120,7 @@
       if (!phases.includes(g)) names.push(g);
       else if (!names.some((n) => phases.includes(n))) names.push(...phases);
     }
+    for (const g of phases) if (!names.includes(g)) names.push(g); // a phase never goes missing, whatever groupOrder says
     for (const g of names) {
       const ts = todo.filter((t) => t.group === g);
       if (!ts.length) continue;
