@@ -80,6 +80,40 @@ function build() {
   r = text(await q.handleTool(Q, {}, 'checklist_edit', { unordered_groups: ['Seq'], step_order: ['t1', 't2', 't3'] }));
   check(/not an ordered group/.test(r) && seq().length === 3, 'reordering a group that is not ordered works, with a reminder');
 
+  // Phases: stages of a roadmap that are done one after another.
+  const buildRoad = () => {
+    const st = new ChecklistStore();
+    st.handleTool('r', {}, 'checklist_add_tasks', {
+      title: 'Testing roadmap',
+      phases: ['Setting up', 'Testing', 'Wrapping up'],
+      tasks: [
+        { text: 'Install the build', group: 'Setting up' }, { text: 'Create a test account', group: 'Setting up' }, { text: 'Load sample data', group: 'Setting up' },
+        { text: 'Run the happy path', group: 'Testing' }, { text: 'Try bad input', group: 'Testing', tags: ['urgent'] },
+        { text: 'Write up the results', group: 'Wrapping up', tags: ['important'] }, { text: 'Tell the team', group: 'Wrapping up' },
+      ],
+    });
+    return st;
+  };
+  const rs = buildRoad(), rc = rs.all()[0];
+  check(rc.phases.join() === 'Setting up,Testing,Wrapping up', 'add_tasks sets the phases of a roadmap');
+  r = text(await rs.handleTool('r', {}, 'checklist_read', {}));
+  check(/Setting up \(phase 1 of 3/.test(r) && /Testing \(phase 2 of 3/.test(r) && /- t4 \(step 4 of 7\) Run the happy path/.test(r) && /- t7 \(step 7 of 7\) Tell the team/.test(r), 'checklist_read shows the phase and a step number across the whole roadmap');
+  r = text(await rs.handleTool('r', {}, 'checklist_add_tasks', { phases: ['Setting up', 'Nowhere', 'Testing'], tasks: [{ text: 'extra', group: 'Testing' }] }));
+  check(rc.phases.join() === 'Setting up,Testing' && /Nowhere: no task is in a group/.test(r), 'a phase name no task uses is dropped, and Claude is told');
+  await rs.handleTool('r', {}, 'checklist_edit', { phases: ['Wrapping up', 'Setting up', 'Testing'] });
+  r = text(await rs.handleTool('r', {}, 'checklist_read', {}));
+  check(/Wrapping up \(phase 1 of 3/.test(r) && /Setting up \(phase 2 of 3/.test(r) && /- t6 \(step 1 of 8\)/.test(r), 'edit with phases reorders the stages');
+  r = text(await rs.handleTool('r', {}, 'checklist_edit', { updates: [{ id: 't1', group: 'Testing' }] }));
+  check(/t1 is now step 8 of 8 in "Testing"/.test(r), 'a task moved into a phase becomes its last step, counted across the roadmap');
+  r = text(await rs.handleTool('r', {}, 'checklist_edit', { unordered_groups: ['Testing'] }));
+  check(/Testing is a phase/.test(r) && rc.phases.includes('Testing'), 'a phase cannot be made unordered, and Claude is told');
+  r = text(await rs.handleTool('r', {}, 'checklist_edit', { remove: rc.tasks.filter((x) => x.group === 'Wrapping up').map((x) => x.id) }));
+  check(/Wrapping up has no tasks left, so it is no longer a phase/.test(r) && rc.phases.join() === 'Setting up,Testing', 'an emptied phase is dropped, with a note');
+  await rs.handleTool('r', {}, 'checklist_edit', { phases: [] });
+  check(rc.phases.length === 0 && !rc.orderedGroups.length, 'phases: [] removes the roadmap');
+  const oldRoad = JSON.parse(JSON.stringify(buildRoad().all()[0])); delete oldRoad.phases;
+  check(normalize(oldRoad).phases.length === 0, 'a checklist saved before phases existed still loads');
+
   const old = JSON.parse(JSON.stringify(build().s.get(id) || c)); delete old.orderedGroups;
   check(normalize(old).orderedGroups.length === 0, 'a checklist saved before this change still loads');
 
@@ -130,6 +164,32 @@ function build() {
   page = await open(list);
   check((await next(page)) === 't2' && (await where(page)) === 'Release', 'after step 1 is shared, step 2 is next, still in its section');
   await page.close();
+
+  // Phases in the panel.
+  {
+    const roadList = () => JSON.parse(JSON.stringify(buildRoad().all()[0]));
+    let rl = roadList();
+    let pg = await open(rl);
+    const heads = await pg.$$eval('.section-head', (xs) => xs.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
+    check(heads.join('|') === 'Setting up3Phase 1 of 3|Testing2Phase 2 of 3|Wrapping up2Phase 3 of 3', `phases show in order with their place (${heads.join(' | ')})`);
+    const ord = (await ids(pg)).split(' ');
+    check(ord.join() === 't1,t2,t3,t4,t5,t6,t7', `tasks stay in roadmap order whatever their tags (${ord})`);
+    const chips = await pg.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
+    check(chips.startsWith('Step 1 of 7,Step 2 of 7') && chips.endsWith('Step 7 of 7'), `steps are numbered across the roadmap (${chips})`);
+    check((await next(pg)) === 't1' && (await where(pg)) === 'Setting up', 'only the first task of the first phase is next, in its phase');
+    check(await pg.$eval('#task-t5', (e) => !e.querySelector('.prio') && !e.classList.contains('urgent')) && await pg.$eval('#task-t6', (e) => !e.querySelector('.prio')), 'an urgent or important task of a later step gets no priority mark');
+    await pg.close();
+    for (const id of ['t1', 't2', 't3']) rl.tasks.find((x) => x.id === id).shared = { at: 1, done: true, note: '', images: [] };
+    pg = await open(rl);
+    const heads2 = await pg.$$eval('.section-head', (xs) => xs.map((x) => x.textContent.replace(/\s+/g, ' ').trim()).filter((x) => /Phase/.test(x)));
+    check((await next(pg)) === 't4' && (await where(pg)) === 'Testing' && heads2[0] === 'Testing2Phase 2 of 3', `when phase 1 is shared, the first task of phase 2 is next, in its phase, and keeps its number (${heads2[0]})`);
+    await pg.close();
+    rl = roadList();
+    rl.tasks.push({ id: 't99', text: 'Fix the build now', tags: ['urgent'], addedAt: 1, rev: 1, draft: { done: false, note: '', images: [] } });
+    pg = await open(rl);
+    check((await next(pg)) === 't99' && (await where(pg)) === 'pinned', 'an urgent task outside the roadmap can still be next');
+    await pg.close();
+  }
 
   await b.close();
   console.log(failed ? `${failed} FAILED` : 'ALL PASS'); process.exit(failed ? 1 : 0);
