@@ -928,18 +928,23 @@ export class ChecklistStore {
         if (off.includes(str(g, 48))) notes.push(`${g} was in both ordered_groups and unordered_groups, so it is ordered.`);
     }
     this.markOrdered(c, args.ordered_groups, notes);
+    const orderedBefore = [...c.orderedGroups];
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
     c.orderedGroups = c.orderedGroups.filter((g) => c.groupOrder.includes(g));
+    for (const g of orderedBefore.filter((x) => !c.orderedGroups.includes(x)))
+      notes.push(`${g} has no tasks left, so it is no longer an ordered group. If its tasks moved to another group, list that group in ordered_groups.`);
     // A task moved into an ordered group becomes its last step. To change the order, move tasks out and back in.
-    for (const t of moved) {
-      if (!t.group || !c.orderedGroups.includes(t.group)) continue;
+    const arrived = [...new Set(moved)].filter((t) => t.group && c.orderedGroups.includes(t.group));
+    for (const t of arrived) {
       const others = c.tasks.filter((x) => x !== t);
       let at = -1;
       others.forEach((x, i) => { if (x.group === t.group) at = i; });
       others.splice(at < 0 ? others.length : at + 1, 0, t);
       c.tasks = others;
+    }
+    for (const t of arrived) {
       const whole = c.tasks.filter((x) => x.group === t.group);
-      notes.push(`${t.id} is now the last step (step ${whole.indexOf(t) + 1} of ${whole.length}) in "${t.group}". To change the order, move tasks out of the group and back in.`);
+      notes.push(`${t.id} is now step ${whole.indexOf(t) + 1} of ${whole.length} in "${t.group}". To change the order, move tasks out of the group and back in.`);
     }
 
     this.emit({ checklist: c, kind: 'updated' });
