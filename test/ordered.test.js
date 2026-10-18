@@ -98,6 +98,9 @@ function build() {
   page = await open(list);
   check((await next(page)) === 't1', 'the first step is the next task, not the one tagged important');
   check((await where(page)) === 'Release', 'the next task, being a step, stays in its Release section instead of being pinned above');
+  check(await page.$eval('#task-t1', (e) => !!e.querySelector('.note-box > .attach') && !/Add image/.test(e.textContent) && getComputedStyle(e.querySelector('.actions')).display === 'none'), 'an open task has no row of its own for adding an image, only an icon in the note');
+  await page.fill('#task-t1 textarea', 'done it');
+  check(await page.$eval('#task-t1', (e) => getComputedStyle(e.querySelector('.actions')).display !== 'none' && !e.querySelector('.share-btn').hidden), 'the share row appears once there is a note');
   check(await page.$eval('#task-t1', (e) => e.classList.contains('link') && parseFloat(getComputedStyle(e, '::before').top) >= e.offsetHeight - 1), 'the line between steps does not run through an open step, only below it');
   check(await page.$eval('#task-t1', (e) => e.classList.contains('open') && !!e.closest('section').querySelector('#task-t2') && !e.querySelector('.chip.soft:not(.step)')), 'it is open in its place, ahead of the later steps, without a repeated group chip');
   await page.close();

@@ -214,6 +214,14 @@ svg { display: block; flex: none; }
 }
 .note:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .note::placeholder { color: var(--ink-3); }
+.note-box { position: relative; }
+.note-box .note { padding-right: 38px; }
+.attach {
+  position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--r-s);
+  background: transparent; color: var(--ink-3); display: grid; place-items: center; cursor: pointer;
+}
+.attach:hover { background: var(--hover); color: var(--ink); }
+.attach svg { width: 15px; height: 15px; }
 .shots { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .shot { position: relative; width: 112px; height: 72px; border-radius: var(--r-m); overflow: hidden; background: var(--code); box-shadow: inset 0 0 0 1px var(--line); }
 .shot img { width: 100%; height: 100%; object-fit: cover; object-position: left top; display: block; cursor: zoom-in; }

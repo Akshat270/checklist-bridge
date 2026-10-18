@@ -336,6 +336,8 @@
         },
       });
       ta.value = noteOf(t);
+      // Attaching a screenshot is rare, so it is an icon in the corner of the note, not a row of its own.
+      const attachBtn = h('button', { class: 'attach', type: 'button', title: 'Add an image (or paste one into the note)', 'aria-label': `Add an image to ${t.id}`, html: I.image, onclick: () => file.click() });
       const shareBtn = h('button', { class: 'btn share-btn', onclick: () => share(t) });
       el.append(
         h(
@@ -349,16 +351,9 @@
               h('code', {}, t.command),
               h('button', { title: 'Copy command', html: `${I.copy}<span>Copy</span>`, onclick: () => post({ type: 'copy', text: t.command }) })
             ),
-          ta,
+          h('div', { class: 'note-box' }, ta, attachBtn, file),
           shots(t.draft.images, true, t.id),
-          h(
-            'div',
-            { class: 'actions' },
-            h('button', { class: 'ghost', title: 'Attach a screenshot (or paste one into the note)', html: `${I.image}<span>Add image</span>`, onclick: () => file.click() }),
-            file,
-            h('span', { class: 'grow' }),
-            shareBtn
-          )
+          h('div', { class: 'actions' }, h('span', { class: 'grow' }), shareBtn)
         )
       );
       el.addEventListener('dragover', (e) => {
@@ -379,6 +374,8 @@
     el.classList.toggle('started', !t.draft.done && hasContent(t));
     const qs = el.querySelector('.qs');
     if (qs) qs.hidden = !t.draft.done;
+    const actions = el.querySelector('.actions');
+    if (actions && el.querySelector('.share-btn')) actions.hidden = !isReady; // nothing else in the row to show before then
     const btn = el.querySelector('.share-btn');
     if (btn) {
       btn.hidden = !isReady;
