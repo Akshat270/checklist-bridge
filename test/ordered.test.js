@@ -55,8 +55,8 @@ function build() {
   r = text(await s.handleTool(S, {}, 'checklist_edit', { updates: runIds.map((id) => ({ id, group: 'Renamed' })) }));
   check(/Run has no tasks left, so it is no longer an ordered group/.test(r) && !c.orderedGroups.includes('Renamed'), 'renaming an ordered group tells Claude the order was lost');
   await s.handleTool(S, {}, 'checklist_edit', { updates: runIds.map((id) => ({ id, group: 'Run' })), ordered_groups: ['Run'] });
-  r = text(await s.handleTool(S, {}, 'checklist_edit', { ordered_groups: ['Run'], unordered_groups: ['Run'] }));
-  check(c.orderedGroups.includes('Run') && /both/.test(r), 'a group in both lists stays ordered, with a note');
+  r = text(await s.handleTool(S, {}, 'checklist_edit', { ordered_groups: ['Run'], unordered_groups: ['Run '] }));
+  check(c.orderedGroups.includes('Run') && /Run was in both/.test(r), 'a group in both lists stays ordered, with a note, even if spelled with extra spaces');
 
   const old = JSON.parse(JSON.stringify(build().s.get(id) || c)); delete old.orderedGroups;
   check(normalize(old).orderedGroups.length === 0, 'a checklist saved before this change still loads');
