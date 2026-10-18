@@ -1,14 +1,72 @@
-# Checklist Bridge for Claude Code
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/hero.png" alt="Checklist Bridge for Claude Code: every Claude chat gets its own checklist in VS Code" width="100%">
+</p>
 
-When Claude Code needs you to do something by hand, like create an API key, run a command, click through a dashboard or test a page, it usually buries the steps in the chat. Checklist Bridge gives each Claude chat its own checklist in VS Code instead.
+<h1 align="center">Checklist Bridge for Claude Code</h1>
 
-Claude adds tasks while you keep talking. You tick them off, write a note or paste a screenshot, and press **Share** when a task is ready. Claude can read only the tasks you've shared, so it never assumes you did something you haven't.
+<p align="center"><b>Give every Claude Code chat its own checklist in VS Code.</b><br>
+The things only you can do, and the decisions you can make later, no longer get lost in the chat.</p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-dark.png" width="360" alt="A checklist in VS Code: an urgent task pinned at the top, grouped tasks below, and a progress bar showing 3 of 8 tasks shared with Claude">
-  &nbsp;
-  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-light.png" width="360" alt="The same checklist in a light VS Code theme">
+  <a href="https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge"><img alt="Version" src="https://img.shields.io/visual-studio-marketplace/v/Akshat270.checklist-bridge?label=Marketplace&color=5b5bd6"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge"><img alt="Installs" src="https://img.shields.io/visual-studio-marketplace/i/Akshat270.checklist-bridge?color=2ea043"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge&ssr=false#review-details"><img alt="Rating" src="https://img.shields.io/visual-studio-marketplace/r/Akshat270.checklist-bridge?color=cca700"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="macOS, Windows and Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-supported-lightgrey">
 </p>
+
+When Claude Code needs you to do something by hand, like create an API key, run a command, click through a dashboard or test a page, it usually buries the steps in a long chat. Checklist Bridge puts them in a checklist next to the chat instead. Claude adds tasks while you keep talking. You tick them off, write a note or paste a screenshot, and press **Share** when a task is ready. Claude can read only the tasks you've shared, so it never assumes you did something you haven't.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-dark.png" width="300" alt="A checklist in VS Code: an urgent task pinned at the top, grouped tasks below, and a progress bar">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-steps.png" width="300" alt="A roadmap in three phases with numbered steps; the next step is open and shows a command to copy">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-decide.png" width="300" alt="The Decide section: an urgent question about payment gateways with Claude's pick highlighted">
+</p>
+
+## Why people install it
+
+- **Never scroll the chat for "what do I need to do?"** The next task is pinned at the top. Urgent ones turn red.
+- **Keep Claude working while you think.** Questions that don't need an answer right now go to a **Decide** section. Claude carries on with everything else.
+- **Claude never assumes.** It sees only what you've shared: done, not done, your note, your screenshots. Nothing else is guessed.
+- **One checklist per chat.** Running several agents? Each has its own list, in the window it runs in.
+- **Nothing to set up.** Install it and it connects itself to Claude Code. No config files, no commands.
+- **Private.** Everything stays on your computer. [More on privacy](#privacy).
+
+## How it works
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/how-it-works.png" width="100%" alt="Four steps: Claude adds the tasks, you work at your own pace, you press Share, Claude reads what you shared">
+</p>
+
+## What you get
+
+| | |
+|---|---|
+| **Tasks with context** | Details on where to click, plus a one-click **Copy** for commands and values. Tag tasks *urgent*, *important*, *quick*, *optional* or *blocked*. |
+| **Questions for later** | Options with short summaries, expandable **Details**, and Claude's pick with its reason. Pick one, pick several, or write your own answer. |
+| **Steps and roadmaps** | When things must happen in order, they show as numbered steps. Big jobs become phases (*Set up, Test, Go live*) and only the next step is open. |
+| **Notes and screenshots** | Paste, drag in or click the picture icon. Screenshots reach Claude only with the task they belong to. |
+| **Share on your terms** | Share one task, **Share all**, share as *not done* with a note, or **Take back** before Claude reads it. |
+| **Send now** | Hand an answer to Claude straight away, in the terminal or the Claude panel. [How it reaches Claude](#how-send-now-reaches-claude). |
+| **Every chat, automatically** | One optional step makes every Claude Code chat use checklists. [Set it up](#make-every-claude-chat-use-it-automatically). |
+| **Light and dark** | Follows your VS Code theme. Built for a narrow column next to the chat. |
+| **Safe by design** | Checklists survive window reloads. Updates are checked against a SHA-256. A project can't redirect updates or run programs. |
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-light.png" width="300" alt="The same checklist in a light VS Code theme">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-shared.png" width="300" alt="Several ticked tasks with a Share all bar at the bottom, and the Shared with Claude section showing which tasks Claude has read">
+</p>
+
+## Good for
+
+- Setting up accounts, API keys, environment variables and dashboards that Claude can't reach.
+- Deploys and launches, where steps must happen in order and some need a quick check from you.
+- Manual testing: Claude lists what to try, you report what happened, with screenshots.
+- Product and design choices you want to think about while the code keeps moving.
+- Anyone running several Claude agents at once and losing track of what each one is waiting on.
 
 ## Install
 
@@ -53,10 +111,6 @@ Then add `"mcp__checklist"` to `permissions.allow` in `~/.claude/settings.json`.
 
 When Claude needs a decision that doesn't have to happen right now, like which payment gateway to use, how to name a page, or what the free plan includes, it asks it in the checklist instead of listing options in the chat. Claude keeps working on everything else while you think.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-decide.png" width="360" alt="The Decide section: an urgent question about payment gateways with Claude's pick highlighted, a second open question, and an answered question with a Send now button">
-</p>
-
 - Questions sit in their own **Decide** section at the top, with the options, short summaries, **Details** you can expand, and Claude's pick with its reason. Urgent questions turn red.
 - Pick an option (or several, if Claude allows it), or choose **Something else** and type your own answer. Add a note or screenshots if you like, then press **Share answer**.
 - Claude sees your answer the next time it reads the checklist. To hand it over straight away, press **Send now**.
@@ -72,7 +126,7 @@ When Claude needs a decision that doesn't have to happen right now, like which p
 
 Send now works for shared tasks too.
 
-## How it works
+## The checklist in detail
 
 - **One checklist per chat.** Each chat's checklist opens in the VS Code window where that chat is running. Two agents in the same window get two separate checklists.
 - **The next task comes first.** It's pinned at the top and already open. Urgent tasks jump ahead and turn it red. Everything else is a one-line row you can click to open.
@@ -83,10 +137,6 @@ Send now works for shared tasks too.
 - **Hide or close.** Closing a tab only hides that checklist. The **Claude checklists** icon in the activity bar lists every checklist with show, hide and close. Click one in the list to open it and bring it to the front. Closing a checklist for good tells Claude, and the next tasks it adds start a new checklist.
 - **Nothing is lost on reload.** Checklists survive a window reload.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-shared.png" width="360" alt="Several ticked tasks with a Share all bar at the bottom, and the Shared with Claude section showing which tasks Claude has read">
-</p>
-
 Claude gets five tools:
 
 | Tool | What it does |
@@ -96,6 +146,24 @@ Claude gets five tools:
 | `checklist_read` | Returns only what you shared: tasks done or not done, your answers, your notes, and your screenshots as images. Everything else shows as "waiting". |
 | `checklist_wait` | Waits until you share something, then returns it. Claude uses this only when your input is the only thing left. |
 | `checklist_edit` | Renames the checklist, rewords tasks, changes tags and groups, updates or withdraws questions, or removes tasks. |
+
+## FAQ
+
+**Do I need Claude Code?** Yes. Checklist Bridge works with [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), in the terminal or in the VS Code extension. It doesn't add a chat of its own.
+
+**Does it work in the terminal and the Claude panel?** Both. The checklist opens in VS Code either way.
+
+**Does Claude see my checklist before I share it?** No. Claude sees only tasks and answers you've shared. Anything else shows as "waiting".
+
+**Does it work in Cursor or VSCodium?** Yes, install the `.vsix` ([steps above](#install)).
+
+**Does it send my data anywhere?** No. Claude Code talks to the extension on `127.0.0.1` only. The one network request is the update check, which you can switch off.
+
+**Something isn't working.** See [Troubleshooting](#troubleshooting), or [open an issue](https://github.com/Akshat270/checklist-bridge/issues).
+
+## Help it grow
+
+If Checklist Bridge saves you time, a [review on the Marketplace](https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge&ssr=false#review-details) or a star on [GitHub](https://github.com/Akshat270/checklist-bridge) helps other people find it. Ideas and bug reports are welcome in [issues](https://github.com/Akshat270/checklist-bridge/issues).
 
 ## Privacy
 
