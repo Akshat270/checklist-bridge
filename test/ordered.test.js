@@ -58,6 +58,24 @@ function build() {
   r = text(await s.handleTool(S, {}, 'checklist_edit', { ordered_groups: ['Run'], unordered_groups: ['Run '] }));
   check(c.orderedGroups.includes('Run') && /Run was in both/.test(r), 'a group in both lists stays ordered, with a note, even if spelled with extra spaces');
 
+  // Reordering the steps of a group (step_order).
+  const q = new ChecklistStore(); const Q = 'q';
+  await q.handleTool(Q, {}, 'checklist_add_tasks', { ordered_groups: ['Seq'], tasks: [{ text: 'a', group: 'Seq' }, { text: 'b', group: 'Seq' }, { text: 'c', group: 'Seq' }, { text: 'loose' }] });
+  const qc = q.all()[0];
+  const seq = () => qc.tasks.filter((x) => x.group === 'Seq').map((x) => x.text).join('');
+  r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t3', 't1', 't2'] }));
+  check(seq() === 'cab' && /"Seq" is now in this order: t3, t1, t2/.test(r) && qc.tasks.length === 4, 'step_order puts the steps in the given order');
+  r = text(await q.handleTool(Q, {}, 'checklist_read', {}));
+  check(/\(step 1 of 3\) c/.test(r) && /\(step 3 of 3\) b/.test(r), 'checklist_read then shows the new step numbers');
+  r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t2', 't3'] }));
+  check(seq() === 'bac' && /left out kept their places/.test(r), 'a partial list swaps those tasks and leaves the others where they are');
+  r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t1', 't4'] }));
+  check(/same group/.test(r) && seq() === 'bac', 'tasks from different groups are refused, with a note');
+  r = text(await q.handleTool(Q, {}, 'checklist_edit', { step_order: ['t1', 't99'] }));
+  check(/t99 is not a task/.test(r) && /at least two/.test(r) && seq() === 'bac', 'an unknown id is reported and nothing moves');
+  r = text(await q.handleTool(Q, {}, 'checklist_edit', { unordered_groups: ['Seq'], step_order: ['t1', 't2', 't3'] }));
+  check(/not an ordered group/.test(r) && seq() === 'abc', 'reordering a group that is not ordered works, with a reminder');
+
   const old = JSON.parse(JSON.stringify(build().s.get(id) || c)); delete old.orderedGroups;
   check(normalize(old).orderedGroups.length === 0, 'a checklist saved before this change still loads');
 

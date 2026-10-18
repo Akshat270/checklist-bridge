@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Steps that must be done in order now show in order.** When Claude says a group of tasks has to be done one after another, they show together as numbered steps (Step 1, Step 2…) in Claude's order. An *important* or *urgent* tag can no longer move a later step to the top or make it the next task. Tasks that can be done in any order are still sorted by their tags. When the next task is one of the steps, it stays in its group, open, in its place in the order, and the line between steps does not run through it.
+- **Claude can reorder the steps of an ordered group** if it gets the order wrong or something changes. The steps are renumbered and shown in the new order.
 - **Smaller open tasks.** The *Add image* button is now a small picture icon in the corner of the note box, so an open task no longer has a row of its own for it. The *Share* buttons still appear once you tick the task or write a note. You can still paste an image into the note.
 - **Task ids moved to the right edge of each row** (t1, q2…), in a quiet column, so they no longer sit in front of the title. Click one to copy it, as before.
 
