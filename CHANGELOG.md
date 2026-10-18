@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- **Steps that must be done in order now show in order.** When Claude says a group of tasks has to be done one after another, they show together as numbered steps (Step 1, Step 2…) in Claude's order. An *important* or *urgent* tag can no longer move a later step to the top or make it the next task. Tasks that can be done in any order are still sorted by their tags. When the next task is one of the steps, it stays in its group, open, in its place in the order.
+- **Steps that must be done in order now show in order.** When Claude says a group of tasks has to be done one after another, they show together as numbered steps (Step 1, Step 2…) in Claude's order. An *important* or *urgent* tag can no longer move a later step to the top or make it the next task. Tasks that can be done in any order are still sorted by their tags. When the next task is one of the steps, it stays in its group, open, in its place in the order, and the line between steps does not run through it.
 - **Task ids moved to the right edge of each row** (t1, q2…), in a quiet column, so they no longer sit in front of the title. Click one to copy it, as before.
 
 ## 0.5.1
