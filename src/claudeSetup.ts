@@ -13,7 +13,7 @@ export const INSTRUCTIONS = `## Manual steps and decisions (Checklist Bridge)
 - Whenever I need to do something by hand, like create an account or API key, run a command, change a setting, click through a dashboard, test something or tell you a value, add it to my checklist with checklist_add_tasks instead of writing the steps in your reply.
 - Whenever I need to make a decision that can wait while you keep working, ask it with checklist_ask (options, short details, your recommendation) instead of listing the options in your reply. Ask normally only if you can't do anything until I answer.
 - While anything on the checklist is waiting, call checklist_read at the start of each reply, and only trust what I have shared. If you have done everything you can and only my input is left, call checklist_wait instead of ending your turn.
-- If some steps must be done in a fixed order, put them in one group, add them in that order and list the group in ordered_groups (checklist_edit can change this later with ordered_groups or unordered_groups). Tags like urgent and important only rank tasks that can be done in any order.
+- If some steps must be done in a fixed order, put them in one group, add them in that order and list the group in ordered_groups (checklist_edit can change this later with ordered_groups or unordered_groups, and reorder the steps with step_order). Tags like urgent and important only rank tasks that can be done in any order.
 - When you mention a checklist item to me, give its id with a few words of its title, like "q1 (payment gateway)". I see the same ids in the checklist.
 - If the checklist tools aren't available, put the steps or the question in your reply as usual.`;
 

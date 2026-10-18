@@ -260,6 +260,11 @@ export const TOOLS = [
         withdraw_reason: { type: 'string', description: 'Optional one line shown to the user, e.g. "Settled by the new pricing doc".' },
         remove: { type: 'array', items: { type: 'string' }, description: 'Ids of tasks to delete.' },
         group_order: { type: 'array', items: { type: 'string' }, description: 'Group names in the order they should appear.' },
+        step_order: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Task ids of ONE group in the order they should now come, e.g. ["t4","t2","t3"]. Use it to reorder the steps of an ordered group. Tasks you leave out keep their places.',
+        },
         ordered_groups: { type: 'array', items: { type: 'string' }, description: 'Mark these groups as sequences: their tasks must be done in the order they were added.' },
         unordered_groups: { type: 'array', items: { type: 'string' }, description: 'Stop treating these groups as sequences.' },
       },
@@ -273,7 +278,7 @@ export const SERVER_INSTRUCTIONS =
   'add it with checklist_add_tasks instead of writing the steps in your reply. Whenever the user has to make a decision that can ' +
   'wait while you keep working, ask it with checklist_ask (options, details, your recommendation) instead of listing options in your ' +
   'reply. If tasks must be done in a fixed order, put them in one group, add them in that order and list the group in ordered_groups ' +
-  '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups); tags (urgent, important) only rank ' +
+  '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups, and reorder its steps with step_order); tags (urgent, important) only rank ' +
   'tasks that can be done in any order. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
   'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
   'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
@@ -606,6 +611,25 @@ export class ChecklistStore {
     }
   }
 
+  /** Puts the listed tasks of one group in the given order. They keep the places they already hold in the list; tasks not listed are not moved. */
+  private reorderSteps(c: Checklist, order: unknown, notes: string[]) {
+    if (!Array.isArray(order)) return;
+    const found: Task[] = [];
+    for (const id of [...new Set(order.map((x) => String(x)))]) {
+      const t = c.tasks.find((x) => x.id === id);
+      if (t) found.push(t);
+      else notes.push(`step_order: ${id} is not a task.`);
+    }
+    if (found.length < 2) return void notes.push('step_order: list at least two tasks of the same group.');
+    const group = found[0].group;
+    if (!group || found.some((t) => t.group !== group)) return void notes.push('step_order: all the tasks must be in the same group, so the order was not changed.');
+    const slots = c.tasks.map((t, i) => (found.includes(t) ? i : -1)).filter((i) => i >= 0);
+    slots.forEach((slot, k) => (c.tasks[slot] = found[k]));
+    const whole = c.tasks.filter((t) => t.group === group);
+    notes.push(`"${group}" is now in this order: ${whole.map((t) => t.id).join(', ')}.` + (whole.length > found.length ? ' Tasks you left out kept their places.' : ''));
+    if (!c.orderedGroups.includes(group)) notes.push(`"${group}" is not an ordered group, so the order only matters once you list it in ordered_groups.`);
+  }
+
   private toolAdd(sessionId: string, meta: CallMeta, args: any): ToolResult {
     const raw = Array.isArray(args.tasks) ? args.tasks : [];
     if (!raw.length) return err('`tasks` must be a non-empty array.');
@@ -935,7 +959,7 @@ export class ChecklistStore {
     c.orderedGroups = c.orderedGroups.filter((g) => c.groupOrder.includes(g));
     for (const g of orderedBefore.filter((x) => !c.orderedGroups.includes(x)))
       notes.push(`${g} has no tasks left, so it is no longer an ordered group. If its tasks moved to another group, list that group in ordered_groups.`);
-    // A task moved into an ordered group becomes its last step. To change the order, move tasks out and back in.
+    // A task moved into an ordered group becomes its last step. step_order changes the order afterwards.
     const arrived = [...new Set(moved)].filter((t) => t.group && c.orderedGroups.includes(t.group));
     for (const t of arrived) {
       const others = c.tasks.filter((x) => x !== t);
@@ -944,9 +968,10 @@ export class ChecklistStore {
       others.splice(at < 0 ? others.length : at + 1, 0, t);
       c.tasks = others;
     }
+    this.reorderSteps(c, args.step_order, notes);
     for (const t of arrived) {
       const whole = c.tasks.filter((x) => x.group === t.group);
-      notes.push(`${t.id} is now step ${whole.indexOf(t) + 1} of ${whole.length} in "${t.group}". To change the order, move tasks out of the group and back in.`);
+      notes.push(`${t.id} is now step ${whole.indexOf(t) + 1} of ${whole.length} in "${t.group}". Use step_order to change the order.`);
     }
 
     this.emit({ checklist: c, kind: 'updated' });
