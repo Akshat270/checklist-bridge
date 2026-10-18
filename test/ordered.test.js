@@ -111,6 +111,13 @@ function build() {
   check(/Wrapping up has no tasks left, so it is no longer a phase/.test(r) && rc.phases.join() === 'Setting up,Testing', 'an emptied phase is dropped, with a note');
   await rs.handleTool('r', {}, 'checklist_edit', { phases: [] });
   check(rc.phases.length === 0 && !rc.orderedGroups.length, 'phases: [] removes the roadmap');
+  // Several ordered groups are independent: Claude is pointed at phases.
+  const sv = new ChecklistStore();
+  r = text(await sv.handleTool('v', {}, 'checklist_add_tasks', { ordered_groups: ['One', 'Two'], tasks: [{ text: 'a', group: 'One' }, { text: 'b', group: 'Two' }] }));
+  check(/independent of each other/.test(r) && /phases/.test(r), 'naming several ordered groups without phases points Claude at phases');
+  r = text(await sv.handleTool('v', {}, 'checklist_add_tasks', { ordered_groups: ['One', 'Two'], phases: ['One', 'Two'], tasks: [{ text: 'c', group: 'One' }] }));
+  check(!/independent of each other/.test(r), 'no nudge when the groups are also given as phases');
+
   const oldRoad = JSON.parse(JSON.stringify(buildRoad().all()[0])); delete oldRoad.phases;
   check(normalize(oldRoad).phases.length === 0, 'a checklist saved before phases existed still loads');
 
@@ -178,6 +185,13 @@ function build() {
     check(chips.startsWith('Step 1 of 7,Step 2 of 7') && chips.endsWith('Step 7 of 7'), `steps are numbered across the roadmap (${chips})`);
     check((await next(pg)) === 't1' && (await where(pg)) === 'Setting up', 'only the first task of the first phase is next, in its phase');
     check(await pg.$eval('#task-t5', (e) => !e.querySelector('.prio') && !e.classList.contains('urgent')) && await pg.$eval('#task-t6', (e) => !e.querySelector('.prio')), 'an urgent or important task of a later step gets no priority mark');
+    // Collapsing the phase that holds the next task does not make the task jump to the top.
+    await pg.click('.section-head:has-text("Setting up")');
+    await pg.waitForTimeout(200);
+    check(!(await pg.$('[aria-label="Next task"]')) && (await pg.$eval('.section-head:has-text("Setting up")', (x) => x.textContent)).includes('next task inside'), 'collapsing the group with the next task hides it there, with a hint, instead of pinning it above');
+    await pg.click('.section-head:has-text("Setting up")');
+    await pg.waitForTimeout(200);
+    check((await where(pg)) === 'Setting up', 'opening the group again shows the next task in its place');
     await pg.close();
     for (const id of ['t1', 't2', 't3']) rl.tasks.find((x) => x.id === id).shared = { at: 1, done: true, note: '', images: [] };
     pg = await open(rl);

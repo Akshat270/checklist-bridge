@@ -804,7 +804,7 @@
     }
 
     const current = currentId && list.tasks.find((t) => t.id === currentId);
-    currentInPlace = !!current && steps.has(current.id) && !ui.collapsed[current.group]; // a collapsed group would hide it, so pin it then
+    currentInPlace = !!current && steps.has(current.id); // a step stays in its group, even if you collapse the group
     if (current && !currentInPlace) nodes.push(h('section', { class: 'section', 'aria-label': 'Next task' }, row(current, renderTodo)));
 
     for (const g of groups) {
@@ -814,7 +814,8 @@
       const box = h('section', { class: 'section' });
       if (g.name) {
         const open = !ui.collapsed[g.name];
-        box.append(sectionHead(g.name, g.name, rest.length, open, g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
+        const hidesNext = !open && currentInPlace && g.tasks.some((t) => t.id === currentId); // you collapsed the group the next task is in
+        box.append(sectionHead(g.name, g.name, rest.length, open, hidesNext ? 'next task inside' : g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
         if (open) rest.forEach((t) => box.append(row(t, renderTodo)));
       } else {
         rest.forEach((t) => box.append(row(t, renderTodo)));

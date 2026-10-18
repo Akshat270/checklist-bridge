@@ -158,7 +158,7 @@ export const TOOLS = [
         ordered_groups: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Names of groups whose tasks must be done in the order you add them (a sequence). Other groups and tasks can be done in any order.',
+          description: 'Names of groups whose tasks must be done in the order you add them (a sequence). Each ordered group is independent of the others: if the groups themselves must be done one after another, use phases instead.',
         },
         phases: {
           type: 'array',
@@ -622,6 +622,12 @@ export class ChecklistStore {
     c.phases = good;
   }
 
+  /** Several ordered groups are independent. If Claude names more than one without phases, say what phases are for. */
+  private noteSeveralOrdered(args: any, notes: string[]) {
+    if (Array.isArray(args.ordered_groups) && args.ordered_groups.length >= 2 && !Array.isArray(args.phases))
+      notes.push('Note: ordered groups are independent of each other, so the user sees a "next" step in each. If these groups are stages that must be done one after another, call checklist_edit with phases listing the groups in stage order.');
+  }
+
   /** Marks groups as sequences. A group only counts if one of its tasks exists, so no empty group is left behind. */
   private markOrdered(c: Checklist, names: unknown, notes: string[]) {
     for (const g of Array.isArray(names) ? names : []) {
@@ -685,6 +691,7 @@ export class ChecklistStore {
     const notes: string[] = [];
     this.markOrdered(c, args.ordered_groups, notes);
     this.markPhases(c, args.phases, notes);
+    this.noteSeveralOrdered(args, notes);
 
     this.emit({ checklist: c, kind: created ? 'created' : 'tasks-added', added: ids.length });
 
@@ -983,6 +990,7 @@ export class ChecklistStore {
     }
     this.markOrdered(c, args.ordered_groups, notes);
     this.markPhases(c, args.phases, notes);
+    this.noteSeveralOrdered(args, notes);
     const orderedBefore = [...c.orderedGroups];
     const phasesBefore = [...c.phases];
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
