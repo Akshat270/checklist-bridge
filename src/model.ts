@@ -623,8 +623,9 @@ export class ChecklistStore {
   }
 
   /** Several ordered groups are independent. If Claude names more than one without phases, say what phases are for. */
-  private noteSeveralOrdered(args: any, notes: string[]) {
-    if (Array.isArray(args.ordered_groups) && args.ordered_groups.length >= 2 && !Array.isArray(args.phases))
+  private noteSeveralOrdered(c: Checklist, args: any, notes: string[]) {
+    const named = Array.isArray(args.ordered_groups) ? args.ordered_groups.map((g: unknown) => str(g, 48)).filter((g: string | undefined) => g && !c.phases.includes(g)) : [];
+    if (named.length >= 2 && !Array.isArray(args.phases))
       notes.push('Note: ordered groups are independent of each other, so the user sees a "next" step in each. If these groups are stages that must be done one after another, call checklist_edit with phases listing the groups in stage order.');
   }
 
@@ -691,7 +692,7 @@ export class ChecklistStore {
     const notes: string[] = [];
     this.markOrdered(c, args.ordered_groups, notes);
     this.markPhases(c, args.phases, notes);
-    this.noteSeveralOrdered(args, notes);
+    this.noteSeveralOrdered(c, args, notes);
 
     this.emit({ checklist: c, kind: created ? 'created' : 'tasks-added', added: ids.length });
 
@@ -990,7 +991,7 @@ export class ChecklistStore {
     }
     this.markOrdered(c, args.ordered_groups, notes);
     this.markPhases(c, args.phases, notes);
-    this.noteSeveralOrdered(args, notes);
+    this.noteSeveralOrdered(c, args, notes);
     const orderedBefore = [...c.orderedGroups];
     const phasesBefore = [...c.phases];
     c.groupOrder = c.groupOrder.filter((g) => c.tasks.some((t) => t.group === g));
@@ -1012,7 +1013,7 @@ export class ChecklistStore {
     this.reorderSteps(c, args.step_order, notes);
     for (const t of arrived) {
       const seq = sequenceOf(c, t.group!);
-      notes.push(`${t.id} is now step ${seq.indexOf(t) + 1} of ${seq.length} in "${t.group}". Use step_order to change the order.`);
+      notes.push(`${t.id} is now step ${seq.indexOf(t) + 1} of ${seq.length} in "${t.group}".` + (Array.isArray(args.step_order) ? '' : ' Use step_order to change the order.'));
     }
 
     this.emit({ checklist: c, kind: 'updated' });
@@ -1047,6 +1048,7 @@ export function groupsOf(c: Checklist, tasks = c.tasks): { name?: string; ordere
     if (!c.phases.includes(g)) names.push(g);
     else if (!names.some((n) => c.phases.includes(n))) names.push(...c.phases);
   }
+  for (const g of c.phases) if (!names.includes(g)) names.push(g); // a phase never goes missing, whatever groupOrder says
   for (const g of names) {
     const ts = tasks.filter((t) => t.group === g);
     if (!ts.length) continue;

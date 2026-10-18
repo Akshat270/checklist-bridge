@@ -118,6 +118,11 @@ function build() {
   r = text(await sv.handleTool('v', {}, 'checklist_add_tasks', { ordered_groups: ['One', 'Two'], phases: ['One', 'Two'], tasks: [{ text: 'c', group: 'One' }] }));
   check(!/independent of each other/.test(r), 'no nudge when the groups are also given as phases');
 
+  r = text(await rs.handleTool('r', {}, 'checklist_edit', { phases: ['Setting up', 'Testing'] }));
+  r = text(await rs.handleTool('r', {}, 'checklist_edit', { ordered_groups: ['Setting up', 'Testing'] }));
+  check(!/independent of each other/.test(r), 'no nudge when the named groups are already phases');
+  r = text(await rs.handleTool('r', {}, 'checklist_edit', { updates: [{ id: 't1', group: 'Testing' }], step_order: ['t1', 't4'] }));
+  check(!/Use step_order/.test(r), 'no step_order hint when the same call already used it');
   const oldRoad = JSON.parse(JSON.stringify(buildRoad().all()[0])); delete oldRoad.phases;
   check(normalize(oldRoad).phases.length === 0, 'a checklist saved before phases existed still loads');
 
