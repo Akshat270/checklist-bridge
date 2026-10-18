@@ -44,7 +44,17 @@ function build() {
   check(/\(step 1 of 2\) first/.test(r) && /\(step 2 of 2\) second/.test(r), 'checklist_read shows step numbers for an ordered group');
   const early = c.tasks.find((x) => x.text === 'x').id;
   r = text(await s.handleTool(S, {}, 'checklist_edit', { updates: [{ id: early, group: 'Run' }] }));
-  check(/is now the last step \(step 3 of 3\) in "Run"/.test(r) && c.tasks.filter((x) => x.group === 'Run').pop().id === early, 'a task moved into an ordered group becomes its last step, and Claude is told');
+  check(/is now step 3 of 3 in "Run"/.test(r) && c.tasks.filter((x) => x.group === 'Run').pop().id === early, 'a task moved into an ordered group becomes its last step, and Claude is told');
+  // Review: the same task twice in one call is moved once, and the numbers in the notes are the final ones.
+  const a = c.tasks.find((x) => x.text === 'first').id, b2 = c.tasks.find((x) => x.text === 'second').id;
+  await s.handleTool(S, {}, 'checklist_edit', { updates: [{ id: a, group: 'Out' }, { id: b2, group: 'Out' }] });
+  r = text(await s.handleTool(S, {}, 'checklist_edit', { updates: [{ id: a, group: 'Run' }, { id: b2, group: 'Elsewhere' }, { id: a, group: 'Run' }, { id: b2, group: 'Run' }] }));
+  check((r.match(/is now step/g) || []).length === 2 && new RegExp(a + ' is now step 2 of 3').test(r) && new RegExp(b2 + ' is now step 3 of 3').test(r), 'the same task twice in one call is moved once, with the final step numbers');
+  // Review: renaming an ordered group says that the order was lost.
+  const runIds = c.tasks.filter((x) => x.group === 'Run').map((x) => x.id);
+  r = text(await s.handleTool(S, {}, 'checklist_edit', { updates: runIds.map((id) => ({ id, group: 'Renamed' })) }));
+  check(/Run has no tasks left, so it is no longer an ordered group/.test(r) && !c.orderedGroups.includes('Renamed'), 'renaming an ordered group tells Claude the order was lost');
+  await s.handleTool(S, {}, 'checklist_edit', { updates: runIds.map((id) => ({ id, group: 'Run' })), ordered_groups: ['Run'] });
   r = text(await s.handleTool(S, {}, 'checklist_edit', { ordered_groups: ['Run'], unordered_groups: ['Run'] }));
   check(c.orderedGroups.includes('Run') && /both/.test(r), 'a group in both lists stays ordered, with a note');
 

@@ -21,6 +21,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$Base = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Base) # a relative -Base means relative to where you ran this from
 
 # Find VS Code. (A `code` command that points at another editor is not used on purpose.)
 if (-not $Editor) {
@@ -49,17 +50,24 @@ $scratch = Join-Path $Base 'scratch'
 $userDir = Join-Path $Base 'vscode\User'
 New-Item -ItemType Directory -Force $scratch, $userDir | Out-Null
 
-# Keep the test window from replacing the test build with the released version.
+# Keep the test window from replacing the test build with the released version: turn autoUpdate off unless the
+# test profile already says something about it.
 $settings = Join-Path $userDir 'settings.json'
-if (-not (Test-Path $settings)) {
-  [IO.File]::WriteAllText($settings, "{`n  `"checklistBridge.autoUpdate`": false`n}`n")
+$off = "  `"checklistBridge.autoUpdate`": false"
+if (-not (Test-Path $settings) -or -not ([IO.File]::ReadAllText($settings)).Trim()) {
+  [IO.File]::WriteAllText($settings, "{`n$off`n}`n")
+} elseif (([IO.File]::ReadAllText($settings)) -notmatch 'checklistBridge\.autoUpdate') {
+  [IO.File]::WriteAllText($settings, ([regex]'\{').Replace([IO.File]::ReadAllText($settings), "{`n$off,", 1))
 }
 
 # Point the extension and Claude Code at the test folder, only for the window started below.
-$names = 'CHECKLIST_BRIDGE_HOME', 'CLAUDE_CONFIG_DIR'
+# Also drop what a VS Code terminal sets, so the new window starts on its own instead of joining the one you are in.
+$names = 'CHECKLIST_BRIDGE_HOME', 'CLAUDE_CONFIG_DIR', 'VSCODE_IPC_HOOK_CLI', 'ELECTRON_RUN_AS_NODE'
 $saved = @{}
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 try {
+  $env:VSCODE_IPC_HOOK_CLI = $null
+  $env:ELECTRON_RUN_AS_NODE = $null
   $env:CHECKLIST_BRIDGE_HOME = Join-Path $Base 'home'
   $env:CLAUDE_CONFIG_DIR = Join-Path $Base 'claude'
   & $Editor "--extensionDevelopmentPath=$root" "--user-data-dir=$(Join-Path $Base 'vscode')" "--extensions-dir=$(Join-Path $Base 'exts')" $scratch
