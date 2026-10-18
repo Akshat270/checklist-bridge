@@ -924,8 +924,10 @@ export class ChecklistStore {
     if (Array.isArray(args.unordered_groups)) {
       const off = args.unordered_groups.map((g: unknown) => str(g, 48));
       c.orderedGroups = c.orderedGroups.filter((g) => !off.includes(g));
-      for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : [])
-        if (off.includes(str(g, 48))) notes.push(`${g} was in both ordered_groups and unordered_groups, so it is ordered.`);
+      for (const g of Array.isArray(args.ordered_groups) ? args.ordered_groups : []) {
+        const name = str(g, 48);
+        if (name && off.includes(name)) notes.push(`${name} was in both ordered_groups and unordered_groups, so it is ordered.`);
+      }
     }
     this.markOrdered(c, args.ordered_groups, notes);
     const orderedBefore = [...c.orderedGroups];
