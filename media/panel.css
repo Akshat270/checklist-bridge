@@ -280,6 +280,17 @@ svg { display: block; flex: none; }
 }
 @keyframes pulse { 0% { transform: scale(.5); opacity: .7; } 100% { transform: scale(1.6); opacity: 0; } }
 
+/* ---------------- away ---------------- */
+.away { margin: 14px 0 0; padding: 9px 12px; border-radius: var(--r-m); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: 13px; }
+.away.on { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.away-text { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--ink); }
+.away-text svg { width: 15px; height: 15px; color: var(--accent); }
+.away.on .btn { flex: none; }
+.away-title { color: var(--ink-2); margin-bottom: 8px; }
+.away-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.away-at { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); }
+.away-at input { height: 26px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: var(--r-s); background: var(--field); color: var(--ink); }
+
 /* ---------------- decide section ---------------- */
 .section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 4px; color: var(--ink); font-weight: 650; font-size: 14px; }
 .section-title .count {

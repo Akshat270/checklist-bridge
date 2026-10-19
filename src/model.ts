@@ -74,6 +74,10 @@ export interface Checklist {
   hidden: boolean;
   closed: boolean;
   lastReadAt?: number;
+  /** The user is away until this time (ms). Claude is told not to wait for them. */
+  awayUntil?: number;
+  /** When the user went away. */
+  awayFrom?: number;
 }
 
 export interface CallMeta { cwd?: string; client?: string }
@@ -85,6 +89,7 @@ export type ChangeKind = 'created' | 'tasks-added' | 'asked' | 'updated' | 'clos
 export interface ChangeEvent { checklist: Checklist; kind: ChangeKind; added?: number; question?: string }
 
 const MAX_IMAGES_PER_READ = 8;
+export const MAX_AWAY_MS = 24 * 3600_000;
 const MAX_TASKS_PER_CALL = 40;
 const MAX_QUESTIONS_PER_CALL = 10;
 const str = (v: unknown, max = 4000) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
@@ -207,7 +212,8 @@ export const TOOLS = [
     description:
       'Waits until the user shares a task or answers a question in this chat\'s checklist, then returns the same result as checklist_read. ' +
       'Use it ONLY when you have finished everything you can do and the next step depends on the user, instead of ending your turn; ' +
-      'this lets the user\'s answer reach you immediately. Returns after timeout_minutes with no update if the user hasn\'t shared anything.',
+      'this lets the user\'s answer reach you immediately. Returns after timeout_minutes with no update if the user hasn\'t shared anything. ' +
+      'If the user has said they are away, it returns at once and tells you what to do instead of waiting.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -289,7 +295,8 @@ export const SERVER_INSTRUCTIONS =
   '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups, and reorder its steps with step_order). If the stages themselves must be done one after another (set up, then testing, then wrap up), put each stage in its own group and list the groups in phases, in stage order; tags (urgent, important) only rank ' +
   'tasks that can be done in any order. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
   'at the start of each reply. If you have done everything you can and only the user\'s input is left, call checklist_wait instead of ' +
-  'ending your turn. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
+  'ending your turn. If a result says the user is AWAY until a time, do not wait for them: do only the work that needs no human input and ' +
+  'can be done safely, add what you skip to the checklist, then end your turn with a short summary. Checklist updates may also arrive as channel events from this server: treat them as the user\'s own messages and ' +
   'call checklist_read for notes and screenshots. When you mention a checklist item to the user, give its id with a few words of ' +
   'its title, e.g. "q1 (payment gateway)": the user sees the same ids (t1, q1…) in the checklist.';
 
@@ -465,6 +472,64 @@ export class ChecklistStore {
       (x.t ?? x.q!).rev++;
     }
     this.emit({ checklist: c, kind: 'updated' });
+  }
+
+  /** True while the user has said they are away from this checklist's chat. */
+  isAway(c: Checklist, now = Date.now()): boolean {
+    return !c.closed && !!c.awayUntil && c.awayUntil > now;
+  }
+
+  /** The user will be away until `until` (ms). Refuses a time in the past or more than a day ahead. */
+  setAway(listId: string, until: number, now = Date.now()): boolean {
+    const c = this.lists.get(listId);
+    if (!c || c.closed || !Number.isFinite(until) || until <= now || until > now + MAX_AWAY_MS) return false;
+    if (!this.isAway(c, now)) c.awayFrom = now;
+    c.awayUntil = Math.round(until);
+    this.emit({ checklist: c, kind: 'updated' });
+    return true;
+  }
+
+  /** The user is back. Returns what was set, so the caller can tell Claude. */
+  endAway(listId: string): { from: number } | undefined {
+    const c = this.lists.get(listId);
+    if (!c || !c.awayUntil) return undefined;
+    const from = c.awayFrom ?? 0;
+    c.awayUntil = c.awayFrom = undefined;
+    this.emit({ checklist: c, kind: 'updated' });
+    return { from };
+  }
+
+  /** Ends every away that has run out. Returns those checklists with when each away began. */
+  expireAway(now = Date.now()): { c: Checklist; from: number }[] {
+    const out: { c: Checklist; from: number }[] = [];
+    for (const c of [...this.lists.values()])
+      if (c.awayUntil && c.awayUntil <= now) {
+        const r = this.endAway(c.id);
+        if (r) out.push({ c, from: r.from });
+      }
+    return out;
+  }
+
+  /** What to tell Claude while the user is away (undefined when they are not). */
+  awayNote(c: Checklist | undefined): string | undefined {
+    if (!c || !this.isAway(c)) return undefined;
+    const until = new Date(c.awayUntil!);
+    const mins = Math.max(1, Math.round((c.awayUntil! - Date.now()) / 60_000));
+    const left = mins < 90 ? `${mins} minute${mins === 1 ? '' : 's'}` : `about ${Math.round(mins / 60)} hours`;
+    const clock = until.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const day = until.toDateString() === new Date().toDateString() ? '' : ' tomorrow';
+    return (
+      `THE USER IS AWAY until ${clock}${day} (in ${left}), and may come back sooner. Do NOT wait for them and do not call checklist_wait. ` +
+      'Do every remaining piece of work that needs no human input and that you can finish safely and correctly. ' +
+      'Do not guess answers to waiting questions, do not do anything that depends on an unfinished manual task or an unanswered question, ' +
+      'and do not do anything risky or hard to undo (deploys, deleting data, spending money, messaging other people). ' +
+      'Add what you skipped to the checklist, then end your turn with a short summary of what you did and what is waiting for the user.'
+    );
+  }
+
+  /** Same as awayNote, found by chat. */
+  awayNoteFor(sessionId: string): string | undefined {
+    return this.awayNote(this.forSession(sessionId));
   }
 
   setHidden(listId: string, hidden: boolean) {
@@ -704,6 +769,8 @@ export class ChecklistStore {
     ];
     const fresh = this.freshNote(c);
     if (fresh) lines.push(fresh);
+    const away = this.awayNote(c);
+    if (away) lines.push(away);
     return ok(lines.join('\n'));
   }
 
@@ -767,6 +834,8 @@ export class ChecklistStore {
     ];
     const fresh = this.freshNote(c);
     if (fresh) lines.push(fresh);
+    const away = this.awayNote(c);
+    if (away) lines.push(away);
     return ok(lines.join('\n'));
   }
 
@@ -793,6 +862,8 @@ export class ChecklistStore {
       `Checklist "${c.title}"${c.closed ? ' (CLOSED by the user — it no longer shows in VS Code; adding tasks starts a new checklist)' : ''}: ` +
         counts.join('; ') + '.'
     );
+    const away = this.awayNote(c);
+    if (away) out.push('', away);
 
     const describe = (t: Task, full: boolean) => {
       const s = t.shared!;

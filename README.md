@@ -50,6 +50,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 | **Notes and screenshots** | Paste, drag in or click the picture icon. Screenshots reach Claude only with the task they belong to. |
 | **Share on your terms** | Share one task, **Share all**, share as *not done* with a note, or **Take back** before Claude reads it. |
 | **Send now** | Hand an answer to Claude straight away, in the terminal or the Claude panel. [How it reaches Claude](#how-send-now-reaches-claude). |
+| **Away mode** | Leaving for a while? Say when you'll be back and Claude stops waiting for you. It does what it safely can and tells you what's left. [How it works](#when-youre-away). |
 | **Every chat, automatically** | One optional step makes every Claude Code chat use checklists. [Set it up](#make-every-claude-chat-use-it-automatically). |
 | **Light and dark** | Follows your VS Code theme. Built for a narrow column next to the chat. |
 | **Safe by design** | Checklists survive window reloads. Updates are checked against a SHA-256. A project can't redirect updates or run programs. |
@@ -125,6 +126,17 @@ When Claude needs a decision that doesn't have to happen right now, like which p
 | Idle in the **Claude panel** | Claude can't be woken from outside, so the button becomes **Copy for chat**: it copies a one-line update for you to paste. |
 
 Send now works for shared tasks too.
+
+## When you're away
+
+If you leave Claude working and it would wait for your answers, tell it you'll be away.
+
+1. Click the moon icon at the top of the checklist.
+2. Pick **30 min**, **1 hour**, **2 hours** or **4 hours**, or type the time you'll be back and press **Set**.
+
+While you're away, Claude does not wait for you. It does the work that needs nothing from you and that it can finish safely. It skips anything that depends on a task or question you haven't answered, and anything risky or hard to undo. It adds what it skipped to the checklist, then stops with a short summary.
+
+Press **I'm back** to end it early. It also ends by itself at the time you gave. If Claude can be reached (see [how Send now reaches Claude](#how-send-now-reaches-claude)), it is told you're back. This is set for one chat at a time.
 
 ## The checklist in detail
 

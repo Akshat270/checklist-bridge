@@ -26,6 +26,7 @@
     check: svg('<path d="m3.5 8.3 3 3 6-6.6"/>'),
     minus: svg('<path d="M4 8h8"/>'),
     eye: svg('<path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/>'),
+    away: svg('<path d="M12.6 9.6A5.4 5.4 0 0 1 6.4 3.4a5.4 5.4 0 1 0 6.2 6.2z"/>'),
     clock: svg('<circle cx="8" cy="8" r="5.8"/><path d="M8 4.8V8l2.2 1.4"/>'),
     image: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.8" cy="6.6" r="1.1"/><path d="m2.5 11.8 3.4-3.2 2.4 2.1 1.9-1.6 3.3 2.9"/>'),
     note: svg('<path d="M3 2.8h10v7.6H7.2L4 13.2v-2.8H3z"/>'),
@@ -787,6 +788,7 @@
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
+    renderAway();
     // "Send now" hands over everything not read yet in one go, so show exactly one control:
     // on the answer card when that answer is the only thing waiting, otherwise in the bar.
     const pending = unreadShared();
@@ -882,18 +884,70 @@
     document.getElementById(`task-${id}`)?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
   }
 
+  /* ---------------- away ---------------- */
+  let awayOpen = false;
+  const isAway = () => !!(list && list.awayUntil && list.awayUntil > Date.now());
+  const clockText = (ms) => {
+    const d = new Date(ms);
+    const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
+  };
+  /** The next time the clock shows hh:mm (today, or tomorrow if that has passed). */
+  const nextClock = (hhmm) => {
+    const [hh, mm] = hhmm.split(':').map(Number);
+    if (!Number.isInteger(hh) || !Number.isInteger(mm)) return 0;
+    const d = new Date();
+    d.setHours(hh, mm, 0, 0);
+    if (d.getTime() <= Date.now() + 30_000) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  };
+  function renderAway() {
+    const box = $('#away');
+    const away = isAway();
+    $('#away-btn').setAttribute('aria-expanded', String(awayOpen && !away));
+    $('#away-btn').hidden = away;
+    box.hidden = !away && !awayOpen;
+    box.className = away ? 'away on' : 'away';
+    box.replaceChildren();
+    if (away) {
+      box.append(
+        h('span', { class: 'away-text', html: `${I.away}<span>Away until <strong>${clockText(list.awayUntil)}</strong>. Claude won’t wait for you and only does what it safely can.</span>` }),
+        h('button', { class: 'btn small', onclick: () => post({ type: 'endAway' }) }, 'I’m back')
+      );
+      return;
+    }
+    if (!awayOpen) return;
+    const set = (until) => {
+      if (!until) return toast('Pick a time first');
+      awayOpen = false;
+      post({ type: 'setAway', until });
+    };
+    const soon = new Date(Date.now() + 3600_000);
+    const input = h('input', { type: 'time', 'aria-label': 'Back at', value: `${String(soon.getHours()).padStart(2, '0')}:${String(soon.getMinutes()).padStart(2, '0')}` });
+    box.append(
+      h('div', { class: 'away-title' }, 'When will you be back? Claude will stop waiting for you until then.'),
+      h('div', { class: 'away-row' },
+        ...[[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
+          h('button', { class: 'btn small secondary', onclick: () => set(Date.now() + m * 60_000) }, label)),
+        h('span', { class: 'away-at' }, 'or at', input, h('button', { class: 'btn small', onclick: () => set(nextClock(input.value)) }, 'Set'))
+      )
+    );
+  }
+
   /* ---------------- shell ---------------- */
   document.body.innerHTML = `
     <main class="page">
       <header class="head">
         <h1 class="title" id="title"></h1>
         <div class="tools">
+          <button class="icon-btn" id="away-btn" title="I'll be away. Claude stops waiting for me and only does what it safely can." aria-label="I'll be away" aria-expanded="false">${I.away}</button>
           <button class="icon-btn" id="hide" title="Hide. Show it again from the Claude checklists sidebar." aria-label="Hide checklist">${I.hide}</button>
           <button class="icon-btn" id="close" title="Close this checklist for good" aria-label="Close checklist">${I.close}</button>
         </div>
         <div class="sub"><span class="folder" id="folder">${I.folder}<span id="folder-name"></span></span><span id="task-count"></span></div>
       </header>
       <div class="waiting" id="waiting" hidden role="status"><span class="pulse"></span>Claude is waiting for you. Whatever you share reaches it right away.</div>
+      <div class="away" id="away" hidden></div>
       <div class="progress" id="progress"><div class="bar" id="bar"></div><div class="progress-label" id="progress-label"></div></div>
       <div id="list"></div>
       <div class="empty" id="empty" hidden><strong>Nothing here yet</strong><p>When Claude needs you to do something by hand, or to decide something, it appears here.</p></div>
@@ -901,6 +955,11 @@
     <div class="dock" id="dock" aria-hidden="true"><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>`;
 
+  $('#away-btn').onclick = () => {
+    awayOpen = !awayOpen;
+    renderAway();
+    if (awayOpen) $('#away input[type=time]')?.focus();
+  };
   $('#hide').onclick = () => post({ type: 'hide' });
   $('#close').onclick = () => post({ type: 'close' });
   $('#share-all').onclick = shareAllTicked;

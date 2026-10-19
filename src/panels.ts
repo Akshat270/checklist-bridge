@@ -14,6 +14,8 @@ export interface Routes { waiting: boolean; channel: boolean; terminal: boolean 
 export interface PanelHooks {
   routes(c: Checklist): Routes;
   sendNow(c: Checklist): Promise<void>;
+  /** The user ended "away" early: tell Claude they are back. */
+  userBack(c: Checklist, from: number): void;
 }
 
 export const VIEW_TYPE = 'checklistBridge.checklist';
@@ -193,6 +195,15 @@ export class Panels {
       case 'sendNow': {
         const c = s.get(id);
         if (c) await this.hooks.sendNow(c);
+        break;
+      }
+      case 'setAway':
+        if (!s.setAway(id, Number(m.until))) this.open.get(id)?.webview.postMessage({ type: 'toast', text: 'Pick a time later today or tomorrow' });
+        break;
+      case 'endAway': {
+        const c = s.get(id);
+        const r = s.endAway(id);
+        if (c && r) this.hooks.userBack(c, r.from);
         break;
       }
       case 'copy':
