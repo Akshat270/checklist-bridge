@@ -60,4 +60,10 @@ env -u VSCODE_IPC_HOOK_CLI -u ELECTRON_RUN_AS_NODE \
 
 echo
 echo "Test window opened. In it: open the terminal, run 'claude' (sign in the first time), then ask for a checklist."
+echo
+echo "To try away mode:"
+echo "  1. Ask Claude for a checklist with a few tasks and a question for you, and something it can do on its own."
+echo "  2. Click the moon icon at the top of the checklist and pick 30 min."
+echo "  3. Check that Claude does not wait for you: it does the safe work, adds what it skipped, then stops with a summary."
+echo "  4. Press I'm back. Nothing should be sent to Claude. Use Send now or write to it to carry on."
 echo "Everything it uses is in $base. Delete that folder when you're done, or run this script with --fresh."
