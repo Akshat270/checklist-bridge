@@ -68,8 +68,6 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
       if (!away && !store.hasUnread(sid)) continue;
       if (![...set].some((w) => open(w.res))) continue;
       waiters.delete(sid);
-      const known = sessions.get(sid);
-      if (known) known.lastCall = Date.now(); // this chat has just been told
       const result = store.hasUnread(sid) ? store.handleTool(sid, {}, 'checklist_read', {}) : { content: [{ type: 'text' as const, text: away! }] };
       for (const resolve of set) resolve(result);
       changed();

@@ -150,23 +150,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.window.showInformationMessage('Copied. Paste it into the Claude chat and press Enter (Claude also sees it the next time it reads the checklist).');
   };
 
-  // The user is back (they said so, or the time ran out). If Claude was told they were away, tell it they are back.
-  const userBack = (c: Checklist, from: number) => {
-    const info = ws?.sessions.get(c.sessionId);
-    if (!info || info.lastCall < from || !ws?.isAlive(c.sessionId)) return;
-    const text = `I'm back at the checklist "${c.title.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 60)}". Read it again with checklist_read. You can ask me things and wait for my answers again.`;
-    const r = routes(c);
-    const term = termFor.get(c.sessionId);
-    if (r.channel && ws.push(c.sessionId, text)) log('Told chat the user is back via channel');
-    else if (r.terminal && term) {
-      term.sendText(text, false);
-      setTimeout(() => term.sendText('\r', false), 250);
-      log('Told chat the user is back via its terminal');
-    }
-  };
-
   /* ---------- UI ---------- */
-  const panels = new Panels(store, ctx.extensionUri, { routes, sendNow, userBack }, images);
+  const panels = new Panels(store, ctx.extensionUri, { routes, sendNow }, images);
   panelsRef = panels;
   // VS Code reopens checklist tabs that were open when the window closed or reloaded.
   ctx.subscriptions.push(
@@ -263,8 +248,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // Forget chats whose Claude has exited, so their Send now falls back to Copy for chat.
   const pruneTimer = setInterval(() => ws?.prune(), 20_000);
   ctx.subscriptions.push({ dispose: () => clearInterval(pruneTimer) });
-  // End "away" when the time the user gave runs out.
-  const awayTimer = setInterval(() => store.expireAway().forEach((x) => userBack(x.c, x.from)), 15_000);
+  // End "away" when the time the user gave runs out. Claude is not woken for this: an idle chat's cache
+  // has usually expired by then, so waking it would cost the user. It finds out on its next read.
+  const awayTimer = setInterval(() => store.expireAway(), 15_000);
   ctx.subscriptions.push({ dispose: () => clearInterval(awayTimer) });
   let focusedAt = vscode.window.state.focused ? Date.now() : 0;
   const register = () => {

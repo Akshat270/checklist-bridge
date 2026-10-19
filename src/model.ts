@@ -76,8 +76,6 @@ export interface Checklist {
   lastReadAt?: number;
   /** The user is away until this time (ms). Claude is told not to wait for them. */
   awayUntil?: number;
-  /** When the user went away. */
-  awayFrom?: number;
 }
 
 export interface CallMeta { cwd?: string; client?: string }
@@ -483,31 +481,23 @@ export class ChecklistStore {
   setAway(listId: string, until: number, now = Date.now()): boolean {
     const c = this.lists.get(listId);
     if (!c || c.closed || !Number.isFinite(until) || until <= now || until > now + MAX_AWAY_MS) return false;
-    if (!this.isAway(c, now)) c.awayFrom = now;
     c.awayUntil = Math.round(until);
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
 
-  /** The user is back. Returns what was set, so the caller can tell Claude. */
-  endAway(listId: string): { from: number } | undefined {
+  /** The user is back. Claude is not woken for this: it learns on its next read. */
+  endAway(listId: string): boolean {
     const c = this.lists.get(listId);
-    if (!c || !c.awayUntil) return undefined;
-    const from = c.awayFrom ?? 0;
-    c.awayUntil = c.awayFrom = undefined;
+    if (!c || !c.awayUntil) return false;
+    c.awayUntil = undefined;
     this.emit({ checklist: c, kind: 'updated' });
-    return { from };
+    return true;
   }
 
-  /** Ends every away that has run out. Returns those checklists with when each away began. */
-  expireAway(now = Date.now()): { c: Checklist; from: number }[] {
-    const out: { c: Checklist; from: number }[] = [];
-    for (const c of [...this.lists.values()])
-      if (c.awayUntil && c.awayUntil <= now) {
-        const r = this.endAway(c.id);
-        if (r) out.push({ c, from: r.from });
-      }
-    return out;
+  /** Ends every away that has run out (updates the panel; tells no one). */
+  expireAway(now = Date.now()) {
+    for (const c of [...this.lists.values()]) if (c.awayUntil && c.awayUntil <= now) this.endAway(c.id);
   }
 
   /** What to tell Claude while the user is away (undefined when they are not). */

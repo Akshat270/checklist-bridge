@@ -1,5 +1,5 @@
 const __ROOT = require('path').resolve(__dirname, '..');
-// "I'll be away": Claude stops waiting for the user, and is told when they are back.
+// "I'll be away": Claude stops waiting for the user. Nothing wakes Claude when they come back.
 const { fork, spawn } = require('child_process');
 const path = require('path'), fs = require('fs'), os = require('os');
 const EXT = __ROOT;
@@ -42,7 +42,7 @@ function chat(label, flags = []) {
   return { rpc, tool, notes, kill: () => p.kill() };
 }
 const init = (c) => c.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', version: 'x' } });
-const backNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude/channel' && /I'm back/.test(n.params.content));
+const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude/channel');
 
 (async () => {
   await wwait('ready');
@@ -96,36 +96,29 @@ const backNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claud
   await sleep(1500);
   check((await panel('Naming')).routes?.channel === true, 'channel route detected');
 
+  // Nothing is sent to Claude when the user comes back: an idle chat's cache has usually expired,
+  // so waking it would cost the user. Claude finds out on its next read.
   await user('Naming', { type: 'setAway', until: Date.now() + 3600_000 });
-  await B.tool('checklist_read', {});
+  r = await B.tool('checklist_read', {});
+  check(/THE USER IS AWAY/.test(r.text), 'a chat on channels is told the user is away');
   await user('Naming', { type: 'endAway' });
   await sleep(800);
-  check(backNotes(B).length === 1, 'Claude is told the user is back when they press I\'m back');
+  check(allNotes(B).length === 0, 'I\'m back sends nothing to Claude');
+  r = await B.tool('checklist_read', {});
+  check(!/AWAY/.test(r.text), 'Claude learns the user is back on its next read');
 
-  // The time runs out by itself.
+  // The time runs out by itself: also silent.
   await user('Naming', { type: 'setAway', until: Date.now() + 2500 });
   r = await B.tool('checklist_read', {});
   check(/THE USER IS AWAY/.test(r.text), 'a short away is seen by Claude');
   await sleep(3000);
   r = await B.tool('checklist_read', {});
   check(!/AWAY/.test(r.text), 'when the time is up, Claude is no longer told the user is away');
-  const t1 = Date.now();
-  while (backNotes(B).length < 2 && Date.now() - t1 < 25_000) await sleep(500);
-  check(backNotes(B).length === 2, 'Claude is told the user is back when the time runs out');
+  await sleep(17_000); // past the timer that clears the state
   check((await panel('Naming')).away === false, 'the panel is no longer away');
+  check(allNotes(B).length === 0, 'the time running out sends nothing to Claude either');
 
-  // A chat that was never told the user was away does not get a message.
-  const C = chat('C', ['--dangerously-load-development-channels', 'server:checklist']);
-  await init(C);
-  await C.tool('checklist_ask', { title: 'Quiet', questions: [{ question: 'Q?', options: ['A', 'B'] }] });
-  await sleep(1500);
-  await user('Quiet', { type: 'setAway', until: Date.now() + 3600_000 });
-  await sleep(200);
-  await user('Quiet', { type: 'endAway' });
-  await sleep(800);
-  check(backNotes(C).length === 0, 'no "I\'m back" message for a chat that never heard the user was away');
-
-  [A, B, C].forEach((c) => c.kill());
+  [A, B].forEach((c) => c.kill());
   W.send({ cmd: 'quit' });
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
   setTimeout(() => process.exit(failed ? 1 : 0), 700);

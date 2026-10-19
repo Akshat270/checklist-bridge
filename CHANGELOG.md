@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- **Away mode.** Leaving for a while? Click the moon icon on a checklist and say when you'll be back. Until then Claude doesn't wait for your answers: it does what it safely can without you, adds what it skipped to the checklist, and stops with a short summary. Press **I'm back** to end it early. It also ends by itself, and Claude is told you're back.
+- **Away mode.** Leaving for a while? Click the moon icon on a checklist and say when you'll be back. Until then Claude doesn't wait for your answers: it does what it safely can without you, adds what it skipped to the checklist, and stops with a short summary. Press **I'm back** to end it early. It also ends by itself. Nothing wakes Claude when it ends, so an idle chat doesn't cost you anything.
 
 ## 0.6.1
 - **A new Marketplace page and README.** New banner and screenshots that show steps and phases, a short "how it works", a feature list, tips on when to use it, and a FAQ.

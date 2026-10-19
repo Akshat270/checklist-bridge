@@ -136,7 +136,7 @@ If you leave Claude working and it would wait for your answers, tell it you'll b
 
 While you're away, Claude does not wait for you. It does the work that needs nothing from you and that it can finish safely. It skips anything that depends on a task or question you haven't answered, and anything risky or hard to undo. It adds what it skipped to the checklist, then stops with a short summary.
 
-Press **I'm back** to end it early. It also ends by itself at the time you gave. If Claude can be reached (see [how Send now reaches Claude](#how-send-now-reaches-claude)), it is told you're back. This is set for one chat at a time.
+Press **I'm back** to end it early. It also ends by itself at the time you gave. Claude is not woken up when it ends, so you aren't charged for waking a chat that has gone idle. To pick up where you left off, press **Send now** or write to Claude as usual. This is set for one chat at a time.
 
 ## The checklist in detail
 
