@@ -100,17 +100,17 @@ types = ('<?xml version="1.0" encoding="utf-8"?>\n<Types xmlns="http://schemas.o
 
 os.makedirs('releases', exist_ok=True)
 rel = f'releases/checklist-bridge-{version}.vsix'
+# Done before packing, so the README in the package has it too. The link names this version, so the downloaded file has the version in its name.
+readme = open('README.md', encoding='utf-8').read()
+linked = re.sub(r'releases/checklist-bridge-[\w.-]+\.vsix', rel, readme)
+if linked != readme:
+    open('README.md', 'w', encoding='utf-8', newline='').write(linked)
 with zipfile.ZipFile(rel, 'w', zipfile.ZIP_DEFLATED) as z:
     z.writestr('extension.vsixmanifest', manifest)
     z.writestr('[Content_Types].xml', types)
     for src, dst in files.items():
         z.write(src, dst)
 
-# The README's download link names this version, so the downloaded file has the version in its name.
-readme = open('README.md', encoding='utf-8').read()
-linked = re.sub(r'releases/checklist-bridge-[\w.-]+\.vsix', rel, readme)
-if linked != readme:
-    open('README.md', 'w', encoding='utf-8', newline='').write(linked)
 sha = hashlib.sha256(open(rel, 'rb').read()).hexdigest()
 json.dump({'version': version, 'vsix': rel, 'sha256': sha, 'notes': note}, open('latest.json', 'w'), indent=2)
 print(f'{rel}\nsha256 {sha}\nlatest.json -> {version}')
