@@ -1,6 +1,6 @@
 {
   "version": "0.6.1",
   "vsix": "releases/checklist-bridge-0.6.1.vsix",
-  "sha256": "d69ff39590d74cc8afdd3849a29239e74e02417150f5cf1bca20feaa9ccf5c63",
+  "sha256": "60f8178da99ceadd57f643d82ab71afac2ed9383769330e29b8873a0b7a89ca7",
   "notes": "A new Marketplace page and README, with new screenshots."
 }
