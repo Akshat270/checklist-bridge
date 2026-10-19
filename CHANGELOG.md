@@ -2,7 +2,7 @@
 
 ## 0.6.1
 - **A new Marketplace page and README.** New banner and screenshots that show steps and phases, a short "how it works", a feature list, tips on when to use it, and a FAQ.
-- Easier to find: a plainer description, more search keywords and the Productivity category.
+- Easier to find: a plainer description and more search keywords.
 
 ## 0.6.0
 - **Steps that must be done in order now show in order.** Claude can mark a group of tasks as steps. They show as Step 1, Step 2 and so on, in Claude's order. An *important* or *urgent* tag no longer moves a later step to the top.

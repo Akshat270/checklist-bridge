@@ -69,7 +69,7 @@ Pushing `latest.json` to `main` ships the update: every GitHub-installed copy up
 
 1. Bump `version` in `package.json` and in both places at the top of `package-lock.json`.
 2. Rename `## Unreleased` in `CHANGELOG.md` to `## <version>`.
-3. `python3 scripts/release.py "one-line note"`: builds, writes `releases/checklist-bridge-<version>.vsix` and `releases/checklist-bridge-latest.vsix`, and updates `latest.json` with the SHA-256.
+3. `python3 scripts/release.py "one-line note"`: builds, writes `releases/checklist-bridge-<version>.vsix`, points the README's download link at it (so the downloaded file name has the version), and updates `latest.json` with the SHA-256.
 4. `npm test`, then commit everything with the message `Release <version>: …` and merge to `main`.
 5. The Marketplace is updated by hand: the owner uploads the `.vsix` at marketplace.visualstudio.com/manage (`publish.yml` only publishes if a `VSCE_PAT` secret exists, and there isn't one). Give the owner the `.vsix` file.
 
