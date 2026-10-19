@@ -934,12 +934,12 @@
       };
       const soon = new Date(Date.now() + 3600_000);
       const input = h('input', { type: 'time', id: 'away-time', 'aria-label': 'Back at', value: `${String(soon.getHours()).padStart(2, '0')}:${String(soon.getMinutes()).padStart(2, '0')}` });
-      return h('section', { class: 'away-card card-in', 'aria-label': 'When will you be back?' },
-        h('div', { class: 'away-title' }, 'Back at?'),
+      return h('section', { class: 'away-card away-pick card-in', 'aria-label': 'When will you be back?' },
+        h('div', { class: 'away-title', html: `<span class="away-moon">${I.away}</span>Back at?` }),
         h('div', { class: 'away-chips' },
           [[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
             h('button', { class: 'away-chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t' }, clockText(Date.now() + m * 60_000))))),
-        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small secondary', onclick: () => choose(untilClock(input.value)) }, 'Set')));
+        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small', onclick: () => choose(untilClock(input.value)) }, 'Set')));
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
