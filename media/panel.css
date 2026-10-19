@@ -281,15 +281,50 @@ svg { display: block; flex: none; }
 @keyframes pulse { 0% { transform: scale(.5); opacity: .7; } 100% { transform: scale(1.6); opacity: 0; } }
 
 /* ---------------- away ---------------- */
-.away { margin: 14px 0 0; padding: 9px 12px; border-radius: var(--r-m); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: 13px; }
-.away.on { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
-.away-text { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--ink); }
-.away-text svg { width: 15px; height: 15px; color: var(--accent); }
-.away.on .btn { flex: none; }
-.away-title { color: var(--ink-2); margin-bottom: 8px; }
-.away-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.away-at { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); }
-.away-at input { height: 26px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: var(--r-s); background: var(--field); color: var(--ink); }
+.icon-btn { transition: background-color .15s ease, color .15s ease; }
+.icon-btn.on { background: var(--accent-soft); color: var(--accent); }
+/* The card eases open and shut (a grid row going 0fr to 1fr), and each card fades up as it appears. */
+.away-wrap { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows .32s var(--ease), visibility 0s linear .32s; }
+.away-wrap.open { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows .32s var(--ease), visibility 0s; }
+.away-inner { min-height: 0; overflow: hidden; }
+.away-pad { padding-top: 14px; }
+.away-card {
+  display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: var(--r-l);
+  background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: 13px;
+}
+.away-card.soft { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.card-in { animation: rise .26s var(--ease) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.away-title { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; font-weight: 650; }
+.away-head { display: flex; align-items: baseline; gap: 10px; }
+.away-head .away-title { flex: 1; min-width: 0; }
+.away-left { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.away-note { margin: -4px 0 0; color: var(--ink-2); }
+.away-ok { display: inline-flex; color: var(--done); }
+.away-ok svg { width: 16px; height: 16px; }
+.away-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-height: 48px; padding: 8px 12px;
+  border: 0; border-radius: var(--r-m); background: var(--field); color: var(--ink); text-align: left;
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+.chip:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--accent); }
+.chip-l { font-size: 14px; font-weight: 600; }
+.chip-t { color: var(--ink-3); font-size: 12px; }
+.away-at { display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink-3); }
+.away-at input { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r-s); background: var(--field); color: var(--ink); }
+.away-actions { display: flex; gap: 8px; }
+.away-card .btn { height: 34px; padding: 0 16px; }
+.away-card .btn.small { height: 32px; padding: 0 14px; }
+.ghost-btn { height: 34px; padding: 0 14px; border: 0; border-radius: var(--r-m); background: none; color: var(--ink-2); font-size: 13px; font-weight: 600; transition: background-color .15s ease, color .15s ease; }
+.ghost-btn:hover { background: var(--hover); color: var(--ink); }
+.link { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: var(--r-s); background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
+.link:hover { background: var(--hover); }
+.away-bar { height: 4px; border-radius: 4px; background: var(--ground); overflow: hidden; }
+.away-fill { height: 100%; width: 100%; border-radius: 4px; background: var(--accent); transition: width .4s var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .away-wrap, .away-wrap.open, .card-in, .away-fill, .chip, .icon-btn, .ghost-btn { transition: none; animation: none; }
+}
 
 /* ---------------- decide section ---------------- */
 .section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 4px; color: var(--ink); font-weight: 650; font-size: 14px; }

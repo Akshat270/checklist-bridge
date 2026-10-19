@@ -44,7 +44,9 @@ export class Panels {
         return src ? { id: v.id, mime: v.mime, w: v.w, h: v.h, src } : v;
       })
     );
-    list.away = this.store.isAway(c); // decided here, so the panel's own clock can't disagree
+    // Decided here, so the panel's own clock can't disagree. The time left is as of now; the panel counts down from it.
+    list.away = this.store.isAway(c);
+    if (list.away) list.awayLeft = Math.max(0, c.awayUntil! - Date.now());
     return { type: 'state', list, routes: this.hooks.routes(c) };
   }
 

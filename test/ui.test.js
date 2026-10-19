@@ -55,24 +55,50 @@ function state(shareTask, answers) {
     check(out.length === 1 && out[0].text === 't2' && (await isOpen()) === before, 'clicking an id copies it, without opening or closing the task');
     await page.close();
   }
-  // Away: the time picker keeps what the user typed when the panel updates, and a time just ahead is not pushed a day too far.
+  // Away: a moon in the header opens a picker; a time is only set after a yes.
   {
     const page = await b.newPage({ viewport: { width: 400, height: 1100 } });
     // The page's clock reads 10:04:40 on a fixed day, so "10:05" is 20 seconds ahead.
     const clock = 'const R=Date,off=new R(2026,0,15,10,4,40).getTime()-R.now();window.Date=class extends R{constructor(...a){a.length?super(...a):super(R.now()+off)}static now(){return R.now()+off}};';
     await page.setContent(`<!doctype html><html><head><style>html{${THEME}}${css}</style></head><body class="vscode-dark"><script>${clock}window.__out=[];window.acquireVsCodeApi=()=>({postMessage:m=>window.__out.push(m),getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
-    const push = () => page.evaluate((l) => window.postMessage({ type: 'state', list: l, routes: { waiting: false, channel: false, terminal: false } }, '*'), state(false, []));
-    await push(); await page.waitForTimeout(200);
-    await page.click('#away-btn');
-    await page.fill('#away input[type=time]', '10:05');
-    await page.focus('#away input[type=time]');
-    await push(); await page.waitForTimeout(200); // Claude adds a task, or anything else changes
-    check((await page.inputValue('#away input[type=time]')) === '10:05' && (await page.evaluate(() => document.activeElement.type)) === 'time', 'the time picker keeps the typed time and focus when the panel updates');
-    await page.click('#away >> text=Set');
-    const set = await page.evaluate(() => window.__out.find((m) => m.type === 'setAway'));
-    const ahead = set && set.ms;
-    check(set && ahead > 0 && ahead < 60_000 && set.label === '10:05 AM', `a time 20 seconds ahead is sent as a duration of 20 seconds, with the time as the user saw it (${ahead} ms, ${set && set.label})`);
-    check(set && set.until === undefined, 'the panel sends how long, not a time of day from its own clock');
+    const send = (extra) => page.evaluate(([l, e]) => window.postMessage({ type: 'state', list: Object.assign(l, e), routes: { waiting: false, channel: false, terminal: false } }, '*'), [state(false, []), extra || {}]);
+    const posted = (t) => page.evaluate((t) => window.__out.filter((m) => m.type === t), t);
+    const visible = (sel) => page.$eval(sel, (e) => !!e.offsetParent && getComputedStyle(e).visibility !== 'hidden').catch(() => false);
+    await send(); await page.waitForTimeout(200);
+    check(await page.$eval('.tools #away-btn + #hide', () => true).catch(() => false), 'the away control is an icon in the header, next to hide and close');
+    check(!(await visible('.away-card')), 'nothing about away takes room until it is opened');
+
+    await page.click('#away-btn'); await page.waitForTimeout(450);
+    check((await page.$$('.chip')).length === 4 && (await visible('.away-card')), 'the moon opens a picker with four times');
+    await page.fill('#away-time', '10:05');
+    await page.focus('#away-time');
+    await send(); await page.waitForTimeout(200); // Claude adds a task, or anything else changes
+    check((await page.inputValue('#away-time')) === '10:05' && (await page.evaluate(() => document.activeElement.type)) === 'time', 'the time picker keeps the typed time and focus when the panel updates');
+
+    await page.click('.chip >> text=2 hours'); await page.waitForTimeout(450);
+    check((await posted('setAway')).length === 0 && /Away until 12:04 PM\?/.test(await page.$eval('.away-card', (e) => e.textContent)), 'picking a time asks first and sets nothing yet');
+    check(/Write to Claude/.test(await page.$eval('.away-card', (e) => e.textContent)), 'a long break says how to carry on');
+    await page.click('text=Not now'); await page.waitForTimeout(500);
+    check((await posted('setAway')).length === 0 && !(await visible('.away-card')), 'Not now closes it without setting anything');
+
+    // A time 20 seconds ahead is a duration of 20 seconds, with the time as the user saw it.
+    await page.click('#away-btn'); await page.waitForTimeout(450);
+    await page.fill('#away-time', '10:05');
+    await page.click('.away-card >> text=Set'); await page.waitForTimeout(450);
+    await page.click('.away-card >> text=Yes');
+    const set = (await posted('setAway'))[0];
+    check(set && set.ms > 0 && set.ms < 60_000 && set.label === '10:05 AM' && set.until === undefined, `yes sends how long, not a time of day from the panel's clock (${set && set.ms} ms, ${set && set.label})`);
+
+    // The window says the user is away: the away card shows, with I'm back.
+    await send({ away: true, awayUntil: Date.now() + 7200_000, awayLabel: '12:04 PM', awayLeft: 7200_000, awayMs: 7200_000 });
+    await page.waitForTimeout(450);
+    const on = await page.$eval('.away-card', (e) => e.textContent);
+    check(/Away until 12:04 PM/.test(on) && /2 h left/.test(on) && /I’m back/.test(on) && !(await visible('.chip')), 'while away: the end time, the time left and I’m back');
+    await page.click('text=I’m back'); await page.waitForTimeout(450);
+    check((await posted('endAway')).length === 1 && /Welcome back/.test(await page.$eval('.away-card', (e) => e.textContent)), 'I’m back tells the window and says welcome back');
+    await send(); // the window now says: not away
+    await page.click('text=Got it'); await page.waitForTimeout(500);
+    check(!(await visible('.away-card')), 'Got it closes it');
     await page.close();
   }
   await b.close();

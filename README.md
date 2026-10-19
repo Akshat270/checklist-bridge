@@ -133,6 +133,7 @@ If you leave Claude working and it would wait for your answers, tell it you'll b
 
 1. Click the moon icon at the top of the checklist.
 2. Pick **30 min**, **1 hour**, **2 hours** or **4 hours**, or type the time you'll be back and press **Set**.
+3. Check the time it shows and press **Yes**. Press **Not now** if you changed your mind.
 
 While you're away, Claude does not wait for you. It does the work that needs nothing from you and that it can finish safely. It skips anything that depends on a task or question you haven't answered, and anything risky or hard to undo. It adds what it skipped to the checklist, then stops with a short summary.
 

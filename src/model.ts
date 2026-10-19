@@ -78,6 +78,8 @@ export interface Checklist {
   awayUntil?: number;
   /** The end time as the user saw it on their screen ("6:30 PM"), so Claude is told the same thing. */
   awayLabel?: string;
+  /** How long the user said they would be away, for the panel's bar. */
+  awayMs?: number;
 }
 
 export interface CallMeta { cwd?: string; client?: string }
@@ -310,7 +312,7 @@ export function normalize(c: Checklist): Checklist {
   c.orderedGroups ??= [];
   c.phases ??= [];
   // An away that ran out while the window was closed means nothing now.
-  if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = undefined;
+  if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = undefined;
   return c;
 }
 
@@ -490,6 +492,7 @@ export class ChecklistStore {
     const c = this.lists.get(listId);
     if (!c || c.closed || typeof ms !== 'number' || !Number.isFinite(ms) || ms < 1000 || ms > MAX_AWAY_MS) return false;
     c.awayUntil = Math.round(now + ms);
+    c.awayMs = Math.round(ms);
     c.awayLabel = (typeof label === 'string' && label.replace(/[^\w :.,-]/g, '').trim().slice(0, 24)) || undefined;
     this.emit({ checklist: c, kind: 'updated' });
     return true;
@@ -499,7 +502,7 @@ export class ChecklistStore {
   endAway(listId: string): boolean {
     const c = this.lists.get(listId);
     if (!c || !c.awayUntil) return false;
-    c.awayUntil = c.awayLabel = undefined;
+    c.awayUntil = c.awayLabel = c.awayMs = undefined;
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
@@ -542,7 +545,7 @@ export class ChecklistStore {
     const c = this.lists.get(listId);
     if (!c || c.closed) return;
     c.closed = true;
-    c.awayUntil = c.awayLabel = undefined;
+    c.awayUntil = c.awayLabel = c.awayMs = undefined;
     this.emit({ checklist: c, kind: 'closed' });
   }
 
