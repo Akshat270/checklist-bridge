@@ -46,6 +46,8 @@ if (-not $SkipBuild) {
   } finally { Pop-Location }
 }
 
+$built = try { git -C $root log -1 --format='%h %s' 2>$null } catch { $null }
+Write-Host "Built commit: $(if ($built) { $built } else { 'unknown' })"
 $scratch = Join-Path $Base 'scratch'
 $userDir = Join-Path $Base 'vscode\User'
 New-Item -ItemType Directory -Force $scratch, $userDir | Out-Null

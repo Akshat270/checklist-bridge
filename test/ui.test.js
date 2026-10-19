@@ -108,6 +108,11 @@ function state(shareTask, answers) {
     await page.waitForTimeout(450);
     const changed = await page.$eval('.away-card', (e) => e.textContent);
     check(/Away until 10:34 AM/.test(changed) && /30 min left/.test(changed), 'the away card then shows the new time and time left');
+    // An older window may not send the time left: work it out from the end time instead of saying "1 min".
+    const pageNow = await page.evaluate(() => Date.now()); // the page's clock is set to a fixed day
+    await send({ away: true, awayUntil: pageNow + 5400_000, awayLabel: '11:34 AM', awayLeft: undefined, awayMs: undefined });
+    await page.waitForTimeout(450);
+    check(/1 h 30 min left/.test(await page.$eval('.away-card', (e) => e.textContent)), 'without a time left from the window, it is worked out from the end time');
     await page.click('text=I’m back'); await page.waitForTimeout(450);
     check((await posted('endAway')).length === 1 && /Welcome back/.test(await page.$eval('.away-card', (e) => e.textContent)), 'I’m back tells the window and says welcome back');
     await send(); // the window now says: not away

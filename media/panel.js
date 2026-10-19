@@ -902,7 +902,8 @@
     const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
   };
-  const leftMs = () => Math.max(0, (list.awayLeft || 0) - (Date.now() - awayGot));
+  // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
+  const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
   const leftText = (ms) => {
     const m = Math.max(1, Math.ceil(ms / 60000));
     return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;

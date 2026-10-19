@@ -42,6 +42,7 @@ if [ "$build" = 1 ]; then
   npm run build
 fi
 
+echo "Built commit: $(git -C "$root" log -1 --format='%h %s' 2>/dev/null || echo unknown)"
 mkdir -p "$base/scratch" "$base/vscode/User"
 # Keep the test window from replacing the test build with the released version: turn autoUpdate off unless the
 # test profile already says something about it.
