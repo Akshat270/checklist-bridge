@@ -69,13 +69,16 @@ function state(shareTask, answers) {
     check(!(await visible('.away-card')), 'nothing about away takes room until it is opened');
 
     await page.click('#away-btn'); await page.waitForTimeout(450);
-    check((await page.$$('.chip')).length === 4 && (await visible('.away-card')), 'the moon opens a picker with four times');
+    check((await page.$$('.away-chip')).length === 4 && (await visible('.away-card')), 'the moon opens a picker with four times');
+    const chipH = await page.$eval('.away-chip', (e) => e.getBoundingClientRect().height);
+    check(chipH >= 44 && /^\d{1,2}:\d\d [AP]M$/.test(await page.$eval('.away-chip-t', (e) => e.textContent)), `the time buttons are whole (${Math.round(chipH)} px high) and show a plain time`);
+    check(await page.evaluate(() => document.activeElement === document.body || document.activeElement.id !== 'away-time'), 'opening the picker does not select the hour');
     await page.fill('#away-time', '10:05');
     await page.focus('#away-time');
     await send(); await page.waitForTimeout(200); // Claude adds a task, or anything else changes
     check((await page.inputValue('#away-time')) === '10:05' && (await page.evaluate(() => document.activeElement.type)) === 'time', 'the time picker keeps the typed time and focus when the panel updates');
 
-    await page.click('.chip >> text=2 hours'); await page.waitForTimeout(450);
+    await page.click('.away-chip >> text=2 hours'); await page.waitForTimeout(450);
     check((await posted('setAway')).length === 0 && /Away until 12:04 PM\?/.test(await page.$eval('.away-card', (e) => e.textContent)), 'picking a time asks first and sets nothing yet');
     check(/Write to Claude/.test(await page.$eval('.away-card', (e) => e.textContent)), 'a long break says how to carry on');
     await page.click('text=Not now'); await page.waitForTimeout(500);
@@ -93,7 +96,7 @@ function state(shareTask, answers) {
     await send({ away: true, awayUntil: Date.now() + 7200_000, awayLabel: '12:04 PM', awayLeft: 7200_000, awayMs: 7200_000 });
     await page.waitForTimeout(450);
     const on = await page.$eval('.away-card', (e) => e.textContent);
-    check(/Away until 12:04 PM/.test(on) && /2 h left/.test(on) && /I’m back/.test(on) && !(await visible('.chip')), 'while away: the end time, the time left and I’m back');
+    check(/Away until 12:04 PM/.test(on) && /2 h left/.test(on) && /I’m back/.test(on) && !(await visible('.away-chip')), 'while away: the end time, the time left and I’m back');
     await page.click('text=I’m back'); await page.waitForTimeout(450);
     check((await posted('endAway')).length === 1 && /Welcome back/.test(await page.$eval('.away-card', (e) => e.textContent)), 'I’m back tells the window and says welcome back');
     await send(); // the window now says: not away

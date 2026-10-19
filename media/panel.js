@@ -898,7 +898,7 @@
   const awayView = () => (awayStage !== 'idle' ? awayStage : isAway() ? 'on' : 'idle');
   const clockText = (ms) => {
     const d = new Date(ms);
-    const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
   };
   const leftMs = () => Math.max(0, (list.awayLeft || 0) - (Date.now() - awayGot));
@@ -938,7 +938,7 @@
         h('div', { class: 'away-title' }, 'Back at?'),
         h('div', { class: 'away-chips' },
           [[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
-            h('button', { class: 'chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'chip-l' }, label), h('span', { class: 'chip-t' }, clockText(Date.now() + m * 60_000))))),
+            h('button', { class: 'away-chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t' }, clockText(Date.now() + m * 60_000))))),
         h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small secondary', onclick: () => choose(untilClock(input.value)) }, 'Set')));
     }
     if (view === 'confirm') {
@@ -1001,7 +1001,6 @@
     const view = awayView();
     awayStage = view === 'picker' || view === 'confirm' ? 'idle' : 'picker';
     renderAway();
-    if (awayStage === 'picker') $('#away-time')?.focus();
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && (awayStage === 'picker' || awayStage === 'confirm')) { awayStage = 'idle'; renderAway(); }
