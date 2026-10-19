@@ -917,15 +917,24 @@
     if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
     return Math.min(d.getTime() - Date.now(), DAY);
   };
+  let awaySeen = 0; // the most time left we have seen for this away, for the bar if the window doesn't say how long it was
   function awayTick() {
     const left = $('#away-left'), fill = $('#away-fill');
     if (!left || awayView() !== 'on') return;
     const ms = leftMs();
+    awaySeen = Math.max(awaySeen, ms);
+    const total = list.awayMs || awaySeen || 1;
     left.textContent = `${leftText(ms)} left`;
-    fill.style.width = `${Math.round(Math.min(1, ms / (list.awayMs || ms || 1)) * 100)}%`;
+    fill.style.width = `${Math.round(Math.min(1, ms / total) * 100)}%`;
+    $('#away-bar').title = `${leftText(ms)} left`;
   }
   setInterval(awayTick, 15_000);
 
+  // Running late: stay away 30 minutes longer. No question asked; it is one small step and Change undoes it.
+  function extend() {
+    const ms = Math.min(leftMs() + 30 * 60_000, DAY);
+    post({ type: 'setAway', ms, label: clockText(Date.now() + ms) });
+  }
   const awayCard = (view) => {
     const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
     if (view === 'picker') {
@@ -961,10 +970,11 @@
     }
     if (view === 'on') {
       return h('section', { class: 'away-card soft card-in', role: 'status', 'aria-live': 'polite' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', {}, list.awayLabel || clockText(list.awayUntil)))), h('span', { class: 'away-left', id: 'away-left' })),
-        h('div', { class: 'away-bar' }, h('div', { class: 'away-fill', id: 'away-fill' })),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, list.awayLabel || clockText(list.awayUntil)))), h('span', { class: 'away-left', id: 'away-left' })),
+        h('div', { class: 'away-bar', id: 'away-bar', 'aria-hidden': 'true' }, h('div', { class: 'away-fill', id: 'away-fill' })),
         h('div', { class: 'away-actions' },
           h('button', { class: 'btn', onclick: () => { awayStage = 'back'; post({ type: 'endAway' }); renderAway(); } }, 'I’m back'),
+          h('button', { class: 'ghost-btn', title: 'Stay away 30 minutes longer', onclick: extend }, '+30 min'),
           h('button', { class: 'ghost-btn', onclick: go('picker') }, 'Change')));
     }
     // back
@@ -999,7 +1009,16 @@
     // Every state update comes through here: only build a card again when it changes, or typing in it would be lost.
     const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${awayPick.ms}` : view;
     if (key === awayShown) return;
+    if (view === 'on' && awayShown.startsWith('on|') && $('#away-until')) {
+      // Same card, new end time (stayed away longer): change the text, don't build the card again.
+      awayShown = key;
+      awaySeen = 0;
+      $('#away-until').textContent = list.awayLabel || clockText(list.awayUntil);
+      awayTick();
+      return;
+    }
     awayShown = key;
+    awaySeen = 0;
     inner.replaceChildren(h('div', { class: 'away-pad' }, awayCard(view)));
     awayTick();
   }

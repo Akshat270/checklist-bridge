@@ -106,8 +106,21 @@ function state(shareTask, answers) {
     check(second && second.ms === 1800_000 && second.label === '10:34 AM', `yes sends the new time (${second && second.ms} ms)`);
     await send({ away: true, awayUntil: Date.now() + 1800_000, awayLabel: '10:34 AM', awayLeft: 1800_000, awayMs: 1800_000 });
     await page.waitForTimeout(450);
+    const pageNow0 = await page.evaluate(() => Date.now()); // the page's clock is set to a fixed day
     const changed = await page.$eval('.away-card', (e) => e.textContent);
     check(/Away until 10:34 AM/.test(changed) && /30 min left/.test(changed), 'the away card then shows the new time and time left');
+    // The bar shows how much of the away is left, and +30 min stays away longer.
+    await send({ away: true, awayUntil: pageNow0 + 1800_000, awayLabel: '10:34 AM', awayLeft: 1800_000, awayMs: 7200_000 });
+    await page.waitForTimeout(500);
+    check((await page.$eval('#away-fill', (e) => e.style.width)) === '25%', 'the bar shows how much of the away is left (30 min of 2 h)');
+    const before = await posted('setAway');
+    await page.click('.away-card >> text=+30 min'); await page.waitForTimeout(100);
+    const more = (await posted('setAway'))[before.length];
+    check(more && more.ms > 3_500_000 && more.ms <= 3600_000 && more.label === '11:04 AM', `+30 min asks for the time left plus 30 minutes (${more && more.ms} ms, ${more && more.label})`);
+    await send({ away: true, awayUntil: pageNow0 + 3600_000, awayLabel: '11:04 AM', awayLeft: 3600_000, awayMs: 3600_000 });
+    await page.waitForTimeout(450);
+    const longer = await page.$eval('.away-card', (e) => e.textContent);
+    check(/Away until 11:04 AM/.test(longer) && /1 h left/.test(longer), 'the card then shows the new end time');
     // An older window may not send the time left: work it out from the end time instead of saying "1 min".
     const pageNow = await page.evaluate(() => Date.now()); // the page's clock is set to a fixed day
     await send({ away: true, awayUntil: pageNow + 5400_000, awayLabel: '11:34 AM', awayLeft: undefined, awayMs: undefined });

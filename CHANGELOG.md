@@ -2,7 +2,7 @@
 
 ## Unreleased
 - **Fixed:** a task Claude moved into an ordered group and removed in the same edit no longer comes back.
-- **Away mode.** Leaving for a while? Click the moon icon on a checklist, pick when you'll be back, and confirm. Until then Claude doesn't wait for your answers: it does what it safely can without you, adds what it skipped to the checklist, and stops with a short summary. Press **I'm back** to end it early. It also ends by itself. Nothing wakes Claude when it ends, so an idle chat doesn't cost you anything.
+- **Away mode.** Leaving for a while? Click the moon icon on a checklist, pick when you'll be back, and confirm. Until then Claude doesn't wait for your answers: it does what it safely can without you, adds what it skipped to the checklist, and stops with a short summary. The card shows the time left, with **+30 min** if you're running late. Press **I'm back** to end it early. It also ends by itself. Nothing wakes Claude when it ends, so an idle chat doesn't cost you anything.
 
 ## 0.6.1
 - **A new Marketplace page and README.** New banner and screenshots that show steps and phases, a short "how it works", a feature list, tips on when to use it, and a FAQ.
