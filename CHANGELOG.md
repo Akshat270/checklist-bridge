@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+- **A new Marketplace page and README.** New banner and screenshots that show steps and phases, a short "how it works", a feature list, tips on when to use it, and a FAQ.
+- Easier to find: a plainer description, more search keywords and the Productivity category.
+
 ## 0.6.0
 - **Steps that must be done in order now show in order.** Claude can mark a group of tasks as steps. They show as Step 1, Step 2 and so on, in Claude's order. An *important* or *urgent* tag no longer moves a later step to the top.
 - **Roadmaps with stages.** Claude can mark groups as phases that must be done one after another, for example *Setting up*, then *Testing*, then *Wrapping up*. The phases show in order (Phase 1 of 3…), the steps are numbered across all of them (Step 4 of 7), and only the first open step is next.
