@@ -84,7 +84,7 @@ ext.activate(ctx).then(() => say({ ready: name }));
 
 process.on('message', (m) => {
   if (m.cmd === 'focus') { vscode.window.state.focused = true; focusListener({ focused: true }); }
-  if (m.cmd === 'panels') say({ panels: panels.filter((p) => !p.gone).map((p) => ({ title: p.title, away: !!p.state?.awayUntil, id: p.state?.id, routes: p.routes, questions: (p.state?.questions || []).map((q) => ({ id: q.id, answered: !!q.answer, seen: !!q.seenAt, pushed: !!q.pushedAt, retired: !!q.retired })), tasks: (p.state?.tasks || []).map((t) => t.id + (t.shared ? '*' : '')) })) });
+  if (m.cmd === 'panels') say({ panels: panels.filter((p) => !p.gone).map((p) => ({ title: p.title, away: !!p.state?.away, awayLeft: p.state?.awayLeft, awayLabel: p.state?.awayLabel, awayMs: p.state?.awayMs, id: p.state?.id, routes: p.routes, questions: (p.state?.questions || []).map((q) => ({ id: q.id, answered: !!q.answer, seen: !!q.seenAt, pushed: !!q.pushedAt, retired: !!q.retired })), tasks: (p.state?.tasks || []).map((t) => t.id + (t.shared ? '*' : '')) })) });
   if (m.cmd === 'addTerminal') { const t = { name: 'claude', processId: Promise.resolve(m.pid), show() {}, sendText: (x) => say({ termText: x }) }; terminals.push(t); termOpen.forEach((fn) => fn(t)); setTimeout(() => say({ done: 1 }), 300); }
   if (m.cmd === 'user') { const p = panels.find((x) => !x.gone && x.title === m.title); p.user({ ...m.msg }); setTimeout(() => say({ done: 1 }), 50); }
   if (m.cmd === 'closeTab') { panels.find((x) => !x.gone && x.title === m.title).dispose(); setTimeout(() => say({ done: 1 }), 50); }

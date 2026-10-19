@@ -889,6 +889,7 @@
   let awayStage = 'idle'; // idle | picker | confirm | back
   let awayPick = null; // { ms, label } chosen in the picker, waiting for a yes
   let awayBase = 0; // the end time when the user said yes, to see the new one arrive
+  let awaySent = false; // yes was pressed and the window hasn't answered yet
   let awayShown = ''; // which card is built now
   let awayClose; // clears a closed card's content once it has finished easing shut
   let awayGot = Date.now(); // when list.awayLeft was true
@@ -925,7 +926,7 @@
   setInterval(awayTick, 15_000);
 
   const awayCard = (view) => {
-    const go = (stage) => () => ((awayStage = stage), renderAway());
+    const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
     if (view === 'picker') {
       const choose = (ms) => {
         if (!ms) return toast('Pick a time first');
@@ -950,6 +951,7 @@
             class: 'btn',
             onclick: () => {
               awayBase = (list && list.awayUntil) || 0;
+              awaySent = true;
               // How long, not a time of day: the window works out the end, so a different clock there changes nothing.
               post({ type: 'setAway', ms: awayPick.ms, label: awayPick.label });
             },
@@ -974,8 +976,11 @@
   };
 
   function renderAway() {
-    // The new end time has arrived: the question is answered.
-    if (awayStage === 'confirm' && isAway() && list.awayUntil !== awayBase) awayStage = 'idle';
+    // The new end time has arrived: the question is answered. (Only after a yes: already being away says nothing about a new question.)
+    if (awayStage === 'confirm' && awaySent && isAway() && list.awayUntil !== awayBase) {
+      awayStage = 'idle';
+      awaySent = false;
+    }
     const view = awayView();
     const open = view !== 'idle';
     const btn = $('#away-btn'), wrap = $('#away'), inner = $('#away-inner');
@@ -1000,6 +1005,7 @@
   function toggleAway() {
     const view = awayView();
     awayStage = view === 'picker' || view === 'confirm' ? 'idle' : 'picker';
+    awaySent = false;
     renderAway();
   }
   document.addEventListener('keydown', (e) => {

@@ -63,6 +63,10 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
   r = await waiting;
   check(/THE USER IS AWAY/.test(r.text) && /do not call checklist_wait/i.test(r.text) && Date.now() - t0 < 2000, `a running wait is released when the user goes away (${Date.now() - t0} ms)`);
   check((await panel('Deploy')).away === true, 'the panel shows the user as away');
+  {
+    const pa = await panel('Deploy');
+    check(Math.abs(pa.awayLeft - 3600_000) < 10_000 && pa.awayMs === 3600_000, `the panel is told how long is left (${pa.awayLeft} ms of ${pa.awayMs} ms)`);
+  }
 
   t0 = Date.now();
   r = await A.tool('checklist_wait', { timeout_minutes: 5 });

@@ -97,6 +97,17 @@ function state(shareTask, answers) {
     await page.waitForTimeout(450);
     const on = await page.$eval('.away-card', (e) => e.textContent);
     check(/Away until 12:04 PM/.test(on) && /2 h left/.test(on) && /I’m back/.test(on) && !(await visible('.away-chip')), 'while away: the end time, the time left and I’m back');
+    // Already away: changing the time asks again, and the new time replaces the old one.
+    await page.click('.away-card >> text=Change'); await page.waitForTimeout(450);
+    await page.click('.away-chip >> text=30 min'); await page.waitForTimeout(450);
+    check(/Away until 10:34 AM\?/.test(await page.$eval('.away-card', (e) => e.textContent)) && (await posted('setAway')).length === 1, 'while away, picking a new time asks again and sets nothing yet');
+    await page.click('.away-card >> text=Yes'); await page.waitForTimeout(100);
+    const second = (await posted('setAway'))[1];
+    check(second && second.ms === 1800_000 && second.label === '10:34 AM', `yes sends the new time (${second && second.ms} ms)`);
+    await send({ away: true, awayUntil: Date.now() + 1800_000, awayLabel: '10:34 AM', awayLeft: 1800_000, awayMs: 1800_000 });
+    await page.waitForTimeout(450);
+    const changed = await page.$eval('.away-card', (e) => e.textContent);
+    check(/Away until 10:34 AM/.test(changed) && /30 min left/.test(changed), 'the away card then shows the new time and time left');
     await page.click('text=I’m back'); await page.waitForTimeout(450);
     check((await posted('endAway')).length === 1 && /Welcome back/.test(await page.$eval('.away-card', (e) => e.textContent)), 'I’m back tells the window and says welcome back');
     await send(); // the window now says: not away
