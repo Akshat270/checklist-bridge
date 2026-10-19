@@ -60,6 +60,14 @@ When Claude Code needs you to do something by hand, like create an API key, run 
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-shared.png" width="300" alt="Several ticked tasks with a Share all bar at the bottom, and the Shared with Claude section showing which tasks Claude has read">
 </p>
 
+## How it's built
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/architecture.png" width="100%" alt="Claude Code chats talk over stdio to a small connector, which talks to the VS Code extension on 127.0.0.1 with a token; the extension owns the checklist and saves it locally">
+</p>
+
+Each Claude chat starts its own small connector, a [Model Context Protocol](https://modelcontextprotocol.io) server. The connector keeps no data. It passes every call to the VS Code window that owns the checklist, over `127.0.0.1` with a random token. Written in TypeScript, tested on macOS, Windows and Linux.
+
 ## Good for
 
 - Setting up accounts, API keys, environment variables and dashboards that Claude can't reach.
