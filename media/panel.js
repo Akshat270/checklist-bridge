@@ -886,20 +886,22 @@
 
   /* ---------------- away ---------------- */
   let awayOpen = false;
-  const isAway = () => !!(list && list.awayUntil && list.awayUntil > Date.now());
+  // The window decides whether the user is away (list.away), so this panel's clock can't disagree with it.
+  const isAway = () => !!(list && list.away);
   const clockText = (ms) => {
     const d = new Date(ms);
     const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
   };
-  /** The next time the clock shows hh:mm (today, or tomorrow if that has passed). */
-  const nextClock = (hhmm) => {
+  const DAY = 24 * 3600_000;
+  /** How long until the clock next shows hh:mm (today, or tomorrow if that has passed). Never over a day, even across a clock change. */
+  const untilClock = (hhmm) => {
     const [hh, mm] = hhmm.split(':').map(Number);
     if (!Number.isInteger(hh) || !Number.isInteger(mm)) return 0;
     const d = new Date();
     d.setHours(hh, mm, 0, 0);
-    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // always under 24 hours ahead
-    return d.getTime();
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return Math.min(d.getTime() - Date.now(), DAY);
   };
   let awayShown = '';
   function renderAway() {
@@ -910,22 +912,24 @@
     box.hidden = !away && !awayOpen;
     box.className = away ? 'away on' : 'away';
     // Every state update comes through here. Rebuilding the form while someone types a time would reset it.
-    const key = away ? `on|${list.awayUntil}` : awayOpen ? 'form' : 'off';
+    const shownEnd = away ? list.awayLabel || clockText(list.awayUntil) : '';
+    const key = away ? `on|${list.awayUntil}|${shownEnd}` : awayOpen ? 'form' : 'off';
     if (key === awayShown) return;
     awayShown = key;
     box.replaceChildren();
     if (away) {
       box.append(
-        h('span', { class: 'away-text', html: `${I.away}<span>Away until <strong>${clockText(list.awayUntil)}</strong>. Claude won’t wait for you and only does what it safely can.</span>` }),
+        h('span', { class: 'away-text', html: `${I.away}<span>Away until <strong>${shownEnd}</strong>. Claude won’t wait for you and only does what it safely can.</span>` }),
         h('button', { class: 'btn small', onclick: () => post({ type: 'endAway' }) }, 'I’m back')
       );
       return;
     }
     if (!awayOpen) return;
-    const set = (until) => {
-      if (!until) return toast('Pick a time first');
+    // Send how long, not a time of day: the window works out the end, so a different clock there changes nothing.
+    const set = (ms) => {
+      if (!ms) return toast('Pick a time first');
       awayOpen = false;
-      post({ type: 'setAway', until });
+      post({ type: 'setAway', ms, label: clockText(Date.now() + ms) });
     };
     const soon = new Date(Date.now() + 3600_000);
     const input = h('input', { type: 'time', 'aria-label': 'Back at', value: `${String(soon.getHours()).padStart(2, '0')}:${String(soon.getMinutes()).padStart(2, '0')}` });
@@ -933,8 +937,8 @@
       h('div', { class: 'away-title' }, 'When will you be back? Claude will stop waiting for you until then.'),
       h('div', { class: 'away-row' },
         ...[[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
-          h('button', { class: 'btn small secondary', onclick: () => set(Date.now() + m * 60_000) }, label)),
-        h('span', { class: 'away-at' }, 'or at', input, h('button', { class: 'btn small', onclick: () => set(nextClock(input.value)) }, 'Set'))
+          h('button', { class: 'btn small secondary', onclick: () => set(m * 60_000) }, label)),
+        h('span', { class: 'away-at' }, 'or at', input, h('button', { class: 'btn small', onclick: () => set(untilClock(input.value)) }, 'Set'))
       )
     );
   }

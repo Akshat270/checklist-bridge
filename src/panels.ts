@@ -44,6 +44,7 @@ export class Panels {
         return src ? { id: v.id, mime: v.mime, w: v.w, h: v.h, src } : v;
       })
     );
+    list.away = this.store.isAway(c); // decided here, so the panel's own clock can't disagree
     return { type: 'state', list, routes: this.hooks.routes(c) };
   }
 
@@ -196,7 +197,7 @@ export class Panels {
         break;
       }
       case 'setAway':
-        if (!s.setAway(id, Number(m.until))) this.open.get(id)?.webview.postMessage({ type: 'toast', text: 'Pick a time later today or tomorrow' });
+        if (!s.setAway(id, m.ms, m.label)) this.open.get(id)?.webview.postMessage({ type: 'toast', text: 'Pick a time within the next 24 hours' });
         break;
       case 'endAway':
         s.endAway(id);

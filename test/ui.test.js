@@ -70,8 +70,9 @@ function state(shareTask, answers) {
     check((await page.inputValue('#away input[type=time]')) === '10:05' && (await page.evaluate(() => document.activeElement.type)) === 'time', 'the time picker keeps the typed time and focus when the panel updates');
     await page.click('#away >> text=Set');
     const set = await page.evaluate(() => window.__out.find((m) => m.type === 'setAway'));
-    const ahead = set && set.until - (await page.evaluate(() => Date.now()));
-    check(set && ahead > 0 && ahead < 60_000, `a time 20 seconds ahead is today, not tomorrow (${ahead} ms)`);
+    const ahead = set && set.ms;
+    check(set && ahead > 0 && ahead < 60_000 && set.label === '10:05 AM', `a time 20 seconds ahead is sent as a duration of 20 seconds, with the time as the user saw it (${ahead} ms, ${set && set.label})`);
+    check(set && set.until === undefined, 'the panel sends how long, not a time of day from its own clock');
     await page.close();
   }
   await b.close();

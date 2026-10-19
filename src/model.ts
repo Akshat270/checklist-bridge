@@ -76,6 +76,8 @@ export interface Checklist {
   lastReadAt?: number;
   /** The user is away until this time (ms). Claude is told not to wait for them. */
   awayUntil?: number;
+  /** The end time as the user saw it on their screen ("6:30 PM"), so Claude is told the same thing. */
+  awayLabel?: string;
 }
 
 export interface CallMeta { cwd?: string; client?: string }
@@ -307,6 +309,8 @@ export function normalize(c: Checklist): Checklist {
   c.groupOrder ??= [];
   c.orderedGroups ??= [];
   c.phases ??= [];
+  // An away that ran out while the window was closed means nothing now.
+  if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = undefined;
   return c;
 }
 
@@ -477,11 +481,16 @@ export class ChecklistStore {
     return !c.closed && !!c.awayUntil && c.awayUntil > now;
   }
 
-  /** The user will be away until `until` (ms). Refuses a time in the past or more than a day ahead. */
-  setAway(listId: string, until: number, now = Date.now()): boolean {
+  /**
+   * The user will be away for `ms` from now. The window works out the end time, so a clock that runs
+   * differently from the panel's (VS Code Remote, a skewed clock) can't make it early, late or refused.
+   * Refuses nothing or more than a day. `label` is the end time as the user saw it.
+   */
+  setAway(listId: string, ms: number, label?: string, now = Date.now()): boolean {
     const c = this.lists.get(listId);
-    if (!c || c.closed || !Number.isFinite(until) || until <= now || until > now + MAX_AWAY_MS) return false;
-    c.awayUntil = Math.round(until);
+    if (!c || c.closed || typeof ms !== 'number' || !Number.isFinite(ms) || ms < 1000 || ms > MAX_AWAY_MS) return false;
+    c.awayUntil = Math.round(now + ms);
+    c.awayLabel = (typeof label === 'string' && label.replace(/[^\w :.,-]/g, '').trim().slice(0, 24)) || undefined;
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
@@ -490,7 +499,7 @@ export class ChecklistStore {
   endAway(listId: string): boolean {
     const c = this.lists.get(listId);
     if (!c || !c.awayUntil) return false;
-    c.awayUntil = undefined;
+    c.awayUntil = c.awayLabel = undefined;
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
@@ -503,14 +512,13 @@ export class ChecklistStore {
   /** What to tell Claude while the user is away (undefined when they are not). */
   awayNote(c: Checklist | undefined): string | undefined {
     if (!c || !this.isAway(c)) return undefined;
-    const until = new Date(c.awayUntil!);
     const mins = Math.max(1, Math.round((c.awayUntil! - Date.now()) / 60_000));
     const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const left = mins < 60 ? plural(mins, 'minute') : [plural(Math.floor(mins / 60), 'hour'), mins % 60 && plural(mins % 60, 'minute')].filter(Boolean).join(' ');
-    const clock = until.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const day = until.toDateString() === new Date().toDateString() ? '' : ' tomorrow';
+    // The label is what the user's screen showed. Without one, use this computer's clock.
+    const clock = c.awayLabel ?? new Date(c.awayUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     return (
-      `THE USER IS AWAY until ${clock}${day} (in ${left}), and may come back sooner. Do NOT wait for them and do not call checklist_wait. ` +
+      `THE USER IS AWAY until ${clock} (in ${left}), and may come back sooner. Do NOT wait for them and do not call checklist_wait. ` +
       'Do every remaining piece of work that needs no human input and that you can finish safely and correctly. ' +
       'Do not guess answers to waiting questions, do not do anything that depends on an unfinished manual task or an unanswered question, ' +
       'and do not do anything risky or hard to undo (deploys, deleting data, spending money, messaging other people). ' +
@@ -534,6 +542,7 @@ export class ChecklistStore {
     const c = this.lists.get(listId);
     if (!c || c.closed) return;
     c.closed = true;
+    c.awayUntil = c.awayLabel = undefined;
     this.emit({ checklist: c, kind: 'closed' });
   }
 
@@ -616,20 +625,28 @@ export class ChecklistStore {
 
   handleTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
     try {
-      switch (name) {
-        case 'checklist_add_tasks':
-          return this.toolAdd(sessionId, meta, args ?? {});
-        case 'checklist_ask':
-          return this.toolAsk(sessionId, meta, args ?? {});
-        case 'checklist_read':
-          return this.toolRead(sessionId, args ?? {});
-        case 'checklist_edit':
-          return this.toolEdit(sessionId, args ?? {});
-        default:
-          return err(`Unknown tool: ${name}`);
-      }
+      const res = this.runTool(sessionId, meta, name, args);
+      // Every result tells Claude the user is away, not just the ones that read the checklist. (A read puts it first.)
+      const away = res.isError || name === 'checklist_read' ? undefined : this.awayNoteFor(sessionId);
+      if (away) res.content.push({ type: 'text', text: away });
+      return res;
     } catch (e: any) {
       return err(e?.message ?? String(e));
+    }
+  }
+
+  private runTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
+    switch (name) {
+      case 'checklist_add_tasks':
+        return this.toolAdd(sessionId, meta, args ?? {});
+      case 'checklist_ask':
+        return this.toolAsk(sessionId, meta, args ?? {});
+      case 'checklist_read':
+        return this.toolRead(sessionId, args ?? {});
+      case 'checklist_edit':
+        return this.toolEdit(sessionId, args ?? {});
+      default:
+        return err(`Unknown tool: ${name}`);
     }
   }
 
@@ -760,8 +777,6 @@ export class ChecklistStore {
     ];
     const fresh = this.freshNote(c);
     if (fresh) lines.push(fresh);
-    const away = this.awayNote(c);
-    if (away) lines.push(away);
     return ok(lines.join('\n'));
   }
 
@@ -825,8 +840,6 @@ export class ChecklistStore {
     ];
     const fresh = this.freshNote(c);
     if (fresh) lines.push(fresh);
-    const away = this.awayNote(c);
-    if (away) lines.push(away);
     return ok(lines.join('\n'));
   }
 

@@ -5,6 +5,7 @@ const path = require('path'), fs = require('fs'), os = require('os');
 const EXT = __ROOT;
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'cbaway-'));
 process.env.CHECKLIST_BRIDGE_HOME = HOME;
+process.env.CHECKLIST_BRIDGE_AWAY_TICK_MS = '500'; // how often the window ends aways that ran out (test only)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;
 const check = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) failed++; };
@@ -58,7 +59,7 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
   const waiting = A.tool('checklist_wait', { timeout_minutes: 5 });
   await sleep(400);
   let t0 = Date.now();
-  await user('Deploy', { type: 'setAway', until: Date.now() + 3600_000 });
+  await user('Deploy', { type: 'setAway', ms: 3600_000 });
   r = await waiting;
   check(/THE USER IS AWAY/.test(r.text) && /do not call checklist_wait/i.test(r.text) && Date.now() - t0 < 2000, `a running wait is released when the user goes away (${Date.now() - t0} ms)`);
   check((await panel('Deploy')).away === true, 'the panel shows the user as away');
@@ -75,10 +76,12 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
 
   // The countdown is exact, not rounded: 95 minutes is "1 hour 35 minutes", not "about 2 hours".
   await user('Deploy', { type: 'endAway' });
-  await user('Deploy', { type: 'setAway', until: Date.now() + 95 * 60_000 });
+  await user('Deploy', { type: 'setAway', ms: 95 * 60_000, label: '3:17 PM' });
   r = await A.tool('checklist_read', {});
-  check(/in 1 hour 3[45] minutes\)/.test(r.text) && !/about/.test(r.text.split('AWAY')[1] || ''), 'the time left is told exactly (1 hour 35 minutes)');
-  await user('Deploy', { type: 'setAway', until: Date.now() + 30 * 60_000 });
+  check(/AWAY until 3:17 PM \(in 1 hour 35 minutes\)/.test(r.text), 'Claude is told the end time as the user saw it, and the time left exactly');
+  r = await A.tool('checklist_edit', { title: 'Deploy' });
+  check(/THE USER IS AWAY/.test(r.text), 'checklist_edit also tells Claude the user is away');
+  await user('Deploy', { type: 'setAway', ms: 30 * 60_000 });
 
   // The user comes back early.
   await user('Deploy', { type: 'endAway' });
@@ -91,9 +94,9 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
   check(blocked, 'after I\'m back, checklist_wait waits for the user again');
 
   // Times that make no sense are refused.
-  await user('Deploy', { type: 'setAway', until: Date.now() - 60_000 });
-  await user('Deploy', { type: 'setAway', until: Date.now() + 3 * 24 * 3600_000 });
-  await user('Deploy', { type: 'setAway', until: 'soon' });
+  await user('Deploy', { type: 'setAway', ms: -60_000 });
+  await user('Deploy', { type: 'setAway', ms: 3 * 24 * 3600_000 });
+  await user('Deploy', { type: 'setAway', ms: 'soon' });
   check((await panel('Deploy')).away === false, 'a past time, more than a day ahead, or not a time is refused');
 
   // ---------- B: started with channels. It is told when the user is back.
@@ -105,7 +108,7 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
 
   // Nothing is sent to Claude when the user comes back: an idle chat's cache has usually expired,
   // so waking it would cost the user. Claude finds out on its next read.
-  await user('Naming', { type: 'setAway', until: Date.now() + 3600_000 });
+  await user('Naming', { type: 'setAway', ms: 3600_000 });
   r = await B.tool('checklist_read', {});
   check(/THE USER IS AWAY/.test(r.text), 'a chat on channels is told the user is away');
   await user('Naming', { type: 'endAway' });
@@ -115,15 +118,42 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
   check(!/AWAY/.test(r.text), 'Claude learns the user is back on its next read');
 
   // The time runs out by itself: also silent.
-  await user('Naming', { type: 'setAway', until: Date.now() + 2500 });
+  await user('Naming', { type: 'setAway', ms: 1500 });
   r = await B.tool('checklist_read', {});
   check(/THE USER IS AWAY/.test(r.text), 'a short away is seen by Claude');
   await sleep(3000);
   r = await B.tool('checklist_read', {});
   check(!/AWAY/.test(r.text), 'when the time is up, Claude is no longer told the user is away');
-  await sleep(17_000); // past the timer that clears the state
+  await sleep(1500); // past the timer that clears the state (set short for tests)
   check((await panel('Naming')).away === false, 'the panel is no longer away');
   check(allNotes(B).length === 0, 'the time running out sends nothing to Claude either');
+
+  // Straight on the store: no timers, no windows.
+  {
+    const { ChecklistStore, normalize } = require(EXT + '/dist/model.js');
+    const st = new ChecklistStore();
+    st.handleTool('s', {}, 'checklist_add_tasks', { tasks: ['x'] });
+    const c = st.all()[0];
+    check(st.setAway(c.id, 60_000, 'bad <script>label') && c.awayLabel === 'bad scriptlabel', 'the label is cleaned before Claude sees it');
+    check(!st.setAway(c.id, 0) && !st.setAway(c.id, 25 * 3600_000) && !st.setAway(c.id, NaN), 'zero, over a day, and not-a-number are refused');
+    const events = []; st.onChange((e) => events.push(e.kind));
+    c.awayUntil = Date.now() - 1000;
+    st.expireAway(); st.expireAway();
+    check(c.awayUntil === undefined && events.length === 1, 'an away that ran out is ended once');
+    const stale = JSON.parse(JSON.stringify({ ...c, awayUntil: Date.now() - 5000, awayLabel: '1:00 PM' }));
+    check(normalize(stale).awayUntil === undefined && normalize(stale).awayLabel === undefined, 'an away that ran out while the window was closed is dropped when loading');
+    st.setAway(c.id, 60_000, '1:00 PM'); events.length = 0;
+    st.close(c.id);
+    check(c.awayUntil === undefined && !st.isAway(c), 'closing a checklist ends its away');
+    // a listener that throws must not stop expiry for the others
+    const st2 = new ChecklistStore();
+    st2.handleTool('a', {}, 'checklist_add_tasks', { tasks: ['x'] });
+    st2.handleTool('b', {}, 'checklist_add_tasks', { tasks: ['y'] });
+    for (const x of st2.all()) x.awayUntil = Date.now() - 1;
+    st2.onChange(() => { throw new Error('boom'); });
+    let threw = false; try { st2.expireAway(); } catch { threw = true; }
+    check(threw, 'a failing listener surfaces from expireAway (the window catches it around the timer)');
+  }
 
   [A, B].forEach((c) => c.kill());
   W.send({ cmd: 'quit' });
