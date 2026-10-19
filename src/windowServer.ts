@@ -64,11 +64,12 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
   store.onChange(() => {
     for (const [sid, set] of [...waiters]) {
       // The user went away: stop the wait and tell Claude what to do instead.
-      const away = store.awayNoteFor(sid);
+      const list = store.forSession(sid);
+      const away = !!list && store.isAway(list);
       if (!away && !store.hasUnread(sid)) continue;
       if (![...set].some((w) => open(w.res))) continue;
       waiters.delete(sid);
-      const result = store.hasUnread(sid) ? store.handleTool(sid, {}, 'checklist_read', {}) : { content: [{ type: 'text' as const, text: away! }] };
+      const result = store.hasUnread(sid) ? store.handleTool(sid, {}, 'checklist_read', {}) : { content: [{ type: 'text' as const, text: store.awayNote(list)! }] };
       for (const resolve of set) resolve(result);
       changed();
     }

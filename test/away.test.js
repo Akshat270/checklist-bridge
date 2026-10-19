@@ -73,6 +73,13 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
   r = await A.tool('checklist_ask', { questions: [{ question: 'Which plan?', options: ['Free', 'Pro'] }] });
   check(/THE USER IS AWAY/.test(r.text), 'asking a question also says the user is away');
 
+  // The countdown is exact, not rounded: 95 minutes is "1 hour 35 minutes", not "about 2 hours".
+  await user('Deploy', { type: 'endAway' });
+  await user('Deploy', { type: 'setAway', until: Date.now() + 95 * 60_000 });
+  r = await A.tool('checklist_read', {});
+  check(/in 1 hour 3[45] minutes\)/.test(r.text) && !/about/.test(r.text.split('AWAY')[1] || ''), 'the time left is told exactly (1 hour 35 minutes)');
+  await user('Deploy', { type: 'setAway', until: Date.now() + 30 * 60_000 });
+
   // The user comes back early.
   await user('Deploy', { type: 'endAway' });
   check((await panel('Deploy')).away === false, 'I\'m back clears away in the panel');

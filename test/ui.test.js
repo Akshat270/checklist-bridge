@@ -55,6 +55,25 @@ function state(shareTask, answers) {
     check(out.length === 1 && out[0].text === 't2' && (await isOpen()) === before, 'clicking an id copies it, without opening or closing the task');
     await page.close();
   }
+  // Away: the time picker keeps what the user typed when the panel updates, and a time just ahead is not pushed a day too far.
+  {
+    const page = await b.newPage({ viewport: { width: 400, height: 1100 } });
+    // The page's clock reads 10:04:40 on a fixed day, so "10:05" is 20 seconds ahead.
+    const clock = 'const R=Date,off=new R(2026,0,15,10,4,40).getTime()-R.now();window.Date=class extends R{constructor(...a){a.length?super(...a):super(R.now()+off)}static now(){return R.now()+off}};';
+    await page.setContent(`<!doctype html><html><head><style>html{${THEME}}${css}</style></head><body class="vscode-dark"><script>${clock}window.__out=[];window.acquireVsCodeApi=()=>({postMessage:m=>window.__out.push(m),getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
+    const push = () => page.evaluate((l) => window.postMessage({ type: 'state', list: l, routes: { waiting: false, channel: false, terminal: false } }, '*'), state(false, []));
+    await push(); await page.waitForTimeout(200);
+    await page.click('#away-btn');
+    await page.fill('#away input[type=time]', '10:05');
+    await page.focus('#away input[type=time]');
+    await push(); await page.waitForTimeout(200); // Claude adds a task, or anything else changes
+    check((await page.inputValue('#away input[type=time]')) === '10:05' && (await page.evaluate(() => document.activeElement.type)) === 'time', 'the time picker keeps the typed time and focus when the panel updates');
+    await page.click('#away >> text=Set');
+    const set = await page.evaluate(() => window.__out.find((m) => m.type === 'setAway'));
+    const ahead = set && set.until - (await page.evaluate(() => Date.now()));
+    check(set && ahead > 0 && ahead < 60_000, `a time 20 seconds ahead is today, not tomorrow (${ahead} ms)`);
+    await page.close();
+  }
   await b.close();
   console.log(failed ? `${failed} FAILED` : 'ALL PASS'); process.exit(failed ? 1 : 0);
 })();

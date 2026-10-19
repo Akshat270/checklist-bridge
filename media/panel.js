@@ -898,9 +898,10 @@
     if (!Number.isInteger(hh) || !Number.isInteger(mm)) return 0;
     const d = new Date();
     d.setHours(hh, mm, 0, 0);
-    if (d.getTime() <= Date.now() + 30_000) d.setDate(d.getDate() + 1);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // always under 24 hours ahead
     return d.getTime();
   };
+  let awayShown = '';
   function renderAway() {
     const box = $('#away');
     const away = isAway();
@@ -908,6 +909,10 @@
     $('#away-btn').hidden = away;
     box.hidden = !away && !awayOpen;
     box.className = away ? 'away on' : 'away';
+    // Every state update comes through here. Rebuilding the form while someone types a time would reset it.
+    const key = away ? `on|${list.awayUntil}` : awayOpen ? 'form' : 'off';
+    if (key === awayShown) return;
+    awayShown = key;
     box.replaceChildren();
     if (away) {
       box.append(

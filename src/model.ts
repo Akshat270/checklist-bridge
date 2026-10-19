@@ -505,7 +505,8 @@ export class ChecklistStore {
     if (!c || !this.isAway(c)) return undefined;
     const until = new Date(c.awayUntil!);
     const mins = Math.max(1, Math.round((c.awayUntil! - Date.now()) / 60_000));
-    const left = mins < 90 ? `${mins} minute${mins === 1 ? '' : 's'}` : `about ${Math.round(mins / 60)} hours`;
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const left = mins < 60 ? plural(mins, 'minute') : [plural(Math.floor(mins / 60), 'hour'), mins % 60 && plural(mins % 60, 'minute')].filter(Boolean).join(' ');
     const clock = until.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const day = until.toDateString() === new Date().toDateString() ? '' : ' tomorrow';
     return (
