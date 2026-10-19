@@ -1063,7 +1063,7 @@ export class ChecklistStore {
     for (const g of orderedBefore.filter((x) => !c.orderedGroups.includes(x)))
       notes.push(`${g} has no tasks left, so it is no longer an ordered group. If its tasks moved to another group, list that group in ordered_groups.`);
     // A task moved into an ordered group becomes its last step. step_order changes the order afterwards.
-    const arrived = [...new Set(moved)].filter((t) => t.group && isSequence(c, t.group));
+    const arrived = [...new Set(moved)].filter((t) => c.tasks.includes(t) && t.group && isSequence(c, t.group)); // not one removed in this same call
     for (const t of arrived) {
       const others = c.tasks.filter((x) => x !== t);
       let at = -1;

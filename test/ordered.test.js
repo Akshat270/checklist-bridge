@@ -129,6 +129,14 @@ function build() {
   const old = JSON.parse(JSON.stringify(build().s.get(id) || c)); delete old.orderedGroups;
   check(normalize(old).orderedGroups.length === 0, 'a checklist saved before this change still loads');
 
+  // A task moved into an ordered group and removed in the same call stays removed.
+  {
+    const { s: s2, S: S2 } = build();
+    const before = s2.all()[0].tasks.map((t) => t.id);
+    r = text(s2.handleTool(S2, {}, 'checklist_edit', { updates: [{ id: 't5', group: 'Release' }], remove: ['t5'] }));
+    check(!s2.all()[0].tasks.some((t) => t.id === 't5') && s2.all()[0].tasks.length === before.length - 1 && !/t5 is now step/.test(r), 'a task moved into an ordered group and removed in the same call stays removed');
+  }
+
   // The panel.
   const pw = require('./harness/playwright');
   if (!pw) { console.log('SKIP Playwright is not installed (panel checks)'); console.log(failed ? `${failed} FAILED` : 'ALL PASS'); process.exit(failed ? 1 : 0); }
