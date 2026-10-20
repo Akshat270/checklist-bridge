@@ -26,6 +26,7 @@
     check: svg('<path d="m3.5 8.3 3 3 6-6.6"/>'),
     minus: svg('<path d="M4 8h8"/>'),
     eye: svg('<path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/>'),
+    away: svg('<path d="M12.6 9.6A5.4 5.4 0 0 1 6.4 3.4a5.4 5.4 0 1 0 6.2 6.2z"/>'),
     clock: svg('<circle cx="8" cy="8" r="5.8"/><path d="M8 4.8V8l2.2 1.4"/>'),
     image: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.8" cy="6.6" r="1.1"/><path d="m2.5 11.8 3.4-3.2 2.4 2.1 1.9-1.6 3.3 2.9"/>'),
     note: svg('<path d="M3 2.8h10v7.6H7.2L4 13.2v-2.8H3z"/>'),
@@ -787,6 +788,7 @@
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
+    renderAway();
     // "Send now" hands over everything not read yet in one go, so show exactly one control:
     // on the answer card when that answer is the only thing waiting, otherwise in the bar.
     const pending = unreadShared();
@@ -882,18 +884,168 @@
     document.getElementById(`task-${id}`)?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
   }
 
+  /* ---------------- away ---------------- */
+  // The card under the title. 'on' follows the window (list.away); the rest is what the user opened here.
+  let awayStage = 'idle'; // idle | picker | confirm | back
+  let awayPick = null; // { ms, label } chosen in the picker, waiting for a yes
+  let awayBase = 0; // the end time when the user said yes, to see the new one arrive
+  let awaySent = false; // yes was pressed and the window hasn't answered yet
+  let awayShown = ''; // which card is built now
+  let awayClose; // clears a closed card's content once it has finished easing shut
+  let awayGot = Date.now(); // when list.awayLeft was true
+  const DAY = 24 * 3600_000;
+  // The window decides whether the user is away, so this panel's clock can't disagree with it.
+  const isAway = () => !!(list && list.away);
+  const awayView = () => (awayStage !== 'idle' ? awayStage : isAway() ? 'on' : 'idle');
+  const clockText = (ms) => {
+    const d = new Date(ms);
+    const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
+  };
+  // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
+  const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
+  const leftText = (ms) => {
+    const m = Math.max(1, Math.ceil(ms / 60000));
+    return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
+  };
+  /** How long until the clock next shows hh:mm (today, or tomorrow if that has passed). Never over a day, even across a clock change. */
+  const untilClock = (hhmm) => {
+    const [hh, mm] = hhmm.split(':').map(Number);
+    if (!Number.isInteger(hh) || !Number.isInteger(mm)) return 0;
+    const d = new Date();
+    d.setHours(hh, mm, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return Math.min(d.getTime() - Date.now(), DAY);
+  };
+  let awaySeen = 0; // the most time left we have seen for this away, for the bar if the window doesn't say how long it was
+  function awayTick() {
+    const left = $('#away-left'), fill = $('#away-fill');
+    if (!left || awayView() !== 'on') return;
+    const ms = leftMs();
+    awaySeen = Math.max(awaySeen, ms);
+    const total = list.awayMs || awaySeen || 1;
+    left.textContent = `${leftText(ms)} left`;
+    fill.style.width = `${Math.round(Math.min(1, ms / total) * 100)}%`;
+    $('#away-bar').title = `${leftText(ms)} left`;
+  }
+  setInterval(awayTick, 15_000);
+
+  // Running late: stay away 30 minutes longer. No question asked; it is one small step and Change undoes it.
+  function extend() {
+    const ms = Math.min(leftMs() + 30 * 60_000, DAY);
+    post({ type: 'setAway', ms, label: clockText(Date.now() + ms) });
+  }
+  const awayCard = (view) => {
+    const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
+    if (view === 'picker') {
+      const choose = (ms) => {
+        if (!ms) return toast('Pick a time first');
+        awayPick = { ms, label: clockText(Date.now() + ms) };
+        go('confirm')();
+      };
+      const soon = new Date(Date.now() + 3600_000);
+      const input = h('input', { type: 'time', id: 'away-time', 'aria-label': 'Back at', value: `${String(soon.getHours()).padStart(2, '0')}:${String(soon.getMinutes()).padStart(2, '0')}` });
+      return h('section', { class: 'away-card away-pick card-in', 'aria-label': 'When will you be back?' },
+        h('div', { class: 'away-title', html: `<span class="away-moon">${I.away}</span>Back at?` }),
+        h('div', { class: 'away-chips' },
+          [[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
+            h('button', { class: 'away-chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t' }, clockText(Date.now() + m * 60_000))))),
+        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small', onclick: () => choose(untilClock(input.value)) }, 'Set')));
+    }
+    if (view === 'confirm') {
+      return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${awayPick.label}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
+        awayPick.ms >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
+        h('div', { class: 'away-actions' },
+          h('button', {
+            class: 'btn',
+            onclick: () => {
+              awayBase = (list && list.awayUntil) || 0;
+              awaySent = true;
+              // How long, not a time of day: the window works out the end, so a different clock there changes nothing.
+              post({ type: 'setAway', ms: awayPick.ms, label: awayPick.label });
+            },
+          }, 'Yes'),
+          h('button', { class: 'ghost-btn', onclick: go('idle') }, 'Not now')));
+    }
+    if (view === 'on') {
+      return h('section', { class: 'away-card soft card-in', role: 'status', 'aria-live': 'polite' },
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, list.awayLabel || clockText(list.awayUntil)))), h('span', { class: 'away-left', id: 'away-left' })),
+        h('div', { class: 'away-bar', id: 'away-bar', 'aria-hidden': 'true' }, h('div', { class: 'away-fill', id: 'away-fill' })),
+        h('div', { class: 'away-actions' },
+          h('button', { class: 'btn', onclick: () => { awayStage = 'back'; post({ type: 'endAway' }); renderAway(); } }, 'I’m back'),
+          h('button', { class: 'ghost-btn', title: 'Stay away 30 minutes longer', onclick: extend }, '+30 min'),
+          h('button', { class: 'ghost-btn', onclick: go('picker') }, 'Change')));
+    }
+    // back
+    return h('section', { class: 'away-card card-in', role: 'status', 'aria-live': 'polite' },
+      h('div', { class: 'away-title', html: `<span class="away-ok">${I.check}</span>Welcome back` }),
+      h('p', { class: 'away-note' }, 'Claude isn’t woken up. Write to it to carry on.'),
+      h('div', { class: 'away-actions' },
+        unreadShared().length ? h('button', { class: 'btn', html: `${I.send}<span>Send now</span>`, onclick: () => { post({ type: 'sendNow' }); go('idle')(); } }) : null,
+        h('button', { class: 'ghost-btn', onclick: go('idle') }, 'Got it')));
+  };
+
+  function renderAway() {
+    // The new end time has arrived: the question is answered. (Only after a yes: already being away says nothing about a new question.)
+    if (awayStage === 'confirm' && awaySent && isAway() && list.awayUntil !== awayBase) {
+      awayStage = 'idle';
+      awaySent = false;
+    }
+    const view = awayView();
+    const open = view !== 'idle';
+    const btn = $('#away-btn'), wrap = $('#away'), inner = $('#away-inner');
+    btn.classList.toggle('on', isAway() || view === 'picker' || view === 'confirm');
+    btn.setAttribute('aria-pressed', String(isAway()));
+    wrap.classList.toggle('open', open);
+    clearTimeout(awayClose);
+    if (!open) {
+      // Keep the card until it has eased shut.
+      awayClose = setTimeout(() => {
+        if (!wrap.classList.contains('open')) { inner.replaceChildren(); awayShown = ''; }
+      }, 400);
+      return;
+    }
+    // Every state update comes through here: only build a card again when it changes, or typing in it would be lost.
+    const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${awayPick.ms}` : view;
+    if (key === awayShown) return;
+    if (view === 'on' && awayShown.startsWith('on|') && $('#away-until')) {
+      // Same card, new end time (stayed away longer): change the text, don't build the card again.
+      awayShown = key;
+      awaySeen = 0;
+      $('#away-until').textContent = list.awayLabel || clockText(list.awayUntil);
+      awayTick();
+      return;
+    }
+    awayShown = key;
+    awaySeen = 0;
+    inner.replaceChildren(h('div', { class: 'away-pad' }, awayCard(view)));
+    awayTick();
+  }
+  function toggleAway() {
+    const view = awayView();
+    awayStage = view === 'picker' || view === 'confirm' ? 'idle' : 'picker';
+    awaySent = false;
+    renderAway();
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && (awayStage === 'picker' || awayStage === 'confirm')) { awayStage = 'idle'; renderAway(); }
+  });
+
   /* ---------------- shell ---------------- */
   document.body.innerHTML = `
     <main class="page">
       <header class="head">
         <h1 class="title" id="title"></h1>
         <div class="tools">
+          <button class="icon-btn" id="away-btn" title="Stepping away" aria-label="Stepping away" aria-pressed="false">${I.away}</button>
           <button class="icon-btn" id="hide" title="Hide. Show it again from the Claude checklists sidebar." aria-label="Hide checklist">${I.hide}</button>
           <button class="icon-btn" id="close" title="Close this checklist for good" aria-label="Close checklist">${I.close}</button>
         </div>
         <div class="sub"><span class="folder" id="folder">${I.folder}<span id="folder-name"></span></span><span id="task-count"></span></div>
       </header>
       <div class="waiting" id="waiting" hidden role="status"><span class="pulse"></span>Claude is waiting for you. Whatever you share reaches it right away.</div>
+      <div class="away-wrap" id="away"><div class="away-inner" id="away-inner"></div></div>
       <div class="progress" id="progress"><div class="bar" id="bar"></div><div class="progress-label" id="progress-label"></div></div>
       <div id="list"></div>
       <div class="empty" id="empty" hidden><strong>Nothing here yet</strong><p>When Claude needs you to do something by hand, or to decide something, it appears here.</p></div>
@@ -901,6 +1053,7 @@
     <div class="dock" id="dock" aria-hidden="true"><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>`;
 
+  $('#away-btn').onclick = toggleAway;
   $('#hide').onclick = () => post({ type: 'hide' });
   $('#close').onclick = () => post({ type: 'close' });
   $('#share-all').onclick = shareAllTicked;
@@ -928,6 +1081,7 @@
         saveUi();
       }
       routes = m.routes || routes;
+      awayGot = Date.now();
       render();
       // The one authored moment: after sharing the current task, the next one opens in its place.
       const wasSharedNow = prevCurrent && !prevShared && list.tasks.find((t) => t.id === prevCurrent)?.shared;
@@ -936,6 +1090,11 @@
         rendered.delete(currentId);
         render();
       }
+    } else if (m.type === 'awayRefused') {
+      // The window said no to that time: back to the picker, not stuck on the question.
+      awaySent = false;
+      awayStage = 'picker';
+      renderAway();
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });

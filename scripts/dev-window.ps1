@@ -46,6 +46,8 @@ if (-not $SkipBuild) {
   } finally { Pop-Location }
 }
 
+$built = try { git -C $root log -1 --format='%h %s' 2>$null } catch { $null }
+Write-Host "Built commit: $(if ($built) { $built } else { 'unknown' })"
 $scratch = Join-Path $Base 'scratch'
 $userDir = Join-Path $Base 'vscode\User'
 New-Item -ItemType Directory -Force $scratch, $userDir | Out-Null
@@ -77,4 +79,10 @@ try {
 
 Write-Host ''
 Write-Host 'Test window opened. In it: open the terminal, run `claude` (sign in the first time), then ask for a checklist.'
+Write-Host ''
+Write-Host 'To try away mode:'
+Write-Host '  1. Ask Claude for a checklist with a few tasks and a question for you, and something it can do on its own.'
+Write-Host '  2. Click the moon icon at the top of the checklist, pick 30 min, and press Yes.'
+Write-Host '  3. Check that Claude does not wait for you: it does the safe work, adds what it skipped, then stops with a summary.'
+Write-Host "  4. Press I'm back. Nothing should be sent to Claude. Use Send now or write to it to carry on."
 Write-Host "Everything it uses is in $Base. Delete that folder when you're done, or run this script with -Fresh."

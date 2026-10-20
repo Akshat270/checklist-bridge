@@ -248,6 +248,17 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // Forget chats whose Claude has exited, so their Send now falls back to Copy for chat.
   const pruneTimer = setInterval(() => ws?.prune(), 20_000);
   ctx.subscriptions.push({ dispose: () => clearInterval(pruneTimer) });
+  // End "away" when the time the user gave runs out. Claude is not woken for this: an idle chat's cache
+  // has usually expired by then, so waking it would cost the user. It finds out on its next read.
+  const awayTick = process.env.CHECKLIST_BRIDGE_TEST === '1' ? Number(process.env.CHECKLIST_BRIDGE_AWAY_TICK_MS) || 15_000 : 15_000;
+  const awayTimer = setInterval(() => {
+    try {
+      store.expireAway();
+    } catch (e) {
+      log(`Could not end an away: ${e}`); // one bad listener must not stop the timer or crash the window
+    }
+  }, awayTick);
+  ctx.subscriptions.push({ dispose: () => clearInterval(awayTimer) });
   let focusedAt = vscode.window.state.focused ? Date.now() : 0;
   const register = () => {
     try {

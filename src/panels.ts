@@ -44,6 +44,9 @@ export class Panels {
         return src ? { id: v.id, mime: v.mime, w: v.w, h: v.h, src } : v;
       })
     );
+    // Decided here, so the panel's own clock can't disagree. The time left is as of now; the panel counts down from it.
+    list.away = this.store.isAway(c);
+    if (list.away) list.awayLeft = Math.max(0, c.awayUntil! - Date.now());
     return { type: 'state', list, routes: this.hooks.routes(c) };
   }
 
@@ -195,6 +198,19 @@ export class Panels {
         if (c) await this.hooks.sendNow(c);
         break;
       }
+      case 'setAway': {
+        if (s.setAway(id, m.ms, m.label)) break;
+        const c = s.get(id);
+        if (!c || c.closed) break; // it is gone: nothing to tell
+        // Say what was wrong, and let the panel go back to the picker instead of sitting on a question that does nothing.
+        const web = this.open.get(id)?.webview;
+        web?.postMessage({ type: 'toast', text: 'Pick a time within the next 24 hours' });
+        web?.postMessage({ type: 'awayRefused' });
+        break;
+      }
+      case 'endAway':
+        s.endAway(id);
+        break;
       case 'copy':
         if (typeof m.text === 'string') {
           await vscode.env.clipboard.writeText(m.text);

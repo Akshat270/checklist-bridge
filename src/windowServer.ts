@@ -63,10 +63,13 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
   // Only read (which marks items as seen) when a connector is still there to receive the result.
   store.onChange(() => {
     for (const [sid, set] of [...waiters]) {
-      if (!store.hasUnread(sid)) continue;
+      // The user went away: stop the wait and tell Claude what to do instead.
+      const list = store.forSession(sid);
+      const away = !!list && store.isAway(list);
+      if (!away && !store.hasUnread(sid)) continue;
       if (![...set].some((w) => open(w.res))) continue;
       waiters.delete(sid);
-      const result = store.handleTool(sid, {}, 'checklist_read', {});
+      const result = store.hasUnread(sid) ? store.handleTool(sid, {}, 'checklist_read', {}) : { content: [{ type: 'text' as const, text: store.awayNote(list)! }] };
       for (const resolve of set) resolve(result);
       changed();
     }
@@ -74,6 +77,8 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
 
   function wait(sessionId: string, minutes: number, res: http.ServerResponse): Promise<ToolResult> {
     if (store.hasUnread(sessionId)) return Promise.resolve(store.handleTool(sessionId, {}, 'checklist_read', {}));
+    const away = store.awayNoteFor(sessionId);
+    if (away) return Promise.resolve({ content: [{ type: 'text', text: away }] });
     if (!store.hasPending(sessionId))
       return Promise.resolve({
         content: [{ type: 'text', text: 'Nothing on this chat\'s checklist is waiting on the user, so there is nothing to wait for.' }],

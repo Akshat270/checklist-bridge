@@ -29,6 +29,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 
 - **Never scroll the chat for "what do I need to do?"** The next task is pinned at the top. Urgent ones turn red.
 - **Keep Claude working while you think.** Questions that don't need an answer right now go to a **Decide** section. Claude carries on with everything else.
+- **Step away without stalling Claude.** Tell it when you'll be back. It stops waiting for your answers, does what it safely can, and leaves the rest for you. [How it works](#when-youre-away).
 - **Claude never assumes.** It sees only what you've shared: done, not done, your note, your screenshots. Nothing else is guessed.
 - **One checklist per chat.** Running several agents? Each has its own list, in the window it runs in.
 - **Nothing to set up.** Install it and it connects itself to Claude Code. No config files, no commands.
@@ -50,6 +51,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 | **Notes and screenshots** | Paste, drag in or click the picture icon. Screenshots reach Claude only with the task they belong to. |
 | **Share on your terms** | Share one task, **Share all**, share as *not done* with a note, or **Take back** before Claude reads it. |
 | **Send now** | Hand an answer to Claude straight away, in the terminal or the Claude panel. [How it reaches Claude](#how-send-now-reaches-claude). |
+| **Away mode** | Leaving for a while? Say when you'll be back and Claude stops waiting for you. It does what it safely can and tells you what's left. [How it works](#when-youre-away). |
 | **Every chat, automatically** | One optional step makes every Claude Code chat use checklists. [Set it up](#make-every-claude-chat-use-it-automatically). |
 | **Light and dark** | Follows your VS Code theme. Built for a narrow column next to the chat. |
 | **Safe by design** | Checklists survive window reloads. Updates are checked against a SHA-256. A project can't redirect updates or run programs. |
@@ -74,7 +76,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
    ```
    code --install-extension Akshat270.checklist-bridge
    ```
-   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.6.1.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
+   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.7.0.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
 2. That's it: the extension connects itself to Claude Code the first time VS Code starts, and tells you when it's done. There's no command to type.
 3. Start a **new** Claude chat (Claude Code loads tools when a chat starts). Run `/mcp` to check that `checklist` is connected.
 
@@ -126,6 +128,18 @@ When Claude needs a decision that doesn't have to happen right now, like which p
 
 Send now works for shared tasks too.
 
+## When you're away
+
+If you leave Claude working and it would wait for your answers, tell it you'll be away.
+
+1. Click the moon icon at the top of the checklist.
+2. Pick **30 min**, **1 hour**, **2 hours** or **4 hours**, or type the time you'll be back and press **Set**.
+3. Check the time it shows and press **Yes**. Press **Not now** if you changed your mind.
+
+While you're away, Claude does not wait for you. It does the work that needs nothing from you and that it can finish safely. It skips anything that depends on a task or question you haven't answered, and anything risky or hard to undo. It adds what it skipped to the checklist, then stops with a short summary.
+
+While you're away, the card shows the time left with a bar that shrinks. Press **+30 min** if you're running late, **Change** to pick another time, or **I'm back** to end it early. It also ends by itself at the time you gave. Claude is not woken up when it ends, so you aren't charged for waking a chat that has gone idle. To pick up where you left off, press **Send now** or write to Claude as usual. This is set for one chat at a time.
+
 ## The checklist in detail
 
 - **One checklist per chat.** Each chat's checklist opens in the VS Code window where that chat is running. Two agents in the same window get two separate checklists.
@@ -154,6 +168,10 @@ Claude gets five tools:
 **Does it work in the terminal and the Claude panel?** Both. The checklist opens in VS Code either way.
 
 **Does Claude see my checklist before I share it?** No. Claude sees only tasks and answers you've shared. Anything else shows as "waiting".
+
+**What if I leave my computer while Claude waits for me?** Click the moon icon at the top of the checklist, pick when you'll be back, and press **Yes**. Claude stops waiting, does the work that needs nothing from you and that it can finish safely, and stops with a short summary. See [When you're away](#when-youre-away).
+
+**Does Claude restart when I'm back?** No. Nothing wakes it when your away time ends, so a chat that has gone idle doesn't cost you anything. Press **Send now** or write to Claude to carry on.
 
 **Does it work in Cursor or VSCodium?** Yes, install the `.vsix` ([steps above](#install)).
 
