@@ -1,3 +1,7 @@
+
+
+Uploading checklist-bridge-promo-square (1).mp4…
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/hero.png" alt="Checklist Bridge for Claude Code: every Claude chat gets its own checklist in VS Code" width="100%">
 </p>
