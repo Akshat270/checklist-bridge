@@ -1,6 +1,6 @@
 {
-  "version": "0.6.1",
-  "vsix": "releases/checklist-bridge-0.6.1.vsix",
-  "sha256": "5a3b0b7634a1aa3adcb7aa354e5a9cc921ccb110bc0557d03dc1189cf7368413",
-  "notes": "A new Marketplace page and README, with new screenshots."
+  "version": "0.7.0",
+  "vsix": "releases/checklist-bridge-0.7.0.vsix",
+  "sha256": "315c90c6af4c2c287b3253bff6ccb8efd313fcd6bf80633a6bedfab1c074ed5f",
+  "notes": "Away mode: tell Claude you're away and it stops waiting for you."
 }
