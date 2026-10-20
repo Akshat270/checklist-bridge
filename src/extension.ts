@@ -14,6 +14,7 @@ import { Ownership } from './ownership';
 import { userSetting } from './settings';
 import { addArgs, connect, disconnect, findClaude, findNode, needsRepair, registeredInConfig, withLock } from './claudeConnect';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
+import { exportLists, hasShared, importLists, markMoved, readUse, writeUse } from './switcher';
 
 let ws: WindowServer | undefined;
 let windowId = '';
@@ -260,6 +261,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   }, awayTick);
   ctx.subscriptions.push({ dispose: () => clearInterval(awayTimer) });
   let focusedAt = vscode.window.state.focused ? Date.now() : 0;
+  let onFocus = () => {}; // set below, once switching to the Claude Code mod is set up
   const register = () => {
     try {
       writeWindow({
@@ -412,6 +414,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (s.focused) {
         focusedAt = Date.now();
         register();
+        onFocus();
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(register),
@@ -466,7 +469,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const c = pick && store.get(pick.id);
       if (c) panels.show(c, { focus: true });
     }),
-    vscode.commands.registerCommand('checklistBridge.connect', () => ensureConnected(true)),
+    vscode.commands.registerCommand('checklistBridge.connect', () =>
+      // Connecting while the Claude Code mod is on would give Claude two checklists: switch back instead.
+      readUse(ROOT) === 'mod' ? vscode.commands.executeCommand('checklistBridge.useExtension') : ensureConnected(true)
+    ),
     vscode.commands.registerCommand('checklistBridge.gettingStarted', () =>
       vscode.commands.executeCommand('workbench.action.openWalkthrough', `${ctx.extension?.id ?? 'Akshat270.checklist-bridge'}#start`, false)
     ),
@@ -691,8 +697,112 @@ export async function activate(ctx: vscode.ExtensionContext) {
     );
     if (p === 'Reconnect') ensureConnected(true);
   };
-  if (userSetting('autoConnect', true)) startupConnect();
+
+  /* ---------- switching to the Claude Code mod and back (switcher.ts, handover.ts) ---------- */
+  // ~/.checklist-bridge/mode.json says which one is on. Either side can change it; this window follows it
+  // when it starts and whenever it gets focus. The checklists of this folder go with the switch.
+  const project = folders[0];
+  const MOD_INSTALL = '/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge';
+  const handedKey = `handedToMod:${windowId}`; // this window gave its checklists to the mod
+  const setModMode = (on: boolean) => vscode.commands.executeCommand('setContext', 'checklistBridge.modMode', on);
+  const handOver = async () => {
+    let n = 0;
+    if (project) {
+      try {
+        n = exportLists(ROOT, project, store.all().filter((c) => !c.closed && !c.sessionId.startsWith('demo-')), (id, img) => images.load(id, img));
+      } catch (e) {
+        log(`Could not hand the checklists to the Claude Code mod: ${e}`);
+      }
+    }
+    await ctx.globalState.update(handedKey, true);
+    setModMode(true);
+    if (registeredInConfig(connectorPath)) {
+      const claude = await findClaude(process.env, undefined, claudePath(), bundledIn());
+      if (claude) await withLock(connectLock, () => disconnect(claude));
+      setConnected(registeredInConfig(connectorPath));
+    }
+    log(`Switched to the Claude Code mod; handed over ${n} checklist(s).`);
+    return n;
+  };
+  const takeBack = async () => {
+    let n = 0;
+    if (project && hasShared(ROOT, project)) {
+      const { lists, ids } = importLists(ROOT, project);
+      for (const c of lists) {
+        owners.claim(c.id);
+        store.replace(c);
+        n++;
+      }
+      markMoved(ROOT, project, ids);
+      reopenTabs(lists.map((c) => store.get(c.id)!));
+    }
+    setModMode(false);
+    if (ctx.globalState.get(handedKey) || n) {
+      await ctx.globalState.update(handedKey, false);
+      await ensureConnected(false);
+    }
+    if (n) vscode.window.showInformationMessage(`Your checklist${n === 1 ? ' is' : 's are'} back in VS Code from the Claude Code mod.`);
+    return n;
+  };
+  let following = false;
+  const followMode = async () => {
+    if (following) return;
+    following = true;
+    try {
+      const use = readUse(ROOT);
+      if (use === 'mod') {
+        if (ctx.globalState.get(handedKey)) return void setModMode(true);
+        const n = await handOver();
+        const p = await vscode.window.showInformationMessage(
+          `Checklist Bridge runs inside Claude Code now.${n ? ` ${n} checklist${n === 1 ? '' : 's'} from this folder moved there.` : ''} Type /checklist in Claude Code to see it.`,
+          'Switch back to VS Code'
+        );
+        if (p) vscode.commands.executeCommand('checklistBridge.useExtension');
+      } else {
+        if (use === undefined && registeredInConfig(connectorPath)) writeUse(ROOT, 'extension');
+        if (ctx.globalState.get(handedKey) || (project && hasShared(ROOT, project))) await takeBack();
+      }
+    } catch (e) {
+      log(`Could not switch between the extension and the Claude Code mod: ${e}`);
+    } finally {
+      following = false;
+    }
+  };
+  onFocus = () => void followMode();
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('checklistBridge.useMod', async () => {
+      const pick = await vscode.window.showInformationMessage(
+        'Use Checklist Bridge inside Claude Code instead of VS Code?',
+        {
+          modal: true,
+          detail:
+            'Your checklists for this folder move to the Checklist Bridge mod for Claude Code, and Claude stops using this extension. ' +
+            `Install the mod by typing this in Claude Code:\n\n${MOD_INSTALL}\n\nYou can switch back any time.`,
+        },
+        'Switch'
+      );
+      if (pick !== 'Switch') return;
+      writeUse(ROOT, 'mod');
+      await ctx.globalState.update(handedKey, false);
+      const n = await handOver();
+      const p = await vscode.window.showInformationMessage(
+        `Done${n ? `: ${n} checklist${n === 1 ? '' : 's'} moved` : ''}. In Claude Code, type ${MOD_INSTALL}, then start a new chat.`,
+        'Copy the command'
+      );
+      if (p) await vscode.env.clipboard.writeText(MOD_INSTALL);
+    }),
+    vscode.commands.registerCommand('checklistBridge.useExtension', async () => {
+      writeUse(ROOT, 'extension');
+      await ctx.globalState.update(handedKey, true); // reconnect even if nothing comes back
+      await takeBack();
+      vscode.window.showInformationMessage('Checklist Bridge runs in VS Code again. Start a new Claude chat to use it.');
+    })
+  );
+
+  if (readUse(ROOT) === 'mod') followMode();
+  else if (userSetting('autoConnect', true)) startupConnect().then(followMode);
   else {
+    followMode();
     setConnected(registeredInConfig(connectorPath));
     if (!isSetUp() && !ctx.globalState.get('claudeSetupAsked') && connectState() === 'connected') {
       ctx.globalState.update('claudeSetupAsked', true);

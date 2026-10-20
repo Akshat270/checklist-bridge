@@ -118,6 +118,39 @@ your reply as usual.
 Then add `"mcp__checklist"` to `permissions.allow` in `~/.claude/settings.json`.
 </details>
 
+## Use it without VS Code
+
+Checklist Bridge also comes as a **mod for Claude Code**: the same checklist runs inside Claude Code, as a pane next to the chat. You don't need VS Code for it. It works in the terminal, the Claude desktop app and the VS Code Claude panel.
+
+**Install it.** Type this in Claude Code:
+
+```
+/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge
+```
+
+Answer `y` to add the marketplace, pick a scope, then start a new chat. From a shell, `claude plugin install checklist-bridge --marketplace Akshat270/checklist-bridge` does the same. In the desktop app, click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `Akshat270/checklist-bridge`, then **Add plugin**.
+
+**Use it.** When Claude adds tasks or asks a question, the checklist opens next to the chat. You can also type `/checklist` to open it.
+
+- Tick a task, add a note, then press **Share**. Pick an answer to a question, then press **Answer**.
+- **Screenshots:** type or drop the path of an image file into a task's screenshot box. Claude opens the file itself.
+- **Send now** hands what you shared to Claude as a message. If Claude is busy, it gets the message as soon as it finishes.
+- `/checklist away 2h` (or `45m`, `18:30`, `6:30pm`) tells Claude you're away. `/checklist back` ends it.
+- `/checklist list` shows earlier checklists in this folder, and `/checklist continue 2` makes one of them this chat's checklist.
+- On the phone app you can tick and share, but not type notes.
+
+Mods are new in Claude Code, so you need a recent version.
+
+### Switching between the extension and the mod
+
+Use one or the other, not both. When you switch, your open checklists for that folder come with you.
+
+- **From VS Code to the mod:** run *Checklist Bridge: Use the Claude Code mod instead*. VS Code hands your checklists over and stops connecting Claude to the extension. Then install the mod as above and start a new chat.
+- **From the mod to VS Code:** type `/checklist use-extension` in Claude Code, then open the folder in VS Code. The extension takes your checklists back and connects Claude again. You can also run *Checklist Bridge: Use this extension instead of the Claude Code mod* in VS Code.
+- `/checklist use-mod` switches back to the mod from Claude Code.
+
+A checklist that moved over keeps its tasks, notes, answers and screenshots. Claude starts a new checklist in a new chat. Use `/checklist continue` in the mod to pick up an older one there.
+
 ## Questions you can answer later
 
 When Claude needs a decision that doesn't have to happen right now, like which payment gateway to use, how to name a page, or what the free plan includes, it asks it in the checklist instead of listing options in the chat. Claude keeps working on everything else while you think.

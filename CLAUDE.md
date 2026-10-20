@@ -1,6 +1,6 @@
 # Checklist Bridge: notes for Claude
 
-A VS Code extension (Marketplace id `Akshat270.checklist-bridge`) that gives each Claude Code chat its own checklist of manual tasks (t1, t2…) and deferred questions (q1, q2…). It is public and used by people other than the author, so changes must work on Windows, macOS and Linux, and in both the VS Code Claude panel and the terminal.
+A VS Code extension (Marketplace id `Akshat270.checklist-bridge`), and a Claude Code mod (`mod/`) for people without VS Code, that gives each Claude Code chat its own checklist of manual tasks (t1, t2…) and deferred questions (q1, q2…). It is public and used by people other than the author, so changes must work on Windows, macOS and Linux, and in both the VS Code Claude panel and the terminal.
 
 Read `README.md` for what users see. `PRODUCT.md` and `DESIGN.md` describe who it's for and the panel's visual rules: read them before changing anything in `media/`.
 
@@ -12,6 +12,8 @@ npm run build               # src/*.ts -> dist/*.js (tsc)
 npm test                    # every suite in test/, against dist/ — build first
 node test/run.js reload     # one suite, by file-name prefix
 npx playwright install chromium   # needed for the panel (ui/layout) suites; they SKIP without it
+claude plugin validate mod  # the mod: manifest and hooks module
+claude plugin test mod      # the mod's own tests (mod/hooks/*.test.tsx); test/mod.test.js runs both
 ```
 
 Always `npm run build` before `npm test`: the tests run the compiled `dist/extension.js`, not the TypeScript.
@@ -29,12 +31,19 @@ VS Code window ── windowServer.ts (local HTTP, per-window token) ── exte
                                                                      ├─ claudeConnect.ts   `claude mcp add`, auto-connect
                                                                      ├─ claudeSetup.ts     ~/.claude/CLAUDE.md + settings.json block
                                                                      ├─ sidebar.ts, updater.ts, settings.ts
+                                                                     └─ switcher.ts   hand checklists to the mod and back
+
+Claude Code chat ── mod/ (a Claude Code mod: hooks module, no connector, no VS Code)
+                       register.tsx  tools, /checklist, the pane, Claude's instructions
+                       app.ts, pane.tsx, away.ts   no engine calls, so they read like normal code
+                       lib/model.ts, lib/handover.ts   COPIES of src/, made by npm run build
 ```
 
 - `extension.ts` copies `connector.js` to `~/.checklist-bridge/connector/` and registers it with Claude Code as the user-scope MCP server `checklist`.
 - The connector holds no state. Every tool call goes to the chat's VS Code window, which owns the checklist.
 - Checklists are saved under the workspace storage (or global storage for folderless windows) in `checklists/<id>.json`; screenshots are separate files in `checklists/images/`.
-- Send now reaches Claude by one of: a waiting `checklist_wait` call, a Claude Code channel push, typing into Claude's terminal, or the clipboard.
+- Send now reaches Claude by one of: a waiting `checklist_wait` call, a Claude Code channel push, typing into Claude's terminal, or the clipboard. In the mod it is `$.prompt.submit`, so the mod has no `checklist_wait`.
+- **Extension or mod, one at a time.** `~/.checklist-bridge/mode.json` (`handover.ts`) says which is on. The mod keeps its checklists in `~/.checklist-bridge/mod/<folder key>/<id>.json`; the extension hands its checklists over there and takes them back (`switcher.ts`), following the mode file at start and on focus.
 
 ## Rules that matter
 
@@ -46,6 +55,8 @@ VS Code window ── windowServer.ts (local HTTP, per-window token) ── exte
 - **Windows quoting.** Programs are run with `execFile` and no shell. `.cmd` files go through `ComSpec /d /s /c` with the quoting in `claudeConnect.run`. Paths with spaces, `&` and `%` are tested on Windows CI.
 - **Claude's instructions** live in `SERVER_INSTRUCTIONS` (`model.ts`) and `INSTRUCTIONS` (`claudeSetup.ts`). Keep them in step when changing how tools behave.
 - **Item ids** (t1, q1) are shown in the panel and used by Claude. Don't renumber existing items.
+- **`model.ts` and `handover.ts` run in the mod too.** No Node imports in them (no `fs`, `path`, `crypto`). `npm run build` copies them into `mod/hooks/lib/`; commit the copies (the mod installs straight from GitHub) and never edit them there. `MOD_INSTRUCTIONS` and `forMod()` reword Claude's text for the mod: keep them in step with `SERVER_INSTRUCTIONS` and the tool texts.
+- **The mod's rules** (checked by `claude plugin validate mod`): every engine call is spelled `$.noun.call(...)` inside a hook, never `$` passed to a function, so `app.ts`/`pane.tsx` take plain values and callbacks. State atoms are declared in `register.tsx` and typed in `mod/types/index.d.ts`. `$.fs` writes text only and can't rename or delete: screenshots are file paths, and saves write `<id>.json.bak` then `<id>.json`. A tool's `result` must be a string or a list of content blocks. Mods are early access in Claude Code; the API may change between releases.
 
 ## Tests
 
@@ -61,7 +72,7 @@ VS Code window ── windowServer.ts (local HTTP, per-window token) ── exte
 - Work on a branch and open a pull request into `main`. `main` is protected: it needs a pull request, and the owner merges it. Several Claude sessions may be working at once, so keep each pull request to one change.
 - Add a line for user-visible changes under `## Unreleased` at the top of `CHANGELOG.md` (create the heading if it's missing). Write it for users, in plain words: what changed for them, not how.
 - Update `README.md` if behaviour, commands or settings change.
-- **Do not release unless the owner asks.** Don't change the version, `latest.json` or `releases/` in a normal pull request.
+- **Do not release unless the owner asks.** Don't change the version, `latest.json` or `releases/` in a normal pull request. The mod's version is in `mod/.claude-plugin/plugin.json`; people get the mod from `main` through `.claude-plugin/marketplace.json`.
 
 ## Releasing (only when asked)
 

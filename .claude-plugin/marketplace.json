@@ -1,0 +1,11 @@
+{
+  "name": "checklist-bridge",
+  "owner": { "name": "Akshat270" },
+  "plugins": [
+    {
+      "name": "checklist-bridge",
+      "source": "./mod",
+      "description": "A checklist for every Claude Code chat, without VS Code."
+    }
+  ]
+}

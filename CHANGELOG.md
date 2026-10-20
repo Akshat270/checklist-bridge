@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- **Use it without VS Code.** Checklist Bridge now also comes as a mod for Claude Code, so the checklist shows in a pane next to the chat in the terminal or the Claude desktop app. Install it with `/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge`.
+- You can switch between the VS Code extension and the mod at any time, and your open checklists come with you. In VS Code, run *Checklist Bridge: Use the Claude Code mod instead*; in Claude Code, type `/checklist use-extension` to come back.
 - The README and Marketplace page now show a short video of Checklist Bridge in action, with a link to the full 44-second video.
 
 ## 0.7.0
