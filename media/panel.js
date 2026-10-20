@@ -280,7 +280,7 @@
     const isCurrent = t.id === currentId;
     const open = isOpen(t);
     const el = h('div', {
-      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' link' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
+      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' step-line' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
       id: `task-${t.id}`,
       'data-id': t.id,
       onmouseenter: () => (lastHover = t.id),
