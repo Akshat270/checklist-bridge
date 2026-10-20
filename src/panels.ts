@@ -198,9 +198,16 @@ export class Panels {
         if (c) await this.hooks.sendNow(c);
         break;
       }
-      case 'setAway':
-        if (!s.setAway(id, m.ms, m.label)) this.open.get(id)?.webview.postMessage({ type: 'toast', text: 'Pick a time within the next 24 hours' });
+      case 'setAway': {
+        if (s.setAway(id, m.ms, m.label)) break;
+        const c = s.get(id);
+        if (!c || c.closed) break; // it is gone: nothing to tell
+        // Say what was wrong, and let the panel go back to the picker instead of sitting on a question that does nothing.
+        const web = this.open.get(id)?.webview;
+        web?.postMessage({ type: 'toast', text: 'Pick a time within the next 24 hours' });
+        web?.postMessage({ type: 'awayRefused' });
         break;
+      }
       case 'endAway':
         s.endAway(id);
         break;

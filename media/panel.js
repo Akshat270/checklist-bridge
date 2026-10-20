@@ -1090,6 +1090,11 @@
         rendered.delete(currentId);
         render();
       }
+    } else if (m.type === 'awayRefused') {
+      // The window said no to that time: back to the picker, not stuck on the question.
+      awaySent = false;
+      awayStage = 'picker';
+      renderAway();
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });

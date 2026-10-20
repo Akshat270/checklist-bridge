@@ -318,8 +318,20 @@ export function normalize(c: Checklist): Checklist {
 
 type Item = { c: Checklist; t: Task; q?: undefined } | { c: Checklist; q: Question; t?: undefined };
 
+/**
+ * The end time as the user's screen showed it ("3:30 PM", "tomorrow 15:30", "下午3:30"). It goes into Claude's
+ * prompt, so it must look like a time: digits, at most two words (AM, tomorrow), no sentences. Any script is fine.
+ */
+export function cleanLabel(x: unknown): string | undefined {
+  if (typeof x !== 'string') return undefined;
+  const t = x.replace(/[\s\u00a0\u202f]+/g, ' ').replace(/[^\p{L}\p{N}\p{M} :.,-]/gu, '').trim().slice(0, 24).trim();
+  return /\p{N}/u.test(t) && (t.match(/\p{L}+/gu) ?? []).length <= 2 ? t : undefined;
+}
+
 export class ChecklistStore {
   private lists = new Map<string, Checklist>();
+  /** Aways Claude has already been given the full note for ("<list id>|<end time>"). */
+  private awayTold = new Set<string>();
   private listeners: ((e: ChangeEvent) => void)[] = [];
 
   /** Loads a stored screenshot's data from disk (set by the extension). */
@@ -493,7 +505,7 @@ export class ChecklistStore {
     if (!c || c.closed || typeof ms !== 'number' || !Number.isFinite(ms) || ms < 1000 || ms > MAX_AWAY_MS) return false;
     c.awayUntil = Math.round(now + ms);
     c.awayMs = Math.round(ms);
-    c.awayLabel = (typeof label === 'string' && label.replace(/[^\w :.,-]/g, '').trim().slice(0, 24)) || undefined;
+    c.awayLabel = cleanLabel(label);
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
@@ -503,6 +515,7 @@ export class ChecklistStore {
     const c = this.lists.get(listId);
     if (!c || !c.awayUntil) return false;
     c.awayUntil = c.awayLabel = c.awayMs = undefined;
+    for (const k of [...this.awayTold]) if (k.startsWith(`${c.id}|`)) this.awayTold.delete(k);
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
@@ -512,14 +525,21 @@ export class ChecklistStore {
     for (const c of [...this.lists.values()]) if (c.awayUntil && c.awayUntil <= now) this.endAway(c.id);
   }
 
-  /** What to tell Claude while the user is away (undefined when they are not). */
-  awayNote(c: Checklist | undefined): string | undefined {
+  /**
+   * What to tell Claude while the user is away (undefined when they are not). The full note every time a chat
+   * reads or waits; on other calls ('auto') it is the full note the first time and a short reminder after that.
+   */
+  awayNote(c: Checklist | undefined, mode: 'full' | 'auto' = 'full'): string | undefined {
     if (!c || !this.isAway(c)) return undefined;
-    const mins = Math.max(1, Math.round((c.awayUntil! - Date.now()) / 60_000));
+    const key = `${c.id}|${c.awayUntil}`;
+    const brief = mode === 'auto' && this.awayTold.has(key);
+    this.awayTold.add(key);
+    const mins = Math.max(1, Math.ceil((c.awayUntil! - Date.now()) / 60_000)); // rounded up, like the panel
     const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const left = mins < 60 ? plural(mins, 'minute') : [plural(Math.floor(mins / 60), 'hour'), mins % 60 && plural(mins % 60, 'minute')].filter(Boolean).join(' ');
     // The label is what the user's screen showed. Without one, use this computer's clock.
     const clock = c.awayLabel ?? new Date(c.awayUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (brief) return `THE USER IS STILL AWAY until ${clock} (in ${left}). Do not wait for them, and skip anything that needs them.`;
     return (
       `THE USER IS AWAY until ${clock} (in ${left}), and may come back sooner. Do NOT wait for them and do not call checklist_wait. ` +
       'Do every remaining piece of work that needs no human input and that you can finish safely and correctly. ' +
@@ -530,8 +550,8 @@ export class ChecklistStore {
   }
 
   /** Same as awayNote, found by chat. */
-  awayNoteFor(sessionId: string): string | undefined {
-    return this.awayNote(this.forSession(sessionId));
+  awayNoteFor(sessionId: string, mode: 'full' | 'auto' = 'full'): string | undefined {
+    return this.awayNote(this.forSession(sessionId), mode);
   }
 
   setHidden(listId: string, hidden: boolean) {
@@ -630,7 +650,7 @@ export class ChecklistStore {
     try {
       const res = this.runTool(sessionId, meta, name, args);
       // Every result tells Claude the user is away, not just the ones that read the checklist. (A read puts it first.)
-      const away = res.isError || name === 'checklist_read' ? undefined : this.awayNoteFor(sessionId);
+      const away = res.isError || name === 'checklist_read' ? undefined : this.awayNoteFor(sessionId, 'auto');
       if (away) res.content.push({ type: 'text', text: away });
       return res;
     } catch (e: any) {

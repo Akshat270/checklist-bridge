@@ -82,6 +82,14 @@ function state(shareTask, answers) {
     check((await posted('setAway')).length === 0 && /Away until 12:04 PM\?/.test(await page.$eval('.away-card', (e) => e.textContent)), 'picking a time asks first and sets nothing yet');
     check(/Write to Claude/.test(await page.$eval('.away-card', (e) => e.textContent)), 'a long break says how to carry on');
     await page.click('text=Not now'); await page.waitForTimeout(500);
+
+    // The window refuses a time: the panel goes back to the picker instead of staying on the question.
+    await page.click('#away-btn'); await page.waitForTimeout(450);
+    await page.click('.away-chip >> text=1 hour'); await page.waitForTimeout(450);
+    await page.click('.away-card >> text=Yes');
+    await page.evaluate(() => { window.__out = window.__out.filter((m) => m.type !== 'setAway'); window.postMessage({ type: 'awayRefused' }, '*'); }); await page.waitForTimeout(450);
+    check((await page.$$('.away-chip')).length === 4, 'when the window refuses a time, the panel goes back to the picker');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(500);
     check((await posted('setAway')).length === 0 && !(await visible('.away-card')), 'Not now closes it without setting anything');
 
     // A time 20 seconds ahead is a duration of 20 seconds, with the time as the user saw it.
