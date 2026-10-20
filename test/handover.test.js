@@ -51,6 +51,11 @@ check(!/VS Code|checklist_wait/.test(r), 'mod results don\'t mention VS Code or 
 check(mod.addImagePath(c.id, 't2', '"/home/u/Desktop/shot 1.JPG"') && mod.get(c.id).tasks[1].draft.images[0].mime === 'image/jpeg', 'a screenshot path can be added in the mod');
 check(!mod.addImagePath(c.id, 't2', '/home/u/notes.txt'), 'a path that is not an image is refused');
 
+check(H.toShared({ ...c, hidden: true }, () => undefined).hidden === true, 'a checklist whose tab the user closed stays that way after the round trip');
+const said = text(mod.handleTool('s3', {}, 'checklist_add_tasks', { title: 'Try it in VS Code', tasks: [{ text: 'Check it in VS Code' }] }));
+check(said.includes('"Try it in VS Code"') && text(mod.handleTool('s3', {}, 'checklist_read', {})).includes('Check it in VS Code'), 'the mod leaves the user\'s own words alone');
+check(!/VS Code/.test(said.replace('"Try it in VS Code"', '')), 'but drops ours');
+
 const back = H.fromShared(mod.get(c.id), (p) => files[p]);
 check(back.tasks[0].shared.images[0].data === 'aGVsbG8=', 'screenshots come back with their data');
 check(back.tasks[1].draft.images.length === 0, 'a screenshot whose file is gone is left out');

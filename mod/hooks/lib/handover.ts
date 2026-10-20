@@ -89,7 +89,6 @@ export function toShared(c: Checklist, saveImage: (img: Img) => string | undefin
       return p ? [{ id: img.id, mime: img.mime, w: img.w, h: img.h, path: p }] : [];
     })
   );
-  copy.hidden = false;
   return copy;
 }
 

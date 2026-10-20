@@ -33,6 +33,7 @@ const HELP = [
 ].join('\n')
 
 let app: App | undefined
+let toolsRegistered = false
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -57,9 +58,11 @@ export const register: Register = on => {
       argumentHint: '[away 2h | back | list | use-extension]',
     })
     // While the user has switched to the VS Code extension, Claude gets the extension's tools instead.
-    if (app.isOn)
+    if (app.isOn) {
       for (const t of MOD_TOOLS)
         await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
+      toolsRegistered = true
+    }
     return next(e)
   })
 
@@ -77,6 +80,8 @@ export const register: Register = on => {
         return { deny: 'Checklist Bridge runs as a Claude Code mod now. Use the mcp__checklist-bridge__ checklist tools instead.' }
       return next(e)
     }
+    // The user may have switched (in VS Code, or in another chat) since this chat started.
+    app.use = parseMode(await $.fs.read(modeFile(app.root)).catch(() => undefined))
     if (!app.isOn) {
       const off = 'The user switched Checklist Bridge to the VS Code extension. Put the steps or the question in your reply instead.'
       return { result: off }
@@ -95,7 +100,8 @@ export const register: Register = on => {
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'Checklist Bridge could not handle this call.' }))
 
   on('command.run', { command: 'checklist' }, async ($, e) => {
-    const a = app!
+    let a = app!
+    a.use = parseMode(await $.fs.read(modeFile(a.root)).catch(() => undefined))
     const sid = await $.session.id()
     const [word = '', ...rest] = e.args.trim().split(/\s+/)
     const sub = word.toLowerCase()
@@ -104,9 +110,20 @@ export const register: Register = on => {
 
     if (sub === 'use-mod') {
       await $.fs.write(modeFile(a.root), modeText('mod'))
-      a.use = 'mod'
-      for (const t of MOD_TOOLS)
-        await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
+      // Read this folder's checklists again: since this chat started, the extension may have taken them
+      // back or handed newer ones over, and saving the copies from then would undo that.
+      const loaded: (string | undefined)[][] = []
+      if (await $.fs.exists(a.dir)) {
+        const names = (await $.fs.list(a.dir)).filter(f => f.kind === 'file').map(f => f.name)
+        for (const f of filesToLoad(a.dir, names))
+          loaded.push([await $.fs.read(f.main).catch(() => undefined), await $.fs.read(f.bak).catch(() => undefined)])
+      }
+      app = a = new App(a.root, a.folder, 'mod', loaded)
+      if (!toolsRegistered) {
+        for (const t of MOD_TOOLS)
+          await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
+        toolsRegistered = true
+      }
       void $.ui.open({ id: PANE, title: 'Checklist' })
       out =
         'Checklist Bridge now runs here in Claude Code. If the VS Code extension is still connected, open VS Code and run ' +
@@ -126,8 +143,8 @@ export const register: Register = on => {
       const away = parseAway(rest.join(' '))
       if (!away) out = 'Say how long, like /checklist away 2h, 45m or 18:30 (up to 24 hours).'
       else if (!c) out = 'This chat has no checklist yet.'
+      else if (!a.store.setAway(c.id, away.ms, away.label)) out = 'Say how long, like /checklist away 2h, 45m or 18:30 (up to 24 hours).'
       else {
-        a.store.setAway(c.id, away.ms, away.label)
         a.touch(c)
         out = `Claude knows you are away until ${away.label}. It will do what it can without you and leave the rest on the checklist.`
       }

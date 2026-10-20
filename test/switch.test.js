@@ -41,6 +41,7 @@ function win(sb) {
   W.ready = new Promise((r) => W.on('message', (m) => m.ready && r()));
   return W;
 }
+const user = (W, title, msg) => { W.send({ cmd: 'user', title, msg }); return new Promise((r) => W.on('message', (m) => m.done && r())); };
 const cmd = (W, name) => { W.send({ cmd: 'command', name }); return new Promise((r) => W.on('message', (m) => m.done && r())); };
 const notes = (W) => W.msgs.filter((m) => m.log && /NOTIFY/.test(m.log)).map((m) => m.log.replace(/^.*?NOTIFY /, ''));
 const modMode = (W) => W.msgs.filter((m) => m.context && 'checklistBridge.modMode' in m.context).map((m) => m.context['checklistBridge.modMode']).at(-1);
@@ -87,6 +88,7 @@ function seed(sb) {
   // ---- the mod hands it back: the user shared t2 there, then ran /checklist use-extension
   const c = H.parseList(fs.readFileSync(file, 'utf8'));
   c.tasks[1].shared = { at: Date.now(), done: true, note: 'set in the mod', images: [] };
+  c.updatedAt = Date.now(); // the mod marks every change
   fs.writeFileSync(file, JSON.stringify(c));
   fs.writeFileSync(path.join(sb.cb, 'mode.json'), H.modeText('extension'));
   W.send({ cmd: 'focus' }); await sleep(2500);
@@ -110,6 +112,48 @@ function seed(sb) {
     check(notes(W).some((n) => /runs inside Claude Code now/.test(n)), 'and tells the user');
     await cmd(W, 'checklistBridge.connect'); await sleep(1500);
     check(sb2.mode() === 'extension' && sb2.registered(), 'Connect while the mod is in use switches back instead of connecting both');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- what the user does in VS Code after switching is kept, if the mod didn't change that checklist
+  {
+    const sb4 = sandbox();
+    const id4 = seed(sb4);
+    W = win(sb4); await W.ready; await sleep(2500);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'shared in VS Code' });
+    fs.writeFileSync(path.join(sb4.cb, 'mode.json'), H.modeText('extension'));
+    W.send({ cmd: 'focus' }); await sleep(2500);
+    check(sb4.registered(), 'switched back while the window was open');
+    W.send({ cmd: 'quit' }); await W.exited;
+    const kept = JSON.parse(fs.readFileSync(path.join(sb4.storage, 'checklists', `${id4}.json`), 'utf8'));
+    check(kept.tasks[1].shared?.note === 'shared in VS Code', 'switching back does not undo what was done in VS Code meanwhile');
+  }
+
+  // ---- switching back while VS Code is closed: no "the connection was removed" question
+  {
+    const sb5 = sandbox();
+    seed(sb5);
+    W = win(sb5); await W.ready; await sleep(2500);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    fs.writeFileSync(path.join(sb5.cb, 'mode.json'), H.modeText('extension'));
+    W = win(sb5); await W.ready; await sleep(2500);
+    check(sb5.registered() && !notes(W).some((n) => /no longer connected/.test(n)), 'next start after /checklist use-extension: reconnects without asking');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- the mod is in use, and the extension is installed but not connected: it leaves the mod's checklists alone
+  {
+    const sb6 = sandbox();
+    sb6.env.CB_AUTOCONNECT = '0';
+    const s = new ChecklistStore();
+    s.handleTool('mod-chat', { cwd: '/work/proj' }, 'checklist_add_tasks', { title: 'Mod only', tasks: [{ text: 'One' }] });
+    const mid = s.forSession('mod-chat').id;
+    fs.mkdirSync(sb6.shared(), { recursive: true });
+    fs.writeFileSync(path.join(sb6.shared(), `${mid}.json`), JSON.stringify(s.forSession('mod-chat')));
+    W = win(sb6); await W.ready; await sleep(2500);
+    check(fs.existsSync(path.join(sb6.shared(), `${mid}.json`)) && !sb6.registered(), 'with auto-connect off, the mod keeps its checklists and Claude Code is not connected');
     W.send({ cmd: 'quit' }); await W.exited;
   }
 

@@ -331,14 +331,18 @@ export const MOD_INSTRUCTIONS =
   'can be done safely, add what you skip to the checklist, then end your turn with a short summary. When you mention a checklist item to the user, give its id with a few words of ' +
   'its title, e.g. "q1 (payment gateway)": the user sees the same ids (t1, q1…) in the checklist.';
 
-/** Rewrites text written for the extension (tool descriptions, tool results) for the mod. */
+/**
+ * Rewrites text written for the extension (tool descriptions, tool results) for the mod. Results hold the
+ * user's own words too (titles, notes), so each pattern matches only a phrase of ours.
+ */
 export function forMod(text: string): string {
   return text
-    .replace(/ in VS Code\b/g, '')
+    .replace(/checklist in VS Code\./g, 'checklist.')
+    .replace(/" in VS Code\./g, '".')
+    .replace(/it no longer shows in VS Code;/g, 'it no longer shows;')
     .replace(/ \(or checklist_wait\)/g, '')
     .replace(/; if only the answer is left, call checklist_wait\./g, '. If only the answer is left, end your turn: the answer will reach you as a message.')
-    .replace(/ and do not call checklist_wait/g, '')
-    .replace(/it no longer shows in VS Code/g, 'it no longer shows');
+    .replace(/ and do not call checklist_wait/g, '');
 }
 
 /** Claude's tools as the mod offers them: all but checklist_wait, worded for the mod. */

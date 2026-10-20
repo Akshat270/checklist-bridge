@@ -17,7 +17,7 @@ export const filesToLoad = (dir: string, names: string[]) =>
   listIds(names).map(id => ({ main: join(dir, `${id}.json`), bak: join(dir, `${id}.json.bak`) }))
 
 export class App {
-  readonly store = new ChecklistStore()
+  readonly store: ChecklistStore
   readonly dir: string
   private dirty = new Set<string>()
 
@@ -27,12 +27,12 @@ export class App {
     public use: Use | undefined,
     loaded: (string | undefined)[][],
   ) {
+    // Through the constructor, not adopt(): adopt counts as a change and would make every checklist look
+    // updated just now (in /checklist list, and to the extension when it takes them back).
+    const lists = loaded.map(([main, bak]) => parseList(main) ?? parseList(bak)).filter((c): c is Checklist => !!c)
+    this.store = new ChecklistStore(lists)
     this.store.host = 'mod'
     this.dir = sharedDir(root, folder)
-    for (const [main, bak] of loaded) {
-      const c = parseList(main) ?? parseList(bak)
-      if (c) this.store.adopt(c)
-    }
   }
 
   /** On unless the user switched to the VS Code extension. */
