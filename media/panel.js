@@ -954,7 +954,7 @@
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${awayPick.label}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${awayPick.label}?`), h('button', { class: 'away-link', onclick: go('picker') }, 'Change')),
         awayPick.ms >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
         h('div', { class: 'away-actions' },
           h('button', {

@@ -166,6 +166,9 @@ function build() {
   const steps = await page.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
   check(steps === 'Step 1 of 3,Step 2 of 3,Step 3 of 3', `steps are numbered (${steps})`);
   check(await page.$eval('#task-t3', (e) => !e.querySelector('.prio')), 'the last step gets no priority mark');
+  // A step row is as tall as its contents. (A button style named "link" once squashed every step to 26 px, so the rows overlapped.)
+  const squashed = await page.$$eval('.task.link', (xs) => xs.filter((x) => x.getBoundingClientRect().height < x.querySelector('.row').scrollHeight - 1).map((x) => x.dataset.id));
+  check(squashed.length === 0, `step rows are not squashed into each other (${squashed.join(' ') || 'none'})`);
   check(await page.$eval('#task-t6', (e) => !!e.querySelector('.prio')), 'a task that can be done in any order keeps its priority mark');
   await page.close();
 

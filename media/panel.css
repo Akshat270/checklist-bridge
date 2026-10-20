@@ -325,8 +325,8 @@ svg { display: block; flex: none; }
 .away-card .btn.small { height: 32px; padding: 0 14px; }
 .ghost-btn { height: 34px; padding: 0 14px; border: 0; border-radius: var(--r-m); background: none; color: var(--ink-2); font-size: 13px; font-weight: 600; transition: background-color .15s ease, color .15s ease; }
 .ghost-btn:hover { background: var(--hover); color: var(--ink); }
-.link { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: var(--r-s); background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
-.link:hover { background: var(--hover); }
+.away-link { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: var(--r-s); background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
+.away-link:hover { background: var(--hover); }
 .away-bar { height: 4px; border-radius: 4px; background: var(--ground); overflow: hidden; }
 .away-fill { height: 100%; width: 100%; border-radius: 4px; background: var(--accent); transition: width .4s var(--ease); }
 @media (prefers-reduced-motion: reduce) {
