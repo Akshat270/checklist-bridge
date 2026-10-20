@@ -29,6 +29,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 
 - **Never scroll the chat for "what do I need to do?"** The next task is pinned at the top. Urgent ones turn red.
 - **Keep Claude working while you think.** Questions that don't need an answer right now go to a **Decide** section. Claude carries on with everything else.
+- **Step away without stalling Claude.** Tell it when you'll be back. It stops waiting for your answers, does what it safely can, and leaves the rest for you. [How it works](#when-youre-away).
 - **Claude never assumes.** It sees only what you've shared: done, not done, your note, your screenshots. Nothing else is guessed.
 - **One checklist per chat.** Running several agents? Each has its own list, in the window it runs in.
 - **Nothing to set up.** Install it and it connects itself to Claude Code. No config files, no commands.
@@ -167,6 +168,10 @@ Claude gets five tools:
 **Does it work in the terminal and the Claude panel?** Both. The checklist opens in VS Code either way.
 
 **Does Claude see my checklist before I share it?** No. Claude sees only tasks and answers you've shared. Anything else shows as "waiting".
+
+**What if I leave my computer while Claude waits for me?** Click the moon icon at the top of the checklist, pick when you'll be back, and press **Yes**. Claude stops waiting, does the work that needs nothing from you and that it can finish safely, and stops with a short summary. See [When you're away](#when-youre-away).
+
+**Does Claude restart when I'm back?** No. Nothing wakes it when your away time ends, so a chat that has gone idle doesn't cost you anything. Press **Send now** or write to Claude to carry on.
 
 **Does it work in Cursor or VSCodium?** Yes, install the `.vsix` ([steps above](#install)).
 
