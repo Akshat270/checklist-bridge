@@ -1,6 +1,6 @@
 {
-  "version": "0.7.0",
-  "vsix": "releases/checklist-bridge-0.7.0.vsix",
-  "sha256": "01c42b06cc0e0aa4b8e26a2fef21b38126f5eadf0093fcfcf2cb7795d44a90e8",
-  "notes": "Away mode: tell Claude you're away and it stops waiting for you."
+  "version": "0.7.1",
+  "vsix": "releases/checklist-bridge-0.7.1.vsix",
+  "sha256": "d661f83a0999bc33a099216f4f5aae0b697d3b6109a5d00f5bddf6546b570b13",
+  "notes": "Fixes steps in ordered groups and phases piling on top of each other."
 }
