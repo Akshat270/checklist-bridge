@@ -18,6 +18,11 @@ The things only you can do, and the decisions you can make later, no longer get 
 When Claude Code needs you to do something by hand, like create an API key, run a command, click through a dashboard or test a page, it usually buries the steps in a long chat. Checklist Bridge puts them in a checklist next to the chat instead. Claude adds tasks while you keep talking. You tick them off, write a note or paste a screenshot, and press **Share** when a task is ready. Claude can read only the tasks you've shared, so it never assumes you did something you haven't.
 
 <p align="center">
+  <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-square.mp4"><img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/video-preview.gif" width="480" alt="Checklist Bridge in action: Claude adds an urgent task, you tick it, write a note, paste a screenshot and press Share, and Claude reads it"></a><br>
+  <b>▶ <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-square.mp4">Watch the 44-second video</a></b> (with sound) · <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-vertical.mp4">vertical version</a>
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-dark.png" width="300" alt="A checklist in VS Code: an urgent task pinned at the top, grouped tasks below, and a progress bar">
   &nbsp;
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-steps.png" width="300" alt="A roadmap in three phases with numbered steps; the next step is open and shows a command to copy">
