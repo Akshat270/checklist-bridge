@@ -166,12 +166,8 @@ for bar in range(3, 16):
         i = int((bar * BAR + beat * BEAT) * SR); n = int(0.25 * SR)
         if i + n < N: duck[i:i + n] *= 1 - 0.18 * np.exp(-t_(n) * 14)
 music[:, :] *= duck
-# Tape warmth and a little vinyl crackle.
+# Tape warmth. (No vinyl crackle: it added noise everywhere.)
 music = np.tanh(music * 1.6) / 1.6
-crackle = np.zeros(N)
-for i in rng.integers(0, N, int(DUR * 9)): crackle[i] = rng.uniform(-1, 1)
-crackle = bp(crackle, 1500, 6000) * 0.5 + lp(rng.standard_normal(N), 1500) * 0.006
-music += np.stack([crackle, np.roll(crackle, 37)]) * 0.35
 
 # ------------------------------------------------------------------ sound effects ------------------------------------------------------------------
 fx = np.zeros((2, N))
@@ -189,10 +185,13 @@ def click(vel=1.0, tone=2400):
     return x * vel
 
 def keypress(vel=1.0):
-    n = int(0.05 * SR); t = t_(n)
-    x = bp(rng.standard_normal(n), 1200, 5000) * np.exp(-t * rng.uniform(140, 220))
-    x += 0.4 * np.sin(2 * np.pi * rng.uniform(500, 800) * t) * np.exp(-t * 200)
-    return x * vel
+    # A soft laptop key: a short low "tap" with a muted click on top, no hiss.
+    n = int(0.06 * SR); t = t_(n)
+    f = rng.uniform(170, 240)
+    thump = np.sin(2 * np.pi * f * t) * np.exp(-t * 90)
+    tick = lp(bp(rng.standard_normal(n), 1500, 3200) * np.exp(-t * 420), 3500)
+    x = thump * 0.8 + tick * 0.35
+    return lp(x * np.minimum(1, t / 0.0015), 4000) * vel
 
 def bell(m, dur=1.2, vel=1.0):
     n = int(dur * SR); t = t_(n); f = midi(m)
@@ -223,7 +222,7 @@ for e in ev['events']:
     elif ty == 'click':
         add(fx, t, click(0.4, 1800))
     elif ty == 'key':
-        add(fx, t, keypress(rng.uniform(0.16, 0.26)), pan=rng.uniform(-0.2, 0.2))
+        add(fx, t, keypress(rng.uniform(0.07, 0.11)), pan=rng.uniform(-0.15, 0.15))
     elif ty == 'send':
         add(fx, t, whoosh(0.3, 800, 5000, 0.06)); add(fx, t, blip(midi(76), midi(83), 0.12, 0.2))
     elif ty == 'share':
@@ -235,7 +234,7 @@ for e in ev['events']:
     elif ty == 'alert':
         add(fx, t, bell(81, 0.9, 0.16)); add(fx, t + 0.14, bell(77, 1.0, 0.14))
     elif ty == 'whoosh':
-        add(fx, t - 0.15, whoosh(0.75, 250, 3500, 0.07))
+        pass  # Camera moves are silent: the music carries them, and it keeps the mix uncluttered.
     elif ty == 'riser':
         # Fast scrolling: scroll-wheel ticks that speed up and slow down with the scroll.
         k0, k1 = 0.35, 3.6

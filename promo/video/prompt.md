@@ -15,6 +15,6 @@ Create a **45-second vertical video (1080×1920)** promoting **Checklist Bridge*
 4. **(14–21s)** The next task is pinned on top with a command and a **Copy** button. An urgent task turns red. Caption: **"The next task is always on top."**
 5. **(21–29s)** Tick a task, type a note, paste a screenshot, press **Share**. It moves to "Shared with Claude". Caption: **"Claude only sees what you share."**
 6. **(29–36s)** A "Decide" section asks "Which payment gateway?" with options and Claude's pick. Claude keeps coding on the left. Caption: **"Decide later. Claude keeps working."**
-7. **(36–45s)** End card: name, tagline, badges "Free", "Open source", "macOS · Windows · Linux", and "Search **Checklist Bridge** in VS Code". Small footer: "Not affiliated with Anthropic."
+7. **(36–45s)** End card: name, tagline, badges "Free", "Open source", "macOS · Windows · Linux", then how to install it: "Open the Extensions panel in VS Code (Ctrl+Shift+X, or ⌘⇧X on a Mac), search **Checklist Bridge**, click Install", with the publisher shown as Akshat Agrawal, and "Also on the VS Code Marketplace and at github.com/Akshat270/checklist-bridge". Small footer: "Not affiliated with Anthropic."
 
 **Don't invent features.** Everything stays on the user's computer, setup is automatic, and it works in VS Code, Cursor and VSCodium. Use the real screenshots in the repo's `docs/` folder as reference images.

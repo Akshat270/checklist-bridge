@@ -187,21 +187,28 @@ mark{background:linear-gradient(#e3b341,#e3b341) no-repeat 0 0/0% 100%;color:inh
 #notify i{width:9px;height:9px;border-radius:50%;background:#ff6a55;display:block;box-shadow:0 0 0 4px #ff6a5533}
 #vignette{position:absolute;left:0;right:0;bottom:0;height:120px;background:linear-gradient(transparent,#12121bee);pointer-events:none}
 #end{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#fff;padding:0 30px}
-#end .icon{width:${FORMAT === 'square' ? 74 : 104}px;height:${FORMAT === 'square' ? 74 : 104}px;border-radius:24px;box-shadow:0 20px 60px #5e63e688,0 0 0 1px #ffffff22}
-#end h1{font-size:${FORMAT === 'square' ? 34 : 44}px;font-weight:800;letter-spacing:-.025em;margin-top:${FORMAT === 'square' ? 14 : 22}px}
-#end .tag{font-size:${FORMAT === 'square' ? 16 : 19}px;color:#c4c5dc;margin-top:8px;line-height:1.35;font-weight:500}
-#end .pills{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:${FORMAT === 'square' ? 14 : 22}px}
+#end .icon{width:${FORMAT === 'square' ? 52 : 92}px;height:${FORMAT === 'square' ? 52 : 92}px;border-radius:${FORMAT === 'square' ? 14 : 22}px;box-shadow:0 20px 60px #5e63e688,0 0 0 1px #ffffff22}
+#end h1{font-size:${FORMAT === 'square' ? 28 : 42}px;font-weight:800;letter-spacing:-.025em;margin-top:${FORMAT === 'square' ? 8 : 18}px}
+#end .tag{font-size:${FORMAT === 'square' ? 14.5 : 19}px;color:#c4c5dc;margin-top:${FORMAT === 'square' ? 4 : 8}px;line-height:1.35;font-weight:500}
+#end .pills{display:${FORMAT === 'square' ? 'none' : 'flex'};gap:8px;justify-content:center;flex-wrap:wrap;margin-top:${FORMAT === 'square' ? 14 : 22}px}
 #end .pills span{border:1px solid #3a3a5a;background:#1d1d2ecc;border-radius:99px;padding:6px 13px;font-size:13.5px;color:#d6d7ee;font-weight:600}
-.search{margin-top:${FORMAT === 'square' ? 18 : 30}px;width:100%;max-width:440px;background:#1f1f1f;border:1px solid #3c3c3c;border-radius:12px;overflow:hidden;text-align:left;box-shadow:0 20px 50px #000a}
+.steps{margin-top:${FORMAT === 'square' ? 14 : 30}px;width:100%;max-width:440px;text-align:left}
+.steps h2{font-size:${FORMAT === 'square' ? 14.5 : 17}px;font-weight:750;color:#fff;margin-bottom:${FORMAT === 'square' ? 6 : 10}px;letter-spacing:-.01em}
+.step{display:flex;align-items:center;gap:10px;padding:${FORMAT === 'square' ? 3 : 5}px 8px;border-radius:9px;font-size:${FORMAT === 'square' ? 13 : 15}px;color:#c4c5dc;font-weight:500}
+.step b{flex:none;width:${FORMAT === 'square' ? 20 : 23}px;height:${FORMAT === 'square' ? 20 : 23}px;border-radius:50%;background:#2b2b44;color:#c9cbff;display:grid;place-items:center;font-size:${FORMAT === 'square' ? 11.5 : 13}px;font-weight:800}
+.step.on{background:#5e63e62e;color:#fff}.step.on b{background:#5e63e6;color:#fff}
+kbd{font:600 ${FORMAT === 'square' ? 11.5 : 13}px/1 Inter,sans-serif;border:1px solid #4a4a66;border-bottom-width:2px;border-radius:5px;padding:2px 5px;color:#fff;background:#24243a}
+.search{margin-top:${FORMAT === 'square' ? 10 : 16}px;width:100%;max-width:440px;background:#1f1f1f;border:1px solid #3c3c3c;border-radius:12px;overflow:hidden;text-align:left;box-shadow:0 20px 50px #000a}
 .search .bar{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid #2f2f2f;font-size:15px;color:#e8e8e8}
 .search .bar .q{flex:1;border:1px solid #0078d4;border-radius:6px;padding:6px 9px;background:#2a2a2a;min-height:33px}
 #search-caret{display:inline-block;width:1.5px;height:17px;background:#fff;vertical-align:-3px;margin-left:1px}
 .search .label{font-size:11px;letter-spacing:.08em;color:#9d9d9d;font-weight:700}
 #result{display:flex;gap:12px;padding:12px 14px;align-items:center}
 #result img{width:42px;height:42px;border-radius:9px}
-#result .n{font-weight:700;font-size:15px}#result .d{font-size:12.5px;color:#a0a0a0;margin-top:2px}
-#result .btn{margin-left:auto;background:#0078d4;color:#fff;font-size:13px;font-weight:600;padding:6px 12px;border-radius:6px}
-.foot{position:absolute;bottom:${FORMAT === 'square' ? 14 : 28}px;left:0;right:0;font-size:12px;color:#8a8ba3}
+#result .n{font-weight:700;font-size:15px}#result .d{font-size:12.5px;color:#b8b8b8;margin-top:2px}#result .p{font-size:12px;color:#8f8f8f;margin-top:2px;font-weight:600}
+#result .btn{margin-left:auto;flex:none;background:#0078d4;color:#fff;font-size:13px;font-weight:600;padding:6px 12px;border-radius:6px}
+.alt{margin-top:${FORMAT === 'square' ? 9 : 16}px;font-size:${FORMAT === 'square' ? 12 : 14}px;color:#a9abc8;line-height:1.45}.alt b{color:#fff;font-weight:650}
+.foot{position:absolute;bottom:${FORMAT === 'square' ? 10 : 28}px;left:0;right:0;font-size:${FORMAT === 'square' ? 10.5 : 12}px;color:#8a8ba3}
 #fade{position:absolute;inset:0;background:#000;pointer-events:none}
 </style></head><body>
 <div id="bg"></div><div id="grain"></div>
@@ -230,8 +237,15 @@ mark{background:linear-gradient(#e3b341,#e3b341) no-repeat 0 0/0% 100%;color:inh
   <h1 data-in="0.35">Checklist Bridge</h1>
   <div class="tag" data-in="0.55">Give every Claude Code chat<br>its own checklist.</div>
   <div class="pills" data-in="0.8"><span>Free</span><span>Open source</span><span>macOS · Windows · Linux</span></div>
-  <div class="search" data-in="1.4"><div class="bar"><span class="label">EXTENSIONS</span><div class="q"><span id="search-text"></span><span id="search-caret"></span></div></div>
-    <div id="result"><img src="${icon}"><div><div class="n">Checklist Bridge</div><div class="d">Akshat270 · A checklist for every Claude chat</div></div><span class="btn">Install</span></div></div>
+  <div class="steps">
+    <h2 data-in="1.2">Get it free in VS Code</h2>
+    <div class="step" data-step="1" data-in="1.35"><b>1</b><span>Open the Extensions panel: <kbd>Ctrl+Shift+X</kbd> or <kbd>⌘⇧X</kbd></span></div>
+    <div class="step" data-step="2" data-in="1.5"><b>2</b><span>Search “Checklist Bridge”</span></div>
+    <div class="step" data-step="3" data-in="1.65"><b>3</b><span>Click Install</span></div>
+  </div>
+  <div class="search" data-in="1.8"><div class="bar"><span class="label">EXTENSIONS</span><div class="q"><span id="search-text"></span><span id="search-caret"></span></div></div>
+    <div id="result"><img src="${icon}"><div><div class="n">Checklist Bridge for Claude Code</div><div class="d">A checklist for every Claude Code chat</div><div class="p">Akshat Agrawal</div></div><span class="btn" id="install">Install</span></div></div>
+  <div class="alt" data-in="4.9">Also on the <b>VS Code Marketplace</b> and at<br><b>github.com/Akshat270/checklist-bridge</b></div>
   <div class="foot" data-in="1.8">Works with Claude Code in VS Code, Cursor and VSCodium. Not affiliated with Anthropic.</div>
 </div>
 <div id="fade"></div>

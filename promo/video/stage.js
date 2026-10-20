@@ -172,12 +172,18 @@
       el.style.transform = `translateY(${(1 - kk) * 22}px) scale(${lerp(0.97, 1, kk)})`;
     });
     const typed = window.SEARCH;
-    const ks = prog(t, a + 2.2, a + 3.3);
+    const ks = prog(t, a + 2.5, a + 3.5);
     $('#search-text').textContent = typed.slice(0, Math.floor(typed.length * ks));
     $('#search-caret').style.opacity = Math.floor(t * 2.2) % 2 ? '0' : '1';
-    const res = out(prog(t, a + 3.5, a + 4.0));
+    const res = out(prog(t, a + 3.65, a + 4.1));
     $('#result').style.opacity = String(res);
     $('#result').style.transform = `translateY(${(1 - res) * 10}px)`;
+    // The step being shown lights up: open the panel, then search, then install.
+    const step = t < a + 1.9 ? 0 : t < a + 2.45 ? 1 : t < a + 4.2 ? 2 : 3;
+    end.querySelectorAll('.step').forEach((el) => el.classList.toggle('on', +el.dataset.step === step));
+    // A soft pulse around Install.
+    const p = prog(t, a + 4.25, a + 5.25);
+    $('#install').style.boxShadow = p > 0 && p < 1 ? `0 0 0 ${p * 10}px rgba(0,120,212,${0.55 * (1 - p)})` : 'none';
   }
 
   /* ---------- per-frame entry point ---------- */

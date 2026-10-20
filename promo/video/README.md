@@ -60,7 +60,7 @@ This writes `build/prev-vertical-<time>.jpg` in a few seconds.
 
 **Every frame is the same every time.** The page's clock is faked with Playwright's `page.clock`. Each frame, the clock moves forward 1/30 of a second, and every CSS animation is paused and set to the right time. So the panel's own animations (tasks sliding in, the tick mark, the progress bar) play smoothly, and a re-render gives the same video.
 
-**The sound follows the picture.** `render.js` writes the time of every click, tick, keystroke, new task, paste and Share to `build/events.json`. `audio.py` puts a sound on each one. The music is a lo-fi loop at 90 BPM in F major (Fmaj9, Em7, Dm9, Cmaj9) with electric piano, a pad, bass and soft drums. Scene changes fall on bar lines, so the drums come in exactly when the checklist appears (8 s). The first 8 seconds are muffled, as if lost in the scroll. The mix ends at about -14 dB, a normal level for social video.
+**The sound follows the picture.** `render.js` writes the time of every click, tick, keystroke, new task, paste and Share to `build/events.json`. `audio.py` puts a sound on each one. The music is a lo-fi loop at 90 BPM in F major (Fmaj9, Em7, Dm9, Cmaj9) with electric piano, a pad, bass and soft drums. Scene changes fall on bar lines, so the drums come in exactly when the checklist appears (8 s). The first 8 seconds are muffled, as if lost in the scroll. Typing is a soft, quiet key tap, and camera moves have no sound of their own, so the mix stays uncluttered. The mix ends at about -14 dB, a normal level for social video.
 
 ## The script
 
@@ -76,7 +76,7 @@ Captions are burned in, because most people watch muted. There is no voiceover.
 | 19–24 s | Tick the task, type a note, paste a screenshot, press Share as done | Tick it. Add a note. Press Share. / Paste a screenshot if it helps. |
 | 24–27 s | In the chat, Claude reads the shared task and its screenshot | Claude only sees what you share. / It never assumes you did something you didn't. |
 | 27–35 s | Claude asks "Should the free trial ask for a card?" in Decide and carries on writing the webhook. The cursor picks Claude's suggestion and presses Share answer. | Decide later. Claude keeps working. / Questions wait in Decide with Claude's pick. |
-| 35–44 s | End card: icon, name, tagline, "Free", "Open source", "macOS · Windows · Linux", and someone typing "Checklist Bridge" into the VS Code extensions search | |
+| 35–44 s | End card: icon, name, tagline, "Free", "Open source", "macOS · Windows · Linux". Then how to install it: 1. Open the Extensions panel (Ctrl+Shift+X, or ⌘⇧X on a Mac), 2. Search "Checklist Bridge", 3. Click Install. Each step lights up while a mock Extensions panel shows "Checklist Bridge" being typed and the extension (by Akshat Agrawal) appearing with its Install button. Last line: "Also on the VS Code Marketplace and at github.com/Akshat270/checklist-bridge". | Get it free in VS Code |
 
 To change something:
 - **Captions:** `CAPTIONS` in `render.js` (`a` and `b` are the start and end times in seconds).
@@ -96,7 +96,8 @@ A caption you can use:
 >
 > I built Checklist Bridge, a free VS Code extension that gives every Claude Code chat its own checklist. Claude adds the manual tasks. You tick them off, add a note or screenshot, and share. Claude only sees what you've shared.
 >
-> Free and open source. Search "Checklist Bridge" in VS Code.
+> Free and open source. In VS Code, open the Extensions panel (Ctrl+Shift+X, or Cmd+Shift+X on a Mac), search "Checklist Bridge" and click Install.
+> Marketplace: https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge
 > github.com/Akshat270/checklist-bridge
 >
 > #ClaudeCode #VSCode #AI #DeveloperTools #OpenSource #BuildInPublic
