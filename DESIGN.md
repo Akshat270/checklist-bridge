@@ -196,7 +196,7 @@ The palette has two parts: neutrals taken from the editor theme, and a set of sa
 
 **The Theme-Owns-the-Ground Rule.** Ground, text and fonts always come from `--vscode-*` variables with fallbacks. The panel adds tints by `color-mix` over those variables, never by fixed greys.
 
-**The Two-Theme Rule.** Every owned colour has a darker override under `body.vscode-light` so it keeps contrast on white; high-contrast themes swap the lines to `--vscode-contrastBorder` and `--vscode-contrastActiveBorder`.
+**The Two-Theme Rule.** Every owned colour has a darker override under `body.vscode-light` and `body.vscode-high-contrast-light` so it keeps contrast on white; high-contrast themes swap the lines to `--vscode-contrastBorder` and `--vscode-contrastActiveBorder`.
 
 ## Typography
 
@@ -298,7 +298,7 @@ One easing curve, `cubic-bezier(.16, 1, .3, 1)`, for everything that moves posit
 
 ### Do:
 - **Do** take ground, text and fonts from `--vscode-*` variables, and build surfaces with `color-mix` of ink into ground (hover 5%, open row 4%, field 6%, code 8%, line 11%, strong line 20%).
-- **Do** give every owned colour a `body.vscode-light` override that is dark enough for body-size text on white.
+- **Do** give every owned colour a `body.vscode-light` (and `body.vscode-high-contrast-light`) override that is dark enough for body-size text on white.
 - **Do** pair every state colour with a shape or icon: check vs minus circle, eye vs clock, square vs bars, dashed vs solid checkbox.
 - **Do** keep exactly one tinted surface on screen: the current task.
 - **Do** use the 16px stroke icon family (1.5px stroke, round caps and joins), inline as SVG and sized 11 to 16px.

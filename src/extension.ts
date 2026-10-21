@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { Checklist, ChecklistStore } from './model';
+import { Checklist, ChecklistStore, stillOpen } from './model';
 import { createWindowServer, WindowServer } from './windowServer';
 import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
 import { Panels, Routes, VIEW_TYPE } from './panels';
@@ -438,15 +438,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('checklistBridge.close', async (arg) => {
       const c = resolve(arg);
       if (!c) return;
-      const waiting = c.tasks.filter((t) => !t.shared).length;
       const pick = await vscode.window.showWarningMessage(
         `Close "${c.title}"?`,
-        {
-          modal: true,
-          detail:
-            (waiting ? `${waiting} task${waiting === 1 ? ' is' : 's are'} still not shared. ` : '') +
-            'Claude will be told the checklist was closed. If it adds tasks later, a new checklist opens.',
-        },
+        { modal: true, detail: stillOpen(c) + 'Claude will be told the checklist was closed. If it adds tasks later, a new checklist opens.' },
         'Close checklist'
       );
       if (pick === 'Close checklist') store.close(c.id);

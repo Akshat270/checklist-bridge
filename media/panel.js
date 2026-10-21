@@ -58,16 +58,35 @@
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   /** The id Claude uses for this item (t1, q2…), shown so you can refer to it in the chat. Click to copy. */
-  // Plain text, not a button: the row is already a button, and a screen reader reads it as part of the title.
   const idTag = (id) =>
-    h('span', {
+    h('button', {
+      type: 'button',
       class: 'item-id',
       title: `Claude calls this ${id}. Click to copy.`,
+      'aria-label': `Copy ${id}`,
       onclick: (e) => {
         e.stopPropagation();
         post({ type: 'copy', text: id, label: id });
       },
     }, id);
+  /** Words only a screen reader hears, for things the eye gets from a colour or an icon. */
+  const sr = (text) => text && h('span', { class: 'sr' }, text);
+  /**
+   * A row: the whole of it opens and shuts on a click. For the keyboard and screen readers, only the middle (the text) is
+   * the button, so the checkbox, Share and the id next to it stay controls of their own instead of sitting inside a button.
+   */
+  function rowOf(t, open, lead, main, right) {
+    const toggleKey = (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+        e.preventDefault();
+        toggle(t);
+      }
+    };
+    return h('div', { class: 'row', onclick: () => toggle(t) },
+      lead,
+      h('div', { class: 'row-main', role: 'button', tabindex: '0', 'aria-expanded': String(open), onkeydown: toggleKey }, main),
+      h('div', { class: 'right' }, right));
+  }
 
   function toast(text) {
     const t = $('#toast');
@@ -191,11 +210,12 @@
     post({ type: 'addImages', taskId, images: imgs });
   }
 
-  function lightbox(src) {
-    const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-label': 'Screenshot', tabindex: '-1' }, h('img', { src, alt: '' }));
+  function lightbox(src, opener) {
+    const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Screenshot. Press Escape to close.', tabindex: '-1' }, h('img', { src, alt: '' }));
     const close = () => {
       box.remove();
       document.removeEventListener('keydown', onKey);
+      if (opener && opener.isConnected) opener.focus({ preventScroll: true }); // back to where you were
     };
     const onKey = (e) => e.key === 'Escape' && close();
     box.addEventListener('click', close);
@@ -209,17 +229,18 @@
     return h(
       'div',
       { class: 'shots' },
-      images.map((img) => {
+      images.map((img, i) => {
         const src = img.src || `data:${img.mime};base64,${img.data}`;
+        const name = images.length > 1 ? `screenshot ${i + 1} of ${images.length}` : 'screenshot';
         return h(
           'div',
           { class: 'shot' },
-          h('img', { src, alt: 'Screenshot', onclick: () => lightbox(src) }),
+          h('button', { type: 'button', class: 'shot-open', title: 'Show it full size', 'aria-label': `Show ${name} full size`, onclick: (e) => lightbox(src, e.currentTarget) }, h('img', { src, alt: '' })),
           removable &&
             h('button', {
               class: 'x',
               title: 'Remove screenshot',
-              'aria-label': 'Remove screenshot',
+              'aria-label': `Remove ${name}`,
               html: I.close,
               onclick: () => post({ type: 'removeImage', taskId, imageId: img.id }),
             })
@@ -265,15 +286,16 @@
     const note = (t.shared ? t.shared.note : noteOf(t)).trim();
     const pics = (t.shared ? t.shared.images : t.draft.images).length;
     if (!open && note) out.push(h('span', { class: 'chip soft', title: 'Has a note', html: `${I.note}<span>Note</span>` }));
-    if (!open && pics) out.push(h('span', { class: 'chip soft', title: 'Screenshots', html: `${I.image}<span>${pics}</span>` }));
+    if (!open && pics) out.push(h('span', { class: 'chip soft', title: 'Screenshots', html: `${I.image}<span>${pics}</span><span class="sr"> ${pics === 1 ? 'screenshot' : 'screenshots'}</span>` }));
     return out;
   }
 
+  /** Urgent or important, shown as a mark on a closed row (an open row shows the chip instead). Null for a later step: its order ranks it. */
+  const prioOf = (t) => (inLaterStep(t) ? null : t.tags.includes('urgent') ? 'Urgent' : t.tags.includes('important') ? 'Important' : null);
   function prioMark(t) {
-    if (inLaterStep(t)) return null;
-    if (t.tags.includes('urgent')) return h('span', { title: 'Urgent', html: I.urgent });
-    if (t.tags.includes('important')) return h('span', { title: 'Important', html: I.important });
-    return null;
+    const p = prioOf(t);
+    // The words are in the row's text for screen readers; the mark is for the eye.
+    return p && h('span', { title: p, 'aria-hidden': 'true', html: p === 'Urgent' ? I.urgent : I.important });
   }
 
   function renderTodo(t) {
@@ -301,32 +323,18 @@
     const quickShare = h('button', {
       class: 'btn small quiet qs',
       title: 'Share with Claude',
+      'aria-label': `Share ${t.id} with Claude`,
       onclick: (e) => {
         e.stopPropagation();
         share(t);
       },
     }, 'Share');
 
-    const row = h(
-      'div',
-      {
-        class: 'row',
-        role: 'button',
-        tabindex: '0',
-        'aria-expanded': String(open),
-        onclick: () => toggle(t),
-        onkeydown: (e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-            e.preventDefault();
-            toggle(t);
-          }
-        },
-      },
-      tick,
-      h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent))),
-      h('div', { class: 'right' }, open ? null : quickShare, open ? null : prioMark(t), idTag(t.id))
+    el.append(
+      rowOf(t, open, tick,
+        [h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent)), !open && sr(prioOf(t))],
+        [open ? null : quickShare, open ? null : prioMark(t), idTag(t.id)])
     );
-    el.append(row);
 
     if (open) {
       const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, hidden: true, onchange: (e) => attach(t.id, e.target.files) });
@@ -407,33 +415,14 @@
     const s = t.shared;
     const open = isOpen(t);
     const el = h('div', { class: `task shared-row${open ? ' open' : ''}`, id: `task-${t.id}`, 'data-id': t.id });
+    const how = s.done ? 'Shared as done' : 'Shared as not done';
+    const read = t.seenAt ? 'Claude has read this' : 'Claude hasn’t read this yet';
+    // The circle and the eye or clock are for the eye; the same words are in the row's text for screen readers.
     el.append(
-      h(
-        'div',
-        {
-          class: 'row',
-          role: 'button',
-          tabindex: '0',
-          'aria-expanded': String(open),
-          onclick: () => toggle(t),
-          onkeydown: (e) => {
-            if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-              e.preventDefault();
-              toggle(t);
-            }
-          },
-        },
-        h('span', { class: `mark ${s.done ? 'done' : 'notdone'}`, title: s.done ? 'Shared as done' : 'Shared as not done', html: s.done ? I.check : I.minus }),
-        h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, false))),
-        h(
-          'div',
-          { class: 'right' },
-          t.seenAt
-            ? h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye })
-            : h('span', { class: 'status', title: 'Claude hasn’t read this yet', html: I.clock }),
-          idTag(t.id)
-        )
-      )
+      rowOf(t, open,
+        h('span', { class: `mark ${s.done ? 'done' : 'notdone'}`, title: how, 'aria-hidden': 'true', html: s.done ? I.check : I.minus }),
+        [h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, false)), sr(`${how}. ${read}.`)],
+        [h('span', { class: `status${t.seenAt ? ' seen' : ''}`, title: read, 'aria-hidden': 'true', html: t.seenAt ? I.eye : I.clock }), idTag(t.id)])
     );
     if (open) {
       el.append(
@@ -500,13 +489,26 @@
 
     const role = q.multi ? 'checkbox' : 'radio';
     const opts = h('div', { class: 'opts', role: q.multi ? 'group' : 'radiogroup', 'aria-labelledby': `qt-${q.id}` });
-    const choose = (id) => {
+    // byArrow: moving through the choices with the arrow keys picks as it goes, so "Something else" must not take the focus away.
+    const choose = (id, byArrow) => {
       if (q.multi) d.picks = d.picks.includes(id) ? d.picks.filter((x) => x !== id) : [...d.picks, id];
       else d.picks = [id];
       saveQDraft(q, true);
       paint();
-      if (id === 'other' && d.picks.includes('other')) setTimeout(() => el.querySelector('.other')?.focus(), 0);
+      if (id === 'other' && d.picks.includes('other') && !byArrow) setTimeout(() => el.querySelector('.other')?.focus(), 0);
     };
+    // One choice: one Tab stop, and the arrow keys move between the choices, as with any set of radio buttons.
+    if (!q.multi)
+      opts.addEventListener('keydown', (e) => {
+        const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+        const btns = [...opts.querySelectorAll('.opt-main')];
+        const at = btns.indexOf(document.activeElement);
+        if (!step || at < 0) return;
+        e.preventDefault();
+        const next = btns[(at + step + btns.length) % btns.length];
+        next.focus();
+        choose(next.closest('.opt').dataset.opt, true);
+      });
     const all = [...q.options, ...(q.allowOther ? [{ id: 'other', label: 'Something else' }] : [])];
     for (const o of all) {
       const rec = q.recommended === o.id;
@@ -593,10 +595,14 @@
     );
 
     function paint() {
-      for (const row of el.querySelectorAll('.opt')) {
+      const rows = [...el.querySelectorAll('.opt')];
+      const tabStop = rows.find((r) => d.picks.includes(r.dataset.opt)) || rows[0];
+      for (const row of rows) {
         const on = d.picks.includes(row.dataset.opt);
         row.classList.toggle('on', on);
-        row.querySelector('.opt-main').setAttribute('aria-checked', String(on));
+        const btn = row.querySelector('.opt-main');
+        btn.setAttribute('aria-checked', String(on));
+        if (!q.multi) btn.tabIndex = row === tabStop ? 0 : -1;
       }
       otherWrap.hidden = !d.picks.includes('other');
       shareBtn.disabled = !qReady(q);
@@ -642,8 +648,8 @@
     const el = h('div', { class: 'qcard answered', id: `task-${q.id}`, 'data-id': q.id });
     el.append(
       h('div', { class: 'qhead' },
-        h('span', { class: 'mark done small', html: I.check }),
-        h('div', {}, h('div', { class: 'qtext muted' }, q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id)),
+        h('span', { class: 'mark done small', title: 'Answered', 'aria-hidden': 'true', html: I.check }),
+        h('div', {}, h('div', { class: 'qtext muted' }, q.question), sr('Your answer:'), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id)),
         idTag(q.id)
       ),
       h(
@@ -668,13 +674,14 @@
     const el = h('div', { class: `task shared-row q-row${open ? ' open' : ''}${q.retired ? ' retired' : ''}`, id: `task-${q.id}`, 'data-id': q.id });
     const answer = q.answer ? answerText(q, q.answer) : '';
     el.append(
-      h(
-        'div',
-        { class: 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onclick: () => toggle(q) },
-        h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, html: q.retired ? I.minus : I.ask }),
-        h('div', {}, h('div', { class: 'text' }, q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
-        h('div', { class: 'right' }, q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye }), idTag(q.id))
-      )
+      rowOf(q, open,
+        h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, title: q.retired ? 'No longer needed' : 'Answered', 'aria-hidden': 'true', html: q.retired ? I.minus : I.ask }),
+        [
+          h('div', { class: 'text' }, q.question),
+          h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : [sr('Your answer:'), h('span', { class: 'chip decided', title: answer }, answer)]),
+          !q.retired && sr('Claude has read this.'),
+        ],
+        [q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', 'aria-hidden': 'true', html: I.eye }), idTag(q.id)])
     );
     if (open)
       el.append(
@@ -686,7 +693,7 @@
           q.answer && shots(q.answer.images, false, q.id),
           q.answer &&
             h('div', { class: 'actions' }, h('span', { class: 'status seen', html: `${I.eye}<span>Claude has read this</span>` }), h('span', { class: 'grow' }),
-              h('button', { class: 'ghost', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }))
+              h('button', { class: 'ghost', title: 'Hide your answer from Claude again so you can change it', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }))
         )
       );
     return el;
@@ -782,9 +789,16 @@
 
     // Keep focus and caret across re-renders.
     const active = document.activeElement;
-    const activeRow = active && active.closest && active.closest('.task');
     const activeCard = active && active.closest && (active.closest('.task') || active.closest('.qcard'));
-    const focus = activeCard && { id: activeCard.dataset.id, tag: active.tagName, cls: active.classList.contains('other') ? '.other' : 'textarea:not(.other)', start: active.selectionStart, end: active.selectionEnd };
+    // The same control as before if it is still there (the checkbox you just ticked, the choice you moved to), else the row.
+    const opt = activeCard && active.closest('.opt');
+    const same = activeCard && ['tick', 'row-main', 'item-id'].find((c) => active.classList.contains(c));
+    const sel = !activeCard ? null
+      : active.tagName === 'TEXTAREA' ? (active.classList.contains('other') ? '.other' : 'textarea:not(.other)')
+      : opt ? `.opt[data-opt="${opt.dataset.opt}"] .opt-main`
+      : same ? `.${same}`
+      : null;
+    const focus = activeCard && { id: activeCard.dataset.id, sel, start: active.selectionStart, end: active.selectionEnd };
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
@@ -864,10 +878,11 @@
 
     if (focus) {
       const r = document.getElementById(`task-${focus.id}`);
-      const target = r && (focus.tag === 'TEXTAREA' ? r.querySelector(focus.cls) : r.querySelector('.row, .opt-main'));
-      if (target) {
+      const find = (x) => x && r.querySelector(x);
+      const target = r && (find(focus.sel) || find('.row-main') || find('.opt-main[tabindex="0"]') || find('.opt-main'));
+      if (target && target !== document.activeElement) {
         target.focus({ preventScroll: true });
-        if (focus.tag === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
+        if (target.tagName === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
       }
     }
     arriveId = null;
@@ -897,13 +912,13 @@
   // The window decides whether the user is away, so this panel's clock can't disagree with it.
   const isAway = () => !!(list && list.away);
   const awayView = () => (awayStage !== 'idle' ? awayStage : isAway() ? 'on' : 'idle');
-  const clockText = (ms) => {
-    const d = new Date(ms);
-    const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
-  };
+  const timeText = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  /** "3:30 PM", or "tomorrow 1:00 AM" if that isn't today. Worked out each time it is shown, so it is still right after midnight. */
+  const clockText = (ms, time = timeText(ms)) => (new Date(ms).toDateString() === new Date().toDateString() ? time : `tomorrow ${time}`);
   // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
   const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
+  // The window keeps only the time of day you saw (an older panel also saved "tomorrow" with it, which is wrong after midnight).
+  const untilText = () => clockText(Date.now() + leftMs(), (list.awayLabel || '').replace(/^tomorrow /, '') || undefined);
   const leftText = (ms) => {
     const m = Math.max(1, Math.ceil(ms / 60000));
     return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
@@ -921,6 +936,7 @@
   function awayTick() {
     const left = $('#away-left'), fill = $('#away-fill');
     if (!left || awayView() !== 'on') return;
+    $('#away-until').textContent = untilText();
     const ms = leftMs();
     awaySeen = Math.max(awaySeen, ms);
     const total = list.awayMs || awaySeen || 1;
@@ -933,14 +949,14 @@
   // Running late: stay away 30 minutes longer. No question asked; it is one small step and Change undoes it.
   function extend() {
     const ms = Math.min(leftMs() + 30 * 60_000, DAY);
-    post({ type: 'setAway', ms, label: clockText(Date.now() + ms) });
+    post({ type: 'setAway', ms, label: timeText(Date.now() + ms) });
   }
   const awayCard = (view) => {
     const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
     if (view === 'picker') {
       const choose = (ms) => {
         if (!ms) return toast('Pick a time first');
-        awayPick = { ms, label: clockText(Date.now() + ms) };
+        awayPick = { ms, label: timeText(Date.now() + ms) };
         go('confirm')();
       };
       const soon = new Date(Date.now() + 3600_000);
@@ -954,7 +970,7 @@
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${awayPick.label}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${clockText(Date.now() + awayPick.ms, awayPick.label)}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
         awayPick.ms >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
         h('div', { class: 'away-actions' },
           h('button', {
@@ -970,7 +986,7 @@
     }
     if (view === 'on') {
       return h('section', { class: 'away-card soft card-in', role: 'status', 'aria-live': 'polite' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, list.awayLabel || clockText(list.awayUntil)))), h('span', { class: 'away-left', id: 'away-left' })),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, untilText()))), h('span', { class: 'away-left', id: 'away-left' })),
         h('div', { class: 'away-bar', id: 'away-bar', 'aria-hidden': 'true' }, h('div', { class: 'away-fill', id: 'away-fill' })),
         h('div', { class: 'away-actions' },
           h('button', { class: 'btn', onclick: () => { awayStage = 'back'; post({ type: 'endAway' }); renderAway(); } }, 'I’m back'),
@@ -1013,7 +1029,6 @@
       // Same card, new end time (stayed away longer): change the text, don't build the card again.
       awayShown = key;
       awaySeen = 0;
-      $('#away-until').textContent = list.awayLabel || clockText(list.awayUntil);
       awayTick();
       return;
     }

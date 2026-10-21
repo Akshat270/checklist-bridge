@@ -1125,6 +1125,12 @@ export function answerText(q: Question, a: Answer): string {
   return labels.join(' + ') || '(no choice)';
 }
 
+/** What is still waiting on the user, for the question before a checklist is closed. Empty if nothing is. */
+export function stillOpen(c: Checklist): string {
+  const n = (count: number, what: string, rest: string) => (count ? `${count} ${what}${count === 1 ? ' is' : 's are'} ${rest}. ` : '');
+  return n(c.tasks.filter((t) => !t.shared).length, 'task', 'still not shared') + n(c.questions.filter((q) => !q.answer && !q.retired).length, 'question', 'not answered yet');
+}
+
 /** True if the group's tasks must be done in order: an ordered group, or a phase of the roadmap. */
 export function isSequence(c: Checklist, group: string): boolean {
   return c.orderedGroups.includes(group) || c.phases.includes(group);
