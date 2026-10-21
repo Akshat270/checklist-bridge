@@ -315,6 +315,13 @@ export function normalize(c: Checklist): Checklist {
   c.phases ??= [];
   // An away that ran out while the window was closed means nothing now.
   if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
+  // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes.
+  // Keep the time, and say "tomorrow" until this computer's next midnight if the away ends after it.
+  if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) {
+    c.awayLabel = c.awayLabel.slice('tomorrow '.length);
+    const midnight = new Date().setHours(24, 0, 0, 0);
+    if (c.awayUntil >= midnight) c.awayMidnight = midnight;
+  }
   return c;
 }
 
@@ -455,11 +462,10 @@ export class ChecklistStore {
   shareAnswer(listId: string, qid: string): boolean {
     const x = this.item(listId, qid);
     if (!x?.q || x.q.answer || x.q.retired) return false;
+    const a = draftAnswer(x.q);
+    if (!a) return false;
     const d = x.q.draft;
-    const picks = d.picks.filter((p) => p !== 'other');
-    const other = d.picks.includes('other') || (!picks.length && x.q.allowOther) ? d.other.trim() : '';
-    if (!picks.length && !other) return false;
-    x.q.answer = { at: Date.now(), picks, other, note: d.note.trim(), images: [...d.images] };
+    x.q.answer = { at: Date.now(), ...a, note: d.note.trim(), images: [...d.images] };
     x.q.withdrawn = false;
     x.q.pushedAt = undefined;
     x.q.rev++;
@@ -542,7 +548,7 @@ export class ChecklistStore {
     const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const left = mins < 60 ? plural(mins, 'minute') : [plural(Math.floor(mins / 60), 'hour'), mins % 60 && plural(mins % 60, 'minute')].filter(Boolean).join(' ');
     // The label is what the user's screen showed. Without one, use this computer's clock.
-    const clock = c.awayLabel ? awayDay(c) + c.awayLabel : new Date(c.awayUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const clock = awayDay(c) + (c.awayLabel ?? new Date(c.awayUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     if (brief) return `THE USER IS STILL AWAY until ${clock} (in ${left}). Do not wait for them, and skip anything that needs them.`;
     return (
       `THE USER IS AWAY until ${clock} (in ${left}), and may come back sooner. Do NOT wait for them and do not call checklist_wait. ` +
@@ -1129,6 +1135,14 @@ export function answerText(q: Question, a: Answer): string {
   return labels.join(' + ') || '(no choice)';
 }
 
+/** The answer the draft would share: what is picked, and the "something else" text. Undefined if there is nothing to share yet. */
+export function draftAnswer(q: Question): { picks: string[]; other: string } | undefined {
+  const d = q.draft;
+  const picks = d.picks.filter((p) => p !== 'other');
+  const other = d.picks.includes('other') || (!picks.length && q.allowOther) ? d.other.trim() : '';
+  return picks.length || other ? { picks, other } : undefined;
+}
+
 /** "tomorrow " while the away ends after the user's next midnight and that midnight hasn't come yet, else "". */
 export function awayDay(c: Checklist, now = Date.now()): string {
   return c.awayMidnight && now < c.awayMidnight ? 'tomorrow ' : '';
@@ -1138,8 +1152,7 @@ export function awayDay(c: Checklist, now = Date.now()): string {
 export function stillOpen(c: Checklist): string {
   const n = (count: number, what: string, rest: string) => (count ? `${count} ${what}${count === 1 ? ' is' : 's are'} ${rest}. ` : '');
   const waiting = c.questions.filter((q) => !q.answer && !q.retired);
-  // Answered in the panel (as the panel decides it can be shared), but Claude can't see it yet.
-  const picked = waiting.filter((q) => q.draft.picks.some((p) => p !== 'other') || (q.draft.picks.includes('other') && !!q.draft.other.trim())).length;
+  const picked = waiting.filter((q) => draftAnswer(q)).length; // answered in the panel, but Claude can't see it yet
   return (
     n(c.tasks.filter((t) => !t.shared).length, 'task', 'still not shared') +
     n(picked, 'answer', 'still not shared') +

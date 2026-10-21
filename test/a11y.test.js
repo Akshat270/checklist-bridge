@@ -36,8 +36,18 @@ let failed = 0; const check = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + 
   check(awayDay(c, now) === '' && /until 11:00 PM \(in 1 hour\)/.test(s.awayNote(c)), 'an away that ends the same day says no day');
   s.setAway(c.id, 3600_000, '11:00 PM', 2 * 3600_000, now);
   check(c.awayMidnight === undefined, 'a midnight after the end is ignored');
+  s.setAway(c.id, 8 * 3600_000, undefined, 2 * 3600_000, now);
+  check(/until tomorrow \S/.test(s.awayNote(c)), `without a label, Claude still hears "tomorrow" (${s.awayNote(c).slice(0, 40)})`);
   s.endAway(c.id);
   check(c.awayMidnight === undefined, 'ending the away forgets it');
+
+  // An away saved by an older version has the day in its label. It is read as the time, plus "tomorrow" until midnight.
+  const midnight = new Date().setHours(24, 0, 0, 0);
+  const saved = (until) => Object.assign(JSON.parse(JSON.stringify(c)), { awayUntil: until, awayLabel: 'tomorrow 6:00 AM', awayMs: 8 * 3600_000 });
+  const late = new ChecklistStore([saved(midnight + 3600_000)]).all()[0];
+  check(late.awayLabel === '6:00 AM' && late.awayMidnight === midnight, 'an older away that ends after midnight: "tomorrow" until midnight');
+  const early = new ChecklistStore([saved(Math.min(midnight - 1000, Date.now() + 60_000))]).all()[0];
+  check(early.awayLabel === '6:00 AM' && early.awayMidnight === undefined, 'one that ends before midnight (it was set the day before): no "tomorrow"');
 }
 
 const pw = require('./harness/playwright');
@@ -149,12 +159,22 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     const page = await open();
     const stops = () => page.$$eval('#task-q1 .opt-main', (bs) => bs.map((x) => x.tabIndex).join(','));
     check((await stops()) === '0,-1,-1,-1', `one Tab stop before anything is picked (${await stops()})`);
-    await page.focus('#task-q1 .opt-main'); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80);
-    const picks = (await page.posted('answerDraft')).map((m) => m.picks.join());
-    check(picks.at(-1) === 'o2' && (await stops()) === '-1,0,-1,-1' && (await page.evaluate(() => document.activeElement.closest('.opt').dataset.opt)) === 'o2', `ArrowDown picks the next choice and moves there (${picks.join(' ')})`);
-    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp'); await page.waitForTimeout(80);
     const onOpt = () => page.evaluate(() => document.activeElement.closest('.opt')?.dataset.opt);
-    check((await page.posted('answerDraft')).at(-1).picks.join() === 'other' && (await onOpt()) === 'other', 'ArrowUp from the first choice goes round to the last, and "Something else" doesn\'t pull the focus into its box');
+    const picked = () => page.$$eval('#task-q1 .opt.on', (xs) => xs.map((x) => x.dataset.opt).join());
+    await page.focus('#task-q1 .opt-main'); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80);
+    check((await picked()) === 'o2' && (await stops()) === '-1,0,-1,-1' && (await onOpt()) === 'o2', `ArrowDown picks the next choice and moves there (${await picked()})`);
+    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp'); await page.waitForTimeout(80);
+    check((await picked()) === 'other' && (await onOpt()) === 'other', 'ArrowUp from the first choice goes round to the last, and "Something else" doesn\'t pull the focus into its box');
+    const still = [];
+    for (const k of ['Control+ArrowDown', 'Alt+ArrowDown', 'Shift+ArrowDown', 'Meta+ArrowDown']) {
+      await page.keyboard.press(k); await page.waitForTimeout(40);
+      if ((await picked()) === 'other' && (await onOpt()) === 'other') still.push(k);
+    }
+    check(still.length === 4, `with Ctrl, Alt, Shift or Cmd the arrow keys leave the answer alone (${still.join(' ')})`);
+    // Moving through the choices saves once you stop, not at every key.
+    await page.waitForTimeout(450);
+    const saves = (await page.posted('answerDraft')).map((m) => m.picks.join());
+    check(saves.join(' ') === 'other', `one save for three moves (${saves.join(' ')})`);
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80);
     // A redraw (here: a screenshot was added) keeps the focus on the choice you were on.
     const l = state(); l.questions.find((q) => q.id === 'q1').rev++; l.questions.find((q) => q.id === 'q1').draft.picks = ['o3'];
@@ -187,6 +207,34 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.close();
   }
 
+  // While a screenshot is open: a paste goes nowhere, and a task shown from the sidebar closes it first.
+  {
+    const page = await open();
+    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(120); }
+    await page.focus('#task-t4 .shot-open'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
+    await page.evaluate((png) => {
+      const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], 'a.png', { type: 'image/png' }));
+      document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+    }, PNG);
+    await page.waitForTimeout(300);
+    check((await page.posted('addImages')).length === 0, 'a paste while a screenshot is open adds nothing to a task you can\'t see');
+    await page.evaluate(() => window.postMessage({ type: 'reveal', taskId: 't1' }, '*')); await page.waitForTimeout(200);
+    check(!(await page.$('.lightbox')) && !(await page.evaluate(() => document.querySelector('.page').inert)) && (await isOpen(page, 't1')), 'showing a task from the sidebar closes the screenshot and opens the task');
+    await page.close();
+  }
+
+  // A question's screenshot that is gone when you close it: the focus goes to the question, not its id's Copy button.
+  {
+    const withShot = state(); withShot.questions.find((q) => q.id === 'q1').draft.images = [{ id: 'img1', mime: 'image/png', data: PNG, w: 1, h: 1 }];
+    const page = await open({ list: withShot });
+    await page.focus('#task-q1 .shot-open'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
+    const gone = state(); gone.questions.find((q) => q.id === 'q1').rev += 3; // Claude's update took the screenshot away
+    await page.send(gone); await page.waitForTimeout(150);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    check((await page.evaluate(() => document.activeElement.id)) === 'task-q1', `the focus goes to the question (${await focused(page)})`);
+    await page.close();
+  }
+
   // The bar with Share all can be reached only while it shows, and sharing from it leaves the focus in the list.
   {
     const two = state(); for (const id of ['t1', 't4']) two.tasks.find((t) => t.id === id).draft.done = true;
@@ -197,7 +245,24 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     const after = state(); for (const id of ['t1', 't4']) { const t = after.tasks.find((x) => x.id === id); t.shared = { done: true, note: '', images: [], at: Date.now() }; }
     await page.send(after); await page.waitForTimeout(300);
     check(await page.$eval('#dock', (e) => e.inert), 'when the bar goes, it is out of reach');
-    check(await page.evaluate(() => document.activeElement.closest('#list') === document.querySelector('#list')), `the focus goes back to the top of the list (${await focused(page)})`);
+    check(await page.evaluate(() => document.activeElement.id === 'list' || document.activeElement.closest('.task.current')), `the focus goes to the next task, or the top of the list (${await focused(page)})`);
+    await page.close();
+    // With a mouse, nothing moves the focus.
+    const m = await open({ list: two });
+    await m.click('#share-all'); await m.waitForTimeout(400);
+    await m.send(after); await m.waitForTimeout(300);
+    check(await m.evaluate(() => document.activeElement === document.body), 'Share all with a mouse leaves the focus alone');
+    await m.close();
+  }
+
+  // Close sends typing not saved yet first, so the question before closing counts it.
+  {
+    const page = await open();
+    await page.click('#task-q1 .opt[data-opt="other"] .opt-main'); await page.waitForTimeout(50);
+    await page.fill('#task-q1 .other', 'Purple');
+    await page.click('#close'); await page.waitForTimeout(50);
+    const order = await page.evaluate(() => window.__out.filter((m) => m.type === 'answerDraft' || m.type === 'close').map((m) => m.type + (m.other ? ':' + m.other : '')));
+    check(order.slice(-2).join(' ') === 'answerDraft:Purple close', `the typed answer goes before Close (${order.join(' ')})`);
     await page.close();
   }
 
@@ -218,7 +283,40 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     const again = JSON.parse(JSON.stringify(withDetails)); again.questions.find((q) => q.id === 'q1').rev += 2;
     await page.send(again); await page.waitForTimeout(150);
     check(await page.$eval('#task-q1 details', (e) => e.open && document.activeElement.tagName === 'SUMMARY'), 'an open Details stays open, and keeps the focus');
+    // A section head drawn again keeps the focus, though its count and hint change.
+    await page.focus('#list .section.shared .section-head'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
+    check(await page.evaluate(() => document.activeElement.classList.contains('section-head') && document.activeElement.getAttribute('aria-expanded') === 'true'), 'Enter on a section head opens it and keeps the focus there');
     check(!page.errs.length, `no errors (${page.errs.join('; ')})`);
+    await page.close();
+  }
+
+  // Sharing a task from the keyboard: its row leaves the list, and the focus goes to the next task, not nowhere.
+  {
+    const page = await open();
+    await page.focus('#task-t1 .tick'); await page.keyboard.press(' '); await page.waitForTimeout(50);
+    await page.focus('#task-t1 .share-btn'); await page.keyboard.press('Enter'); await page.waitForTimeout(300);
+    const l = state(); Object.assign(l.tasks.find((t) => t.id === 't1'), { shared: { done: true, note: '', images: [], at: Date.now() }, rev: 9 });
+    await page.send(l); await page.waitForTimeout(150);
+    check(await page.evaluate(() => !!document.activeElement.closest('.task.current') && document.activeElement.classList.contains('row-main')), `the focus goes to the next task (${await focused(page)})`);
+    await page.close();
+  }
+
+  // Sharing an answer never leaves the focus on a different button, like Send now, that a second Enter would press.
+  {
+    const routes = { waiting: false, channel: false, terminal: true };
+    const base = state(); base.tasks.find((t) => t.id === 't3').seenAt = Date.now(); // the answer will be the only thing unread
+    const page = await open({ list: base, routes });
+    await page.focus('#task-q1 .opt-main'); await page.keyboard.press('Enter'); await page.waitForTimeout(50);
+    await page.focus('#task-q1 .share-q'); await page.keyboard.press('Enter'); await page.waitForTimeout(50);
+    const answered = JSON.parse(JSON.stringify(base)); const q = answered.questions.find((x) => x.id === 'q1');
+    Object.assign(q, { answer: { at: Date.now(), picks: ['o1'], other: '', note: '', images: [] }, rev: q.rev + 1 });
+    await page.send(answered, routes); await page.waitForTimeout(150);
+    check((await page.$$eval('#task-q1 button', (bs) => bs.some((b) => /Send now/.test(b.textContent)))) && (await page.evaluate(() => document.activeElement.id)) === 'task-q1', `after Share answer the focus is on the answered card, not on Send now (${await focused(page)})`);
+    // The bar's Send now keeps the focus when the panel is drawn again.
+    const two = JSON.parse(JSON.stringify(answered)); two.tasks.find((t) => t.id === 't3').seenAt = undefined;
+    await page.send(two, routes); await page.waitForTimeout(150);
+    await page.focus('.sendbar button'); await page.send(two, routes); await page.waitForTimeout(150);
+    check(await page.evaluate(() => !!document.activeElement.closest('.sendbar')), 'Send now in the bar keeps the focus when the panel is drawn again');
     await page.close();
   }
 
@@ -267,8 +365,6 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.evaluate(() => window.__shift(2 * 3600_000)); // 1:00 AM
     await page.send(away(t0 + 2 * 3600_000)); await page.waitForTimeout(200);
     check((await until()) === '3:00 AM' && awayDay(c, t0 + 2 * 3600_000) === '', `after midnight: 3:00 AM, for the panel and for Claude (${await until()})`);
-    await page.send(away(t0 + 2 * 3600_000, { awayLabel: 'tomorrow 3:00 AM', awayMidnightLeft: undefined, awayUntil: c.awayUntil + 1 })); await page.waitForTimeout(200); // saved by an older panel
-    check((await until()) === '3:00 AM', `an older saved "tomorrow" is dropped after midnight too (${await until()})`);
     check(!page.errs.length, `no errors (${page.errs.join('; ')})`);
     await page.close();
   }
@@ -280,6 +376,33 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.send(l); await page.waitForTimeout(300);
     const until = await page.$eval('#away-until', (e) => e.textContent);
     check(until === '11:59 PM', `no "tomorrow" in front of a time from today (${until})`);
+    await page.close();
+  }
+
+  // The question can stay open a while. Yes counts from when it is pressed: the window gets the time and day as they are then.
+  {
+    const page = await open({ clock: CLOCK('new R(2026,0,15,23,20,0).getTime()') });
+    await page.click('#away-btn'); await page.waitForTimeout(450);
+    await page.click('.away-chip >> text=30 min'); await page.waitForTimeout(450);
+    check((await page.$eval('#away-ask', (e) => e.textContent)) === '11:50 PM', 'at 11:20 PM, 30 min asks about 11:50 PM');
+    await page.evaluate(() => window.__shift(25 * 60_000)); // Yes at 11:45 PM
+    await page.click('.away-card >> text=Yes'); await page.waitForTimeout(80);
+    const set = (await page.posted('setAway'))[0];
+    check(set && set.label === '12:15 AM' && set.midnightIn > 14 * 60_000 && set.midnightIn <= 15 * 60_000, `Yes at 11:45 PM sends 12:15 AM, after midnight (${set && set.label}, ${set && set.midnightIn} ms)`);
+    await page.close();
+  }
+
+  // Left open across midnight, the question and the picker's times move on with the clock.
+  {
+    const page = await open({ clock: CLOCK('new R(2026,0,15,23,58,0).getTime()') });
+    await page.click('#away-btn'); await page.waitForTimeout(450);
+    await page.click('.away-chip >> text=30 min'); await page.waitForTimeout(450);
+    check((await page.$eval('#away-ask', (e) => e.textContent)) === 'tomorrow 12:28 AM', 'at 11:58 PM: tomorrow 12:28 AM');
+    await page.evaluate(() => window.__shift(3 * 60_000)); // 12:01 AM
+    await page.waitForTimeout(15_500); // one tick
+    check((await page.$eval('#away-ask', (e) => e.textContent)) === '12:31 AM', `after midnight the question says 12:31 AM (${await page.$eval('#away-ask', (e) => e.textContent)})`);
+    await page.click('.away-card >> text=Change'); await page.waitForTimeout(450);
+    check((await page.$eval('.away-chip-t', (e) => e.textContent)) === '12:31 AM', 'the picker shows times from now');
     await page.close();
   }
 

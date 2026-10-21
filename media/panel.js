@@ -85,7 +85,7 @@
     };
     return h('div', { class: 'row', onclick: () => toggle(t) },
       lead,
-      h('div', { class: 'row-main', role: 'button', tabindex: '0', 'aria-expanded': String(open), onkeydown: toggleKey }, main),
+      h('div', { class: 'row-main', 'data-key': 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onkeydown: toggleKey }, main),
       h('div', { class: 'right' }, right));
   }
 
@@ -211,16 +211,20 @@
     post({ type: 'addImages', taskId, images: imgs });
   }
 
+  let closeLightbox = null; // set while a screenshot is open full size
   /** A screenshot full size. Everything behind it is out of reach until it closes; then the focus goes back to the screenshot. */
   function lightbox(src, taskId, shot) {
     const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Screenshot. Press Escape to close.', tabindex: '-1' }, h('img', { src, alt: '' }));
-    const close = () => {
+    const close = (refocus = true) => {
+      closeLightbox = null;
       box.remove();
       document.removeEventListener('keydown', onKey, true);
       $('.page').inert = false;
       renderDock();
+      if (!refocus) return;
       // Found again by name: the panel may have been redrawn while this was open. If the screenshot is gone, its task or question.
-      (document.querySelector(`[data-shot="${shot}"]`) || document.getElementById(`task-${taskId}`)?.querySelector('.row-main, button, textarea'))?.focus({ preventScroll: true });
+      const card = document.getElementById(`task-${taskId}`);
+      (document.querySelector(`[data-shot="${shot}"]`) || (card ? homeOf(card) : listHome())).focus({ preventScroll: true });
     };
     // Caught first, so Escape closes only this (not the away card too), and Tab has nowhere else to go.
     const onKey = (e) => {
@@ -229,8 +233,9 @@
       e.stopPropagation();
       if (e.key === 'Escape') close();
     };
-    box.addEventListener('click', close);
+    box.addEventListener('click', () => close());
     document.addEventListener('keydown', onKey, true);
+    closeLightbox = close;
     $('.page').inert = true;
     document.body.append(box);
     renderDock();
@@ -281,10 +286,12 @@
     } else send();
   }
 
-  let focusList = false; // Share all was pressed from the keyboard: once the bar goes, put the focus back in the list
-  function shareAllTicked() {
+  // Share all was pressed from the keyboard: when the bar goes (within a few seconds), the focus goes back to the list.
+  let focusListUntil = 0;
+  function shareAllTicked(e) {
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done);
-    focusList = document.activeElement === $('#share-all');
+    // A click from the keyboard counts no mouse clicks (detail 0). With a mouse, the focus is left alone.
+    focusListUntil = e && e.detail === 0 ? Date.now() + 3000 : 0;
     for (const t of ticked) share(t);
     if (ticked.length) toast(`Shared ${plural(ticked.length, 'task', 'tasks')} with Claude`);
   }
@@ -470,6 +477,7 @@
   /* ---------------- questions ---------------- */
   const openQs = () => list.questions.filter((q) => !q.retired && (!q.answer || !q.seenAt));
   const qDraftOf = (q) => qDrafts[q.id] || (qDrafts[q.id] = { picks: [...q.draft.picks], other: q.draft.other, note: q.draft.note });
+  // What can be shared. The window decides the same way (draftAnswer in model.ts) when it shares and before closing.
   const qReady = (q) => {
     const d = qDraftOf(q);
     return d.picks.some((p) => p !== 'other') || (d.picks.includes('other') && d.other.trim());
@@ -492,7 +500,7 @@
   function renderQuestion(q) {
     const d = qDraftOf(q);
     const urgent = q.tags.includes('urgent');
-    const el = h('div', { class: `qcard${urgent ? ' urgent' : ''}`, id: `task-${q.id}`, 'data-id': q.id, onmouseenter: () => (lastHover = q.id) });
+    const el = h('div', { class: `qcard${urgent ? ' urgent' : ''}`, id: `task-${q.id}`, 'data-id': q.id, role: 'group', 'aria-labelledby': `qt-${q.id}`, tabindex: '-1', onmouseenter: () => (lastHover = q.id) });
     const tags = q.tags.length ? h('div', { class: 'meta' }, q.tags.map((g) => h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)))) : null;
 
     el.append(
@@ -505,11 +513,12 @@
 
     const role = q.multi ? 'checkbox' : 'radio';
     const opts = h('div', { class: 'opts', role: q.multi ? 'group' : 'radiogroup', 'aria-labelledby': `qt-${q.id}` });
-    // byArrow: moving through the choices with the arrow keys picks as it goes, so "Something else" must not take the focus away.
+    // byArrow: moving through the choices with the arrow keys picks as it goes. It is saved once you stop (like typing),
+    // not at every key, and "Something else" doesn't take the focus away.
     const choose = (id, byArrow) => {
       if (q.multi) d.picks = d.picks.includes(id) ? d.picks.filter((x) => x !== id) : [...d.picks, id];
       else d.picks = [id];
-      saveQDraft(q, true);
+      saveQDraft(q, !byArrow);
       paint();
       if (id === 'other' && d.picks.includes('other') && !byArrow) setTimeout(() => el.querySelector('.other')?.focus(), 0);
     };
@@ -519,7 +528,8 @@
         const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
         const btns = [...opts.querySelectorAll('.opt-main')];
         const at = btns.indexOf(document.activeElement);
-        if (!step || at < 0) return;
+        // With Alt, Ctrl, Shift or Cmd the keys belong to the screen reader or the system, not to the answer.
+        if (!step || at < 0 || e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
         e.preventDefault();
         const next = btns[(at + step + btns.length) % btns.length];
         next.focus();
@@ -662,7 +672,7 @@
   /** An answered question Claude hasn't read yet: stays in Decide, with Send now. */
   function renderAnsweredQ(q) {
     const a = q.answer;
-    const el = h('div', { class: 'qcard answered', id: `task-${q.id}`, 'data-id': q.id });
+    const el = h('div', { class: 'qcard answered', id: `task-${q.id}`, 'data-id': q.id, role: 'group', 'aria-label': q.question, tabindex: '-1' });
     el.append(
       h('div', { class: 'qhead' },
         h('span', { class: 'mark done small', title: 'Answered', 'aria-hidden': 'true', html: I.check }),
@@ -724,6 +734,17 @@
     ];
   }
 
+  /* ---------------- focus ---------------- */
+  /** What makes a control the same one after a redraw: what it is and what it says. Not its place: a different button may be there now. */
+  const focusKey = (el) => el.dataset.key || `${el.tagName}|${el.getAttribute('aria-label') || el.textContent.trim()}`;
+  /** The shown controls in `scope` that are the same as `el` (several can be: then the n-th one is it). The list's own controls only, not its cards'. */
+  const sameControls = (scope, el, key = focusKey(el)) =>
+    [...scope.querySelectorAll(el.tagName)].filter((x) => focusKey(x) === key && !x.closest('[hidden]') && (scope.id !== 'list' || !x.closest('.task, .qcard')));
+  /** Where the focus goes when its control is gone: the row's toggle, else the card (or list) itself, where Enter does nothing. */
+  const homeOf = (card) => card.querySelector(':scope > .row .row-main') || card;
+  /** …and when its whole card is gone (shared, or removed): the next task, else the top of the list, to Tab on from. */
+  const listHome = () => $('#list .task.current .row-main') || $('#list');
+
   /* ---------------- page parts ---------------- */
   function renderProgress() {
     if (!list) return;
@@ -763,6 +784,7 @@
       'button',
       {
         class: 'section-head',
+        'data-key': `section:${key}`, // its count and hint change, but it is the same head
         'aria-expanded': String(open),
         onclick: () => {
           if (key === '__shared') ui.sharedOpen = !ui.sharedOpen;
@@ -805,12 +827,18 @@
     renderProgress();
     renderDock();
 
-    // Keep focus and caret across re-renders: on the same control if the card is kept (moving it drops the focus), else on
-    // the same kind of control in the same place in the new card (the third ghost button, the second choice…), else the row.
+    // Keep focus and caret across re-renders: on the same control (moving it drops the focus), or the same one drawn again.
     const active = document.activeElement;
-    const activeCard = active && active.closest && (active.closest('.task') || active.closest('.qcard'));
-    const kind = activeCard && active.tagName.toLowerCase() + (active.classList.length ? `.${active.classList[0]}` : '');
-    const focus = activeCard && { el: active, id: activeCard.dataset.id, kind, at: [...activeCard.querySelectorAll(kind)].indexOf(active), start: active.selectionStart, end: active.selectionEnd };
+    const scope = active?.closest?.('.task, .qcard') || active?.closest?.('#list');
+    const focus = scope && {
+      el: active,
+      id: scope.dataset.id, // the card it is in (none for a control in the list itself, like a section head)
+      self: active === scope,
+      key: focusKey(active),
+      at: sameControls(scope, active).indexOf(active),
+      start: active.selectionStart,
+      end: active.selectionEnd,
+    };
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
@@ -889,18 +917,22 @@
     $('#empty').hidden = list.tasks.length + list.questions.length > 0;
 
     if (focus) {
-      const r = document.getElementById(`task-${focus.id}`);
-      const shown = (el) => (el && !el.closest('[hidden]') ? el : null);
-      const target = focus.el.isConnected ? focus.el : r && (shown(r.querySelectorAll(focus.kind)[focus.at]) || r.querySelector('.row-main') || r.querySelector('.opt-main[tabindex="0"]') || r.querySelector('.opt-main'));
+      const r = focus.id ? document.getElementById(`task-${focus.id}`) : $('#list');
+      const kept = focus.el.isConnected && !focus.el.closest('[hidden]');
+      // A control that is gone (Share answer, once the answer is shared) never hands the focus to another one in its place.
+      const target = kept ? focus.el : !r ? listHome() : (!focus.self && sameControls(r, focus.el, focus.key)[focus.at]) || homeOf(r);
       if (target && target !== document.activeElement) {
         target.focus({ preventScroll: true });
         if (target.tagName === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
       }
     }
-    // The bar is gone (and out of reach): don't leave the focus nowhere.
-    if (focusList && !$('#dock').classList.contains('on')) {
-      focusList = false;
-      if (document.activeElement === document.body || $('#dock').contains(document.activeElement)) $('#list').querySelector('.row-main, .opt-main:not([tabindex="-1"]), .section-head')?.focus({ preventScroll: true });
+    // After Share all from the keyboard the bar is gone (and out of reach): put the focus on the next task, or at the
+    // top of the list, so the next Tab goes on from there. Not on a choice or a button, where Enter would do something.
+    const docked = $('#dock').classList.contains('on');
+    if (focusListUntil && (!docked || Date.now() > focusListUntil)) {
+      const lost = !docked && Date.now() <= focusListUntil && (document.activeElement === document.body || $('#dock').contains(document.activeElement));
+      focusListUntil = 0;
+      if (lost) listHome().focus({ preventScroll: true });
     }
     arriveId = null;
   }
@@ -908,6 +940,7 @@
   function jump(id) {
     const t = list && list.tasks.find((x) => x.id === id);
     if (!t) return;
+    closeLightbox?.(false); // the task asked for comes first; the page behind the screenshot is out of reach while it is open
     if (t.shared) ui.sharedOpen = true;
     if (t.group) ui.collapsed[t.group] = false;
     ui.expanded[id] = true;
@@ -919,7 +952,7 @@
   /* ---------------- away ---------------- */
   // The card under the title. 'on' follows the window (list.away); the rest is what the user opened here.
   let awayStage = 'idle'; // idle | picker | confirm | back
-  let awayPick = null; // { ms, at, label } chosen in the picker (at: when), waiting for a yes
+  let awayPick = null; // chosen in the picker, waiting for a yes: { ms } for a length ("2 hours"), { clock: '17:30' } for a time
   let awayBase = 0; // the end time when the user said yes, to see the new one arrive
   let awaySent = false; // yes was pressed and the window hasn't answered yet
   let awayShown = ''; // which card is built now
@@ -935,21 +968,18 @@
   // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
   const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
   /** The end time for the away card. The window says whether it is "tomorrow", and until when, as it tells Claude. */
-  const untilText = () => {
-    const label = list.awayLabel || '';
-    // No label, or one an older panel saved with its day in it (wrong after midnight): work the day out here.
-    if (!label || label.startsWith('tomorrow ')) return clockText(Date.now() + leftMs(), label.replace(/^tomorrow /, '') || undefined);
-    return (list.awayMidnightLeft ?? 0) - (Date.now() - awayGot) > 0 ? `tomorrow ${label}` : label;
-  };
-  const nextMidnight = (at) => new Date(at).setHours(24, 0, 0, 0);
+  const untilText = () =>
+    ((list.awayMidnightLeft ?? 0) - (Date.now() - awayGot) > 0 ? 'tomorrow ' : '') + (list.awayLabel || timeText(Date.now() + leftMs()));
   /**
-   * Asks to be away for `ms`; `label` is the end time as you saw it at `at`. If that end was after midnight, the window
-   * also gets how long until that midnight (a duration, like `ms`), so it can say "tomorrow" until then and not after.
+   * Asks to be away for `ms` from now, with the end time as it shows now. If that end is after midnight, the window also
+   * gets how long until midnight (a duration, like `ms`), so it says "tomorrow" until then and not after.
    */
-  const setAway = (ms, label, at) => {
-    const midnight = nextMidnight(at), now = Date.now();
-    post({ type: 'setAway', ms, label, midnightIn: at + ms >= midnight && now < midnight ? midnight - now : undefined });
+  const setAway = (ms) => {
+    const now = Date.now(), midnight = new Date(now).setHours(24, 0, 0, 0);
+    post({ type: 'setAway', ms, label: timeText(now + ms), midnightIn: now + ms >= midnight ? midnight - now : undefined });
   };
+  // How long the picked time is from now: "2 hours" stays 2 hours and "Or at 17:30" stays 17:30, however long the question is open.
+  const pickMs = () => (awayPick.clock ? untilClock(awayPick.clock) : awayPick.ms);
   // Change the text only when it changes: the card is a live region, and a screen reader may read it out again.
   const setText = (el, text) => el.textContent !== text && (el.textContent = text);
   const leftText = (ms) => {
@@ -967,6 +997,10 @@
   };
   let awaySeen = 0; // the most time left we have seen for this away, for the bar if the window doesn't say how long it was
   function awayTick() {
+    // Times that count from now (the picker's buttons, the question) move on with the clock.
+    for (const el of document.querySelectorAll('[data-from-now]')) setText(el, clockText(Date.now() + Number(el.dataset.fromNow)));
+    const ask = $('#away-ask');
+    if (ask && awayPick) setText(ask, clockText(Date.now() + pickMs()));
     const left = $('#away-left'), fill = $('#away-fill');
     if (!left || awayView() !== 'on') return;
     setText($('#away-until'), untilText());
@@ -981,16 +1015,14 @@
 
   // Running late: stay away 30 minutes longer. No question asked; it is one small step and Change undoes it.
   function extend() {
-    const ms = Math.min(leftMs() + 30 * 60_000, DAY), at = Date.now();
-    setAway(ms, timeText(at + ms), at);
+    setAway(Math.min(leftMs() + 30 * 60_000, DAY));
   }
   const awayCard = (view) => {
     const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
     if (view === 'picker') {
-      const choose = (ms) => {
-        if (!ms) return toast('Pick a time first');
-        const at = Date.now();
-        awayPick = { ms, at, label: timeText(at + ms) };
+      const choose = (pick) => {
+        awayPick = pick;
+        if (!pickMs()) return toast('Pick a time first');
         go('confirm')();
       };
       const soon = new Date(Date.now() + 3600_000);
@@ -999,13 +1031,13 @@
         h('div', { class: 'away-title', html: `<span class="away-moon">${I.away}</span>Back at?` }),
         h('div', { class: 'away-chips' },
           [[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
-            h('button', { class: 'away-chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t' }, clockText(Date.now() + m * 60_000))))),
-        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small', onclick: () => choose(untilClock(input.value)) }, 'Set')));
+            h('button', { class: 'away-chip', onclick: () => choose({ ms: m * 60_000 }) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t', 'data-from-now': m * 60_000 }, clockText(Date.now() + m * 60_000))))),
+        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small', onclick: () => choose({ clock: input.value }) }, 'Set')));
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${clockText(awayPick.at + awayPick.ms, awayPick.label)}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
-        awayPick.ms >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('span', { id: 'away-ask' }, clockText(Date.now() + pickMs())), '?')), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
+        pickMs() >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
         h('div', { class: 'away-actions' },
           h('button', {
             class: 'btn',
@@ -1013,7 +1045,7 @@
               awayBase = (list && list.awayUntil) || 0;
               awaySent = true;
               // How long, not a time of day: the window works out the end, so a different clock there changes nothing.
-              setAway(awayPick.ms, awayPick.label, awayPick.at);
+              setAway(pickMs());
             },
           }, 'Yes'),
           h('button', { class: 'ghost-btn', onclick: go('idle') }, 'Not now')));
@@ -1057,7 +1089,7 @@
       return;
     }
     // Every state update comes through here: only build a card again when it changes, or typing in it would be lost.
-    const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${awayPick.ms}` : view;
+    const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${JSON.stringify(awayPick)}` : view;
     if (key === awayShown) {
       if (view === 'on') awayTick(); // the same card: bring its times up to date
       return;
@@ -1099,7 +1131,7 @@
       <div class="waiting" id="waiting" hidden role="status"><span class="pulse"></span>Claude is waiting for you. Whatever you share reaches it right away.</div>
       <div class="away-wrap" id="away"><div class="away-inner" id="away-inner"></div></div>
       <div class="progress" id="progress"><div class="bar" id="bar"></div><div class="progress-label" id="progress-label"></div></div>
-      <div id="list"></div>
+      <div id="list" tabindex="-1"></div>
       <div class="empty" id="empty" hidden><strong>Nothing here yet</strong><p>When Claude needs you to do something by hand, or to decide something, it appears here.</p></div>
     </main>
     <div class="dock" id="dock" inert><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
@@ -1107,12 +1139,16 @@
 
   $('#away-btn').onclick = toggleAway;
   $('#hide').onclick = () => post({ type: 'hide' });
-  $('#close').onclick = () => post({ type: 'close' });
+  // Typing not saved yet goes first, so the question before closing counts what you see (an answer typed a moment ago).
+  $('#close').onclick = () => {
+    flushDrafts();
+    post({ type: 'close' });
+  };
   $('#share-all').onclick = shareAllTicked;
 
   document.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    if (!files.length || closeLightbox) return; // nothing to paste into while a screenshot covers the page
     const r = (document.activeElement?.closest && (document.activeElement.closest('.task') || document.activeElement.closest('.qcard'))) || (lastHover && document.getElementById(`task-${lastHover}`));
     const t = r && (list.tasks.find((x) => x.id === r.dataset.id) || list.questions.find((x) => x.id === r.dataset.id));
     if (!t || t.shared || t.answer) return toast('Click into a task or question first, then paste');
