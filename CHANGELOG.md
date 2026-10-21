@@ -2,11 +2,11 @@
 
 ## Unreleased
 - The README and Marketplace page now show a short video of Checklist Bridge in action, with a link to the full 44-second video.
-- **Easier to use with a keyboard.** Every row opens with Enter or Space, answered questions too. Task ids and screenshots can be reached with Tab. With one choice to pick, the arrow keys move between the choices. Ticking a task keeps the focus on its checkbox.
+- **Easier to use with a keyboard.** Every row opens with Enter or Space, answered questions too. Task ids and screenshots can be reached with Tab, and a screenshot shown full size closes with Escape. With one choice to pick, the arrow keys move between the choices. When Claude updates the checklist, the focus stays where it was.
 - **Screen readers now hear what the colours and icons show:** urgent or important, shared as done or not done, and whether Claude has read it.
 - **High-contrast light themes** now use the darker colours, so tags and marks are easy to read on white.
-- **Fixed:** the away card said "tomorrow" even after midnight had passed.
-- Closing a checklist now also warns you about questions you haven't answered.
+- **Fixed:** the away card said "tomorrow" even after midnight had passed. Claude is now told "tomorrow" only until midnight, too.
+- Closing a checklist now also warns you about questions you haven't answered and answers you haven't shared.
 - The "Claude is waiting" banner and the away card are no longer tinted, so the next task stands out.
 
 ## 0.7.0

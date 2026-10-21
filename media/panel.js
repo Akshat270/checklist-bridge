@@ -8,6 +8,7 @@
   let routes = { waiting: false, channel: false, terminal: false };
   const qDrafts = {}; // qid -> { picks, other, note } as typed here
   const qTimers = {};
+  const openDetails = new Set(); // "q1/o2": an option's Details you opened
   let currentId = null;
   let arriveId = null;
   const notes = {}; // note text typed here, not yet confirmed saved
@@ -210,17 +211,29 @@
     post({ type: 'addImages', taskId, images: imgs });
   }
 
-  function lightbox(src, opener) {
+  /** A screenshot full size. Everything behind it is out of reach until it closes; then the focus goes back to the screenshot. */
+  function lightbox(src, taskId, shot) {
     const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Screenshot. Press Escape to close.', tabindex: '-1' }, h('img', { src, alt: '' }));
     const close = () => {
       box.remove();
-      document.removeEventListener('keydown', onKey);
-      if (opener && opener.isConnected) opener.focus({ preventScroll: true }); // back to where you were
+      document.removeEventListener('keydown', onKey, true);
+      $('.page').inert = false;
+      renderDock();
+      // Found again by name: the panel may have been redrawn while this was open. If the screenshot is gone, its task or question.
+      (document.querySelector(`[data-shot="${shot}"]`) || document.getElementById(`task-${taskId}`)?.querySelector('.row-main, button, textarea'))?.focus({ preventScroll: true });
     };
-    const onKey = (e) => e.key === 'Escape' && close();
+    // Caught first, so Escape closes only this (not the away card too), and Tab has nowhere else to go.
+    const onKey = (e) => {
+      if (e.key !== 'Escape' && e.key !== 'Tab') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') close();
+    };
     box.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
+    $('.page').inert = true;
     document.body.append(box);
+    renderDock();
     box.focus();
   }
 
@@ -232,10 +245,11 @@
       images.map((img, i) => {
         const src = img.src || `data:${img.mime};base64,${img.data}`;
         const name = images.length > 1 ? `screenshot ${i + 1} of ${images.length}` : 'screenshot';
+        const shot = `${taskId}/${img.id || i}`;
         return h(
           'div',
           { class: 'shot' },
-          h('button', { type: 'button', class: 'shot-open', title: 'Show it full size', 'aria-label': `Show ${name} full size`, onclick: (e) => lightbox(src, e.currentTarget) }, h('img', { src, alt: '' })),
+          h('button', { type: 'button', class: 'shot-open', 'data-shot': shot, title: 'Show it full size', 'aria-label': `Show ${name} full size`, onclick: () => lightbox(src, taskId, shot) }, h('img', { src, alt: '' })),
           removable &&
             h('button', {
               class: 'x',
@@ -267,8 +281,10 @@
     } else send();
   }
 
+  let focusList = false; // Share all was pressed from the keyboard: once the bar goes, put the focus back in the list
   function shareAllTicked() {
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done);
+    focusList = document.activeElement === $('#share-all');
     for (const t of ticked) share(t);
     if (ticked.length) toast(`Shared ${plural(ticked.length, 'task', 'tasks')} with Claude`);
   }
@@ -527,7 +543,8 @@
             rec && q.reason && h('span', { class: 'opt-why' }, q.reason)
           )
         ),
-        o.details && h('details', { class: 'opt-details' }, h('summary', {}, 'Details'), h('p', {}, o.details))
+        // Stays open when the card is drawn again.
+        o.details && h('details', { class: 'opt-details', open: openDetails.has(`${q.id}/${o.id}`), ontoggle: (e) => openDetails[e.currentTarget.open ? 'add' : 'delete'](`${q.id}/${o.id}`) }, h('summary', {}, 'Details'), h('p', {}, o.details))
       );
       opts.append(row);
     }
@@ -736,7 +753,8 @@
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done).length;
     const dock = $('#dock');
     dock.classList.toggle('on', ticked >= 2);
-    dock.setAttribute('aria-hidden', String(ticked < 2));
+    // Out of reach while it is hidden (also while it slides away) and while a screenshot is open over it.
+    dock.inert = ticked < 2 || !!$('.lightbox');
     $('#dock-text').innerHTML = `<b>${ticked}</b> ticked and not shared yet`;
   }
 
@@ -787,18 +805,12 @@
     renderProgress();
     renderDock();
 
-    // Keep focus and caret across re-renders.
+    // Keep focus and caret across re-renders: on the same control if the card is kept (moving it drops the focus), else on
+    // the same kind of control in the same place in the new card (the third ghost button, the second choice…), else the row.
     const active = document.activeElement;
     const activeCard = active && active.closest && (active.closest('.task') || active.closest('.qcard'));
-    // The same control as before if it is still there (the checkbox you just ticked, the choice you moved to), else the row.
-    const opt = activeCard && active.closest('.opt');
-    const same = activeCard && ['tick', 'row-main', 'item-id'].find((c) => active.classList.contains(c));
-    const sel = !activeCard ? null
-      : active.tagName === 'TEXTAREA' ? (active.classList.contains('other') ? '.other' : 'textarea:not(.other)')
-      : opt ? `.opt[data-opt="${opt.dataset.opt}"] .opt-main`
-      : same ? `.${same}`
-      : null;
-    const focus = activeCard && { id: activeCard.dataset.id, sel, start: active.selectionStart, end: active.selectionEnd };
+    const kind = activeCard && active.tagName.toLowerCase() + (active.classList.length ? `.${active.classList[0]}` : '');
+    const focus = activeCard && { el: active, id: activeCard.dataset.id, kind, at: [...activeCard.querySelectorAll(kind)].indexOf(active), start: active.selectionStart, end: active.selectionEnd };
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
@@ -878,12 +890,17 @@
 
     if (focus) {
       const r = document.getElementById(`task-${focus.id}`);
-      const find = (x) => x && r.querySelector(x);
-      const target = r && (find(focus.sel) || find('.row-main') || find('.opt-main[tabindex="0"]') || find('.opt-main'));
+      const shown = (el) => (el && !el.closest('[hidden]') ? el : null);
+      const target = focus.el.isConnected ? focus.el : r && (shown(r.querySelectorAll(focus.kind)[focus.at]) || r.querySelector('.row-main') || r.querySelector('.opt-main[tabindex="0"]') || r.querySelector('.opt-main'));
       if (target && target !== document.activeElement) {
         target.focus({ preventScroll: true });
         if (target.tagName === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
       }
+    }
+    // The bar is gone (and out of reach): don't leave the focus nowhere.
+    if (focusList && !$('#dock').classList.contains('on')) {
+      focusList = false;
+      if (document.activeElement === document.body || $('#dock').contains(document.activeElement)) $('#list').querySelector('.row-main, .opt-main:not([tabindex="-1"]), .section-head')?.focus({ preventScroll: true });
     }
     arriveId = null;
   }
@@ -902,7 +919,7 @@
   /* ---------------- away ---------------- */
   // The card under the title. 'on' follows the window (list.away); the rest is what the user opened here.
   let awayStage = 'idle'; // idle | picker | confirm | back
-  let awayPick = null; // { ms, label } chosen in the picker, waiting for a yes
+  let awayPick = null; // { ms, at, label } chosen in the picker (at: when), waiting for a yes
   let awayBase = 0; // the end time when the user said yes, to see the new one arrive
   let awaySent = false; // yes was pressed and the window hasn't answered yet
   let awayShown = ''; // which card is built now
@@ -917,8 +934,24 @@
   const clockText = (ms, time = timeText(ms)) => (new Date(ms).toDateString() === new Date().toDateString() ? time : `tomorrow ${time}`);
   // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
   const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
-  // The window keeps only the time of day you saw (an older panel also saved "tomorrow" with it, which is wrong after midnight).
-  const untilText = () => clockText(Date.now() + leftMs(), (list.awayLabel || '').replace(/^tomorrow /, '') || undefined);
+  /** The end time for the away card. The window says whether it is "tomorrow", and until when, as it tells Claude. */
+  const untilText = () => {
+    const label = list.awayLabel || '';
+    // No label, or one an older panel saved with its day in it (wrong after midnight): work the day out here.
+    if (!label || label.startsWith('tomorrow ')) return clockText(Date.now() + leftMs(), label.replace(/^tomorrow /, '') || undefined);
+    return (list.awayMidnightLeft ?? 0) - (Date.now() - awayGot) > 0 ? `tomorrow ${label}` : label;
+  };
+  const nextMidnight = (at) => new Date(at).setHours(24, 0, 0, 0);
+  /**
+   * Asks to be away for `ms`; `label` is the end time as you saw it at `at`. If that end was after midnight, the window
+   * also gets how long until that midnight (a duration, like `ms`), so it can say "tomorrow" until then and not after.
+   */
+  const setAway = (ms, label, at) => {
+    const midnight = nextMidnight(at), now = Date.now();
+    post({ type: 'setAway', ms, label, midnightIn: at + ms >= midnight && now < midnight ? midnight - now : undefined });
+  };
+  // Change the text only when it changes: the card is a live region, and a screen reader may read it out again.
+  const setText = (el, text) => el.textContent !== text && (el.textContent = text);
   const leftText = (ms) => {
     const m = Math.max(1, Math.ceil(ms / 60000));
     return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
@@ -936,11 +969,11 @@
   function awayTick() {
     const left = $('#away-left'), fill = $('#away-fill');
     if (!left || awayView() !== 'on') return;
-    $('#away-until').textContent = untilText();
+    setText($('#away-until'), untilText());
     const ms = leftMs();
     awaySeen = Math.max(awaySeen, ms);
     const total = list.awayMs || awaySeen || 1;
-    left.textContent = `${leftText(ms)} left`;
+    setText(left, `${leftText(ms)} left`);
     fill.style.width = `${Math.round(Math.min(1, ms / total) * 100)}%`;
     $('#away-bar').title = `${leftText(ms)} left`;
   }
@@ -948,15 +981,16 @@
 
   // Running late: stay away 30 minutes longer. No question asked; it is one small step and Change undoes it.
   function extend() {
-    const ms = Math.min(leftMs() + 30 * 60_000, DAY);
-    post({ type: 'setAway', ms, label: timeText(Date.now() + ms) });
+    const ms = Math.min(leftMs() + 30 * 60_000, DAY), at = Date.now();
+    setAway(ms, timeText(at + ms), at);
   }
   const awayCard = (view) => {
     const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
     if (view === 'picker') {
       const choose = (ms) => {
         if (!ms) return toast('Pick a time first');
-        awayPick = { ms, label: timeText(Date.now() + ms) };
+        const at = Date.now();
+        awayPick = { ms, at, label: timeText(at + ms) };
         go('confirm')();
       };
       const soon = new Date(Date.now() + 3600_000);
@@ -970,7 +1004,7 @@
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${clockText(Date.now() + awayPick.ms, awayPick.label)}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${clockText(awayPick.at + awayPick.ms, awayPick.label)}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
         awayPick.ms >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
         h('div', { class: 'away-actions' },
           h('button', {
@@ -979,14 +1013,14 @@
               awayBase = (list && list.awayUntil) || 0;
               awaySent = true;
               // How long, not a time of day: the window works out the end, so a different clock there changes nothing.
-              post({ type: 'setAway', ms: awayPick.ms, label: awayPick.label });
+              setAway(awayPick.ms, awayPick.label, awayPick.at);
             },
           }, 'Yes'),
           h('button', { class: 'ghost-btn', onclick: go('idle') }, 'Not now')));
     }
     if (view === 'on') {
       return h('section', { class: 'away-card soft card-in', role: 'status', 'aria-live': 'polite' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, untilText()))), h('span', { class: 'away-left', id: 'away-left' })),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, untilText()))), h('span', { class: 'away-left', id: 'away-left', 'aria-live': 'off' })),
         h('div', { class: 'away-bar', id: 'away-bar', 'aria-hidden': 'true' }, h('div', { class: 'away-fill', id: 'away-fill' })),
         h('div', { class: 'away-actions' },
           h('button', { class: 'btn', onclick: () => { awayStage = 'back'; post({ type: 'endAway' }); renderAway(); } }, 'I’m back'),
@@ -1024,7 +1058,10 @@
     }
     // Every state update comes through here: only build a card again when it changes, or typing in it would be lost.
     const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${awayPick.ms}` : view;
-    if (key === awayShown) return;
+    if (key === awayShown) {
+      if (view === 'on') awayTick(); // the same card: bring its times up to date
+      return;
+    }
     if (view === 'on' && awayShown.startsWith('on|') && $('#away-until')) {
       // Same card, new end time (stayed away longer): change the text, don't build the card again.
       awayShown = key;
@@ -1065,7 +1102,7 @@
       <div id="list"></div>
       <div class="empty" id="empty" hidden><strong>Nothing here yet</strong><p>When Claude needs you to do something by hand, or to decide something, it appears here.</p></div>
     </main>
-    <div class="dock" id="dock" aria-hidden="true"><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
+    <div class="dock" id="dock" inert><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>`;
 
   $('#away-btn').onclick = toggleAway;

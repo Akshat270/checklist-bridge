@@ -46,7 +46,11 @@ export class Panels {
     );
     // Decided here, so the panel's own clock can't disagree. The time left is as of now; the panel counts down from it.
     list.away = this.store.isAway(c);
-    if (list.away) list.awayLeft = Math.max(0, c.awayUntil! - Date.now());
+    if (list.away) {
+      list.awayLeft = Math.max(0, c.awayUntil! - Date.now());
+      // How long until the user's midnight, if the away ends after it: the panel says "tomorrow" until then, as Claude is told.
+      if (c.awayMidnight) list.awayMidnightLeft = c.awayMidnight - Date.now();
+    }
     return { type: 'state', list, routes: this.hooks.routes(c) };
   }
 
@@ -199,7 +203,7 @@ export class Panels {
         break;
       }
       case 'setAway': {
-        if (s.setAway(id, m.ms, m.label)) break;
+        if (s.setAway(id, m.ms, m.label, m.midnightIn)) break;
         const c = s.get(id);
         if (!c || c.closed) break; // it is gone: nothing to tell
         // Say what was wrong, and let the panel go back to the picker instead of sitting on a question that does nothing.
