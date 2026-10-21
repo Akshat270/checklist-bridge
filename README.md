@@ -1,7 +1,3 @@
-
-
-Uploading checklist-bridge-promo-square (1).mp4…
-
 <p align="center">
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/hero.png" alt="Checklist Bridge for Claude Code: every Claude chat gets its own checklist in VS Code" width="100%">
 </p>
@@ -22,8 +18,8 @@ The things only you can do, and the decisions you can make later, no longer get 
 When Claude Code needs you to do something by hand, like create an API key, run a command, click through a dashboard or test a page, it usually buries the steps in a long chat. Checklist Bridge puts them in a checklist next to the chat instead. Claude adds tasks while you keep talking. You tick them off, write a note or paste a screenshot, and press **Share** when a task is ready. Claude can read only the tasks you've shared, so it never assumes you did something you haven't.
 
 <p align="center">
-  <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-square.mp4"><img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/video-preview.gif" width="480" alt="Checklist Bridge in action: Claude adds an urgent task, you tick it, write a note, paste a screenshot and press Share, and Claude reads it"></a><br>
-  <b>▶ <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-square.mp4">Watch the 44-second video</a></b> (with sound) · <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-vertical.mp4">vertical version</a>
+  <a href="https://github.com/Akshat270/checklist-bridge/blob/main/promo/video/output/checklist-bridge-promo-square.mp4"><img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/video-preview.gif" width="480" alt="Checklist Bridge in action: Claude adds an urgent task, you tick it, write a note, paste a screenshot and press Share, and Claude reads it"></a><br>
+  <b>▶ <a href="https://github.com/Akshat270/checklist-bridge/blob/main/promo/video/output/checklist-bridge-promo-square.mp4">Watch the 44-second video</a></b> (with sound) · <a href="https://github.com/Akshat270/checklist-bridge/blob/main/promo/video/output/checklist-bridge-promo-vertical.mp4">vertical version</a>
 </p>
 
 <p align="center">
@@ -85,7 +81,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
    ```
    code --install-extension Akshat270.checklist-bridge
    ```
-   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.7.0.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
+   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.7.1.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
 2. That's it: the extension connects itself to Claude Code the first time VS Code starts, and tells you when it's done. There's no command to type.
 3. Start a **new** Claude chat (Claude Code loads tools when a chat starts). Run `/mcp` to check that `checklist` is connected.
 

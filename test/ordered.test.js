@@ -166,6 +166,21 @@ function build() {
   const steps = await page.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
   check(steps === 'Step 1 of 3,Step 2 of 3,Step 3 of 3', `steps are numbered (${steps})`);
   check(await page.$eval('#task-t3', (e) => !e.querySelector('.prio')), 'the last step gets no priority mark');
+  // The class that draws the line between steps adds only the line. (A button style named "link" once also matched it and
+  // squashed every step to 26 px, so the rows overlapped.) Steps with the line must look like the last step, which has none.
+  const lineLeaks = await page.$$eval('.task', (xs) => {
+    const props = ['padding', 'border', 'border-radius', 'flex', 'background-color', 'color', 'font-size', 'font-weight'];
+    const last = xs.find((x) => x.dataset.id === 't3');
+    const base = getComputedStyle(last);
+    const out = [];
+    for (const x of xs.filter((x) => x.classList.contains('step-line'))) {
+      if (x.getBoundingClientRect().height < x.querySelector('.row').scrollHeight - 1) out.push(`${x.dataset.id} is squashed`);
+      const st = getComputedStyle(x);
+      for (const p of props) if (st.getPropertyValue(p) !== base.getPropertyValue(p)) out.push(`${x.dataset.id} ${p}`);
+    }
+    return [xs.filter((x) => x.classList.contains('step-line')).length, out];
+  });
+  check(lineLeaks[0] === 2 && lineLeaks[1].length === 0, `step rows look like ordinary rows apart from the line (${lineLeaks[1].join(', ') || 'no differences'})`);
   check(await page.$eval('#task-t6', (e) => !!e.querySelector('.prio')), 'a task that can be done in any order keeps its priority mark');
   await page.close();
 
@@ -177,7 +192,7 @@ function build() {
   check(await page.$eval('#task-t1', (e) => !!e.querySelector('.note-box > .attach') && !/Add image/.test(e.textContent) && getComputedStyle(e.querySelector('.actions')).display === 'none'), 'an open task has no row of its own for adding an image, only an icon in the note');
   await page.fill('#task-t1 textarea', 'done it');
   check(await page.$eval('#task-t1', (e) => getComputedStyle(e.querySelector('.actions')).display !== 'none' && !e.querySelector('.share-btn').hidden), 'the share row appears once there is a note');
-  check(await page.$eval('#task-t1', (e) => e.classList.contains('link') && parseFloat(getComputedStyle(e, '::before').top) >= e.offsetHeight - 1), 'the line between steps does not run through an open step, only below it');
+  check(await page.$eval('#task-t1', (e) => e.classList.contains('step-line') && parseFloat(getComputedStyle(e, '::before').top) >= e.offsetHeight - 1), 'the line between steps does not run through an open step, only below it');
   check(await page.$eval('#task-t1', (e) => e.classList.contains('open') && !!e.closest('section').querySelector('#task-t2') && !e.querySelector('.chip.soft:not(.step)')), 'it is open in its place, ahead of the later steps, without a repeated group chip');
   await page.close();
   list.tasks[0].shared = { at: 1, done: true, note: '', images: [] };

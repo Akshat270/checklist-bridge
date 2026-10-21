@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 - The README and Marketplace page now show a short video of Checklist Bridge in action, with a link to the full 44-second video.
+- **Fixed:** steps in an ordered group or phase no longer pile on top of each other. Since 0.7.0 each step was squashed to one short line, so their text overlapped.
 
 ## 0.7.0
 - **Fixed:** a task Claude moved into an ordered group and removed in the same edit no longer comes back.
