@@ -67,41 +67,7 @@ echo
 echo "In the test window: open the terminal, run 'claude' (sign in the first time), then ask for a checklist."
 echo "Or, without Claude: Ctrl+Shift+P (Cmd+Shift+P on a Mac) > Checklist Bridge: Open an example checklist."
 echo
-# What to check by hand. Keep it the same as the list in dev-window.ps1.
-cat <<'CHECKS'
-What to try in this build. First ask Claude: "Make me a checklist with 4 tasks (mark one urgent),
-a question with 3 options, and a task that needs a screenshot."
-
-Keyboard (put the mouse away):
-  1. Tab past a task's checkbox to its text and press Enter, then Space: it opens and shuts.
-  2. Tab on to its id (t1) and press Enter: the id is copied, and the task stays as it was.
-  3. Tab to the question's choices and use the arrow keys: the pick moves. With Ctrl, Alt or Shift held, it doesn't.
-  4. Type in a task's note, and meanwhile ask Claude in the chat to reword that task: you can keep typing.
-  5. Paste a screenshot into a note. Tab to it and press Enter: it shows full size, and Tab stays on it.
-     Escape closes it and puts you back on the screenshot.
-  6. Pick an answer and press Share answer: the focus stays on the question card, never on Send now.
-  7. Tick two tasks, Tab to Share all at the bottom and press Enter: the focus moves to the next task.
-
-Screen reader (if you have one: Narrator, VoiceOver or Orca):
-  8. A closed urgent task says "Urgent". A shared task says how it was shared,
-     and whether Claude has read it.
-
-Look:
-  9. Pick a High Contrast Light theme (Ctrl+K Ctrl+T, or Cmd+K Cmd+T on a Mac): tags and marks
-     are dark and easy to read.
- 10. While Claude waits for you, the "Claude is waiting" banner has only an outline:
-     the next task is the one tinted thing.
-
-Away mode:
- 11. Click the moon icon, pick 30 min and press Yes. Claude doesn't wait for you: it does the safe work,
-     adds what it skipped to the checklist, then stops with a summary.
- 12. Press I'm back. Nothing is sent to Claude. Use Send now or write to it to carry on.
- 13. Click the moon again, type a time 1 minute from now under "Or at" and press Set. Wait 2 minutes, then press Yes:
-     the panel says the time has passed and asks again.
-
-Closing:
- 14. Pick an answer but don't share it, then close the checklist with the X:
-     the warning says "1 answer is still not shared".
-CHECKS
+# What to check by hand: the same list for both scripts.
+cat "$root/scripts/dev-checks.txt"
 echo
 echo "Everything it uses is in $base. Delete that folder when you're done, or run this script with --fresh."

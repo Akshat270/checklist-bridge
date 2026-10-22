@@ -81,7 +81,7 @@
     const toggleKey = (e) => {
       if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
         e.preventDefault();
-        toggle(t);
+        toggle(t, true);
       }
     };
     return h('div', { class: 'row', onclick: () => toggle(t) },
@@ -163,11 +163,12 @@
 
   const isOpen = (t) => (t.id in ui.expanded ? ui.expanded[t.id] : t.id === currentId || (!t.shared && hasContent(t)));
 
-  function toggle(t) {
+  /** Opens or shuts a row. A click goes on into an empty note; from the keyboard the focus stays on the row (Tab reaches the note). */
+  function toggle(t, byKey) {
     ui.expanded[t.id] = !isOpen(t);
     saveUi();
     render();
-    if (ui.expanded[t.id]) {
+    if (ui.expanded[t.id] && !byKey) {
       const ta = document.querySelector(`#task-${t.id} textarea`);
       if (ta && !ta.value) setTimeout(() => ta.focus({ preventScroll: true }), 0);
     }
@@ -225,7 +226,7 @@
       if (!refocus) return;
       // Found again by name: the panel may have been redrawn while this was open. If the screenshot is gone, its task or question.
       const card = document.getElementById(`task-${taskId}`);
-      focusOn(document.querySelector(`[data-shot="${shot}"]`) || (card ? homeOf(card) : listHome()));
+      focusOn(document.querySelector(`[data-shot="${CSS.escape(shot)}"]`) || (card ? homeOf(card) : listHome()));
     };
     // Caught first, so Escape closes only this (not the away card too), and Tab has nowhere else to go.
     const onKey = (e) => {
@@ -288,12 +289,12 @@
     } else send();
   }
 
-  // Share all was pressed from the keyboard and the focus is still on it: when the bar goes, the focus goes to the list.
+  // Share all has the focus (from a key, a screen reader, voice control or a click): when the bar goes, the focus goes to
+  // the list instead of nowhere. After a mouse click the browser shows no focus ring there, so nothing changes on screen.
   let focusList = false;
-  function shareAllTicked(e) {
+  function shareAllTicked() {
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done);
-    // A click from the keyboard counts no mouse clicks (detail 0). With a mouse, the focus is left alone.
-    focusList = !!e && e.detail === 0;
+    focusList = document.activeElement === $('#share-all');
     for (const t of ticked) share(t);
     if (ticked.length) toast(`Shared ${plural(ticked.length, 'task', 'tasks')} with Claude`);
   }
@@ -747,9 +748,9 @@
   /* ---------------- focus ---------------- */
   // Every control in the list has a data-key saying what it is ("note", "share", "opt:o2"), so after a redraw the focus
   // goes back to the same control. Never its place (another button may be there now) or its words (Claude can change them).
-  /** The shown control named `key` in `scope`: a card, or the list itself (not counting its cards' controls). */
+  /** The control named `key` in `scope` (a card, or the list itself, not counting its cards' controls), if it can take the focus. */
   const controlIn = (scope, key) =>
-    [...scope.querySelectorAll(`[data-key="${CSS.escape(key)}"]`)].find((x) => !x.closest('[hidden]') && (scope.id !== 'list' || !x.closest('.task, .qcard')));
+    [...scope.querySelectorAll(`[data-key="${CSS.escape(key)}"]`)].find((x) => !x.disabled && !x.closest('[hidden]') && (scope.id !== 'list' || !x.closest('.task, .qcard')));
   /** Where the focus goes when its control is gone: the row's toggle, else the card (or list) itself, where Enter does nothing. */
   const homeOf = (card) => card.querySelector(':scope > .row .row-main') || card;
   /** …and when its whole card is gone (shared, or removed): the next task, else the top of the list, to Tab on from. */
@@ -924,12 +925,13 @@
     }
 
     for (const id of [...rendered.keys()]) if (!list.tasks.some((t) => t.id === id) && !list.questions.some((q) => q.id === id)) rendered.delete(id);
+    for (const k of openDetails) if (!decideQs.some((q) => !q.answer && k.startsWith(`${q.id}/`))) openDetails.delete(k); // answered or gone
     $('#list').replaceChildren(...nodes);
     $('#empty').hidden = list.tasks.length + list.questions.length > 0;
 
     if (focus) {
       const r = focus.id ? document.getElementById(`task-${focus.id}`) : $('#list');
-      const kept = focus.el.isConnected && !focus.el.closest('[hidden]');
+      const kept = focus.el.isConnected && !focus.el.disabled && !focus.el.closest('[hidden]');
       // A control that is gone (Share answer, once the answer is shared) never hands the focus to another one in its place.
       const target = kept ? focus.el : !r ? listHome() : (focus.key && controlIn(r, focus.key)) || homeOf(r);
       if (target !== document.activeElement) {
@@ -1012,7 +1014,8 @@
   function awayTick() {
     // Times that count from now (the picker's buttons, the question) move on with the clock.
     for (const el of document.querySelectorAll('[data-from-now]')) setText(el, clockText(Date.now() + Number(el.dataset.fromNow)));
-    if (awayView() === 'confirm') {
+    // (Not once Yes is sent: the window has it, and its answer closes the question.)
+    if (awayView() === 'confirm' && !awaySent) {
       // The time picked has come while the question was open: ask again, rather than set an away for the next day.
       if (pickMs() < 1000) return awayExpired();
       setText($('#away-ask'), clockText(Date.now() + pickMs()));

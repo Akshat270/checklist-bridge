@@ -316,9 +316,14 @@ export function normalize(c: Checklist): Checklist {
   // An away that ran out while the window was closed means nothing now.
   if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
   // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes. Keep
-  // only the time: when the user's midnight is isn't known here (this computer may be in another time zone), and "in 8
-  // hours", which Claude is always told too, says which 6:00 AM it is.
-  if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) c.awayLabel = c.awayLabel.slice('tomorrow '.length);
+  // the time, and say "tomorrow" until the user's midnight: the label says how long after it the away ends (6 h 0 min),
+  // so it is that long before the end, whatever time zone this computer is in.
+  if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) {
+    c.awayLabel = c.awayLabel.slice('tomorrow '.length);
+    const into = minutesIntoDay(c.awayLabel);
+    const midnight = into === undefined ? 0 : c.awayUntil - into * 60_000 - (c.awayUntil % 60_000); // the label has no seconds
+    if (midnight > Date.now()) c.awayMidnight = midnight;
+  }
   return c;
 }
 
@@ -1141,6 +1146,22 @@ export function draftAnswer(q: Question): { picks: string[]; other: string } | u
   const picks = d.picks.filter((p) => p !== 'other');
   const other = d.picks.includes('other') ? d.other.trim() : '';
   return picks.length || other ? { picks, other } : undefined;
+}
+
+/**
+ * Minutes after midnight for a time as the panel writes it: "6:00 AM", "6:00 a.m.", "18:00" or "18.00". Undefined for
+ * anything else (other languages' AM/PM words, for one), rather than a guess.
+ */
+export function minutesIntoDay(label: string): number | undefined {
+  const m = /^(\d{1,2})[:.](\d{2})(?:\s*([ap])\.?m\.?)?$/i.exec(label.trim());
+  if (!m) return undefined;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  if (m[3]) {
+    if (h < 1 || h > 12) return undefined;
+    h = (h % 12) + (m[3].toLowerCase() === 'p' ? 12 : 0);
+  }
+  return h < 24 && min < 60 ? h * 60 + min : undefined;
 }
 
 /** "tomorrow " while the away ends after the user's next midnight and that midnight hasn't come yet, else "". */

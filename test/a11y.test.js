@@ -44,12 +44,20 @@ let failed = 0; const check = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + 
   s.endAway(c.id);
   check(c.awayMidnight === undefined, 'ending the away forgets it');
 
-  // An away saved by an older version has the day in its label, which is wrong once midnight passes. Only the time is
-  // kept (this computer can't know the user's midnight): Claude reads "until 6:00 AM (in 8 hours)".
-  // (It ends just after this computer's next midnight, which is always ahead: so nothing here depends on the time of day.)
-  const saved = Object.assign(JSON.parse(JSON.stringify(c)), { awayUntil: new Date().setHours(24, 30, 0, 0), awayLabel: 'tomorrow 6:00 AM', awayMs: 8 * 3600_000 });
-  const st2 = new ChecklistStore([saved]), old = st2.all()[0];
-  check(old.awayLabel === '6:00 AM' && old.awayMidnight === undefined && /until 6:00 AM \(in /.test(st2.awayNote(old)), `an older away keeps only its time (${st2.awayNote(old).slice(0, 45)})`);
+  // An away saved by an older version has the day in its label, which is wrong once midnight passes. The label says how
+  // long after the user's midnight it ends, so that midnight is found from the end time (in any time zone).
+  const load = (inMs, label) => {
+    const saved = Object.assign(JSON.parse(JSON.stringify(c)), { awayUntil: Date.now() + inMs, awayLabel: label, awayMs: 8 * 3600_000 });
+    const st = new ChecklistStore([saved]);
+    return { st, c: st.all()[0] };
+  };
+  const before = load(8 * 3600_000, 'tomorrow 6:00 AM'); // set at 10 PM: midnight is 6 hours before the end
+  const want = before.c.awayUntil - 6 * 3600_000 - (before.c.awayUntil % 60_000);
+  check(before.c.awayLabel === '6:00 AM' && before.c.awayMidnight === want && /until tomorrow 6:00 AM \(in 8 hours\)/.test(before.st.awayNote(before.c)), `an older away before midnight: "tomorrow 6:00 AM" (${before.st.awayNote(before.c).slice(0, 45)})`);
+  const after = load(3600_000, 'tomorrow 6:00 AM'); // it is 5 AM now: that midnight has passed
+  check(after.c.awayLabel === '6:00 AM' && after.c.awayMidnight === undefined && /until 6:00 AM \(in 1 hour\)/.test(after.st.awayNote(after.c)), 'an older away after midnight: "6:00 AM"');
+  const other = load(3600_000, 'tomorrow 下午3:30'); // a time this can't read: no guess
+  check(other.c.awayLabel === '下午3:30' && other.c.awayMidnight === undefined, 'a time in another language keeps the time, without a guessed day');
 }
 
 const pw = require('./harness/playwright');
@@ -99,11 +107,19 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.click('text=Shared with Claude'); await page.waitForTimeout(150);
     for (const id of ['t1', 't2', 'q2']) {
       const before = await isOpen(page, id);
+      // One focus, then the keys alone, as a person does it: the focus must stay on the row in between.
       await page.focus(`#task-${id} .row-main`); await page.keyboard.press('Enter'); await page.waitForTimeout(120);
       const after = await isOpen(page, id);
-      await page.focus(`#task-${id} .row-main`); await page.keyboard.press(' '); await page.waitForTimeout(120);
-      check(after !== before && (await isOpen(page, id)) === before, `${id}: Enter opens or shuts the row, and so does Space`);
+      await page.keyboard.press(' '); await page.waitForTimeout(120);
+      check(after !== before && (await isOpen(page, id)) === before && (await focused(page)) === `${id} row-main`, `${id}: Enter opens or shuts the row, then Space does it again (${await focused(page)})`);
     }
+    // Opened from the keyboard, the row keeps the focus and nothing is typed into its note. Opened with a click, it goes on into the note.
+    await page.focus('#task-t1 .row-main'); await page.keyboard.press('Enter'); await page.waitForTimeout(120); // t1 starts open: shut it
+    await page.keyboard.press('Enter'); await page.waitForTimeout(120); // open it again
+    check((await focused(page)) === 't1 row-main' && (await page.$eval('#task-t1 textarea', (e) => e.value)) === '', `from the keyboard the focus stays on the row (${await focused(page)})`);
+    await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120); // shut
+    await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120); // open
+    check((await focused(page)) === 't1 note', `with a click it goes on into the empty note (${await focused(page)})`);
     // No control sits inside the row's button: a screen reader reads each one on its own.
     check(await page.evaluate(() => document.querySelectorAll('[role=button] input, [role=button] button, [role=button] [role=button]').length === 0), 'no checkbox, Share or id inside a row\'s button');
     // A click anywhere on the row still opens it.
@@ -258,11 +274,13 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     check(await page.$eval('#dock', (e) => e.inert), 'when the bar goes, it is out of reach');
     check(await page.evaluate(() => document.activeElement.id === 'list' || document.activeElement.closest('.task.current')), `the focus goes to the next task, or the top of the list (${await focused(page)})`);
     await page.close();
-    // With a mouse, nothing moves the focus.
+    // A click that reports itself as a mouse click (a screen reader in browse mode, voice control): the focus isn't lost
+    // either. After a real mouse click no focus ring shows, so on screen nothing changes.
     const m = await open({ list: two });
     await m.click('#share-all'); await m.waitForTimeout(400);
     await m.send(after); await m.waitForTimeout(300);
-    check(await m.evaluate(() => document.activeElement === document.body), 'Share all with a mouse leaves the focus alone');
+    const mouse = await m.evaluate(() => [document.activeElement !== document.body, document.activeElement.matches(':focus-visible')]);
+    check(mouse.join() === 'true,false', `after a click on Share all the focus is in the list, with no ring showing (${mouse})`);
     // From the keyboard, but you moved on before the window answered: the focus stays where you put it.
     await m.close();
     const k = await open({ list: two });
@@ -445,6 +463,13 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.evaluate(() => window.__shift(32 * 60_000)); // 5:31 PM
     await page.click('.away-card >> text=Yes'); await page.waitForTimeout(450);
     check((await page.posted('setAway')).length === 0 && (await page.$$('.away-chip')).length === 4, 'Yes after 5:30 PM sets nothing and goes back to the picker');
+    // Yes in time, but the window is slow to answer and the time passes meanwhile: the question waits for the window.
+    await page.fill('#away-time', '17:45');
+    await page.click('.away-card >> text=Set'); await page.waitForTimeout(450);
+    await page.click('.away-card >> text=Yes'); await page.waitForTimeout(50);
+    await page.evaluate(() => window.__shift(20 * 60_000)); // 5:51 PM, no answer from the window yet
+    await page.waitForTimeout(15_500);
+    check((await page.posted('setAway')).length === 1 && !(await page.$('.away-chip')) && !!(await page.$('#away-ask')), 'after Yes, a slow window doesn\'t send you back to the picker');
     await page.close();
   }
 
