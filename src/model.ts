@@ -315,13 +315,10 @@ export function normalize(c: Checklist): Checklist {
   c.phases ??= [];
   // An away that ran out while the window was closed means nothing now.
   if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
-  // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes.
-  // Keep the time, and say "tomorrow" until this computer's next midnight if the away ends after it.
-  if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) {
-    c.awayLabel = c.awayLabel.slice('tomorrow '.length);
-    const midnight = new Date().setHours(24, 0, 0, 0);
-    if (c.awayUntil >= midnight) c.awayMidnight = midnight;
-  }
+  // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes. Keep
+  // only the time: when the user's midnight is isn't known here (this computer may be in another time zone), and "in 8
+  // hours", which Claude is always told too, says which 6:00 AM it is.
+  if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) c.awayLabel = c.awayLabel.slice('tomorrow '.length);
   return c;
 }
 
@@ -1135,11 +1132,14 @@ export function answerText(q: Question, a: Answer): string {
   return labels.join(' + ') || '(no choice)';
 }
 
-/** The answer the draft would share: what is picked, and the "something else" text. Undefined if there is nothing to share yet. */
+/**
+ * The answer the draft would share: what is picked, and the "something else" text while that is ticked (untick it and
+ * the text is hidden, so it isn't shared). Undefined if there is nothing to share yet. The panel's Share answer agrees.
+ */
 export function draftAnswer(q: Question): { picks: string[]; other: string } | undefined {
   const d = q.draft;
   const picks = d.picks.filter((p) => p !== 'other');
-  const other = d.picks.includes('other') || (!picks.length && q.allowOther) ? d.other.trim() : '';
+  const other = d.picks.includes('other') ? d.other.trim() : '';
   return picks.length || other ? { picks, other } : undefined;
 }
 
