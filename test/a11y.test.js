@@ -165,6 +165,14 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     const picked = () => page.$$eval('#task-q1 .opt.on', (xs) => xs.map((x) => x.dataset.opt).join());
     await page.focus('#task-q1 .opt-main'); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80);
     check((await picked()) === 'o2' && (await stops()) === '-1,0,-1,-1' && (await onOpt()) === 'o2', `ArrowDown picks the next choice and moves there (${await picked()})`);
+    // One outline on the focused, picked choice: its own edge (and a soft halo), not the button's ring across the card.
+    await page.emulateMedia({ reducedMotion: 'reduce' }); // the edge eases in: measure it settled, without waiting
+    const ring = await page.evaluate(() => {
+      const btn = document.activeElement, opt = btn.closest('.opt');
+      return { outline: getComputedStyle(btn).outlineStyle, edge: getComputedStyle(opt).boxShadow };
+    });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    check(ring.outline === 'none' && /0px 0px 0px 2px inset/.test(ring.edge) && /0px 0px 0px 3px(,|$)/.test(ring.edge), `the focused choice has one outline, round the whole card (${JSON.stringify(ring)})`);
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp'); await page.waitForTimeout(80);
     check((await picked()) === 'other' && (await onOpt()) === 'other', 'ArrowUp from the first choice goes round to the last, and "Something else" doesn\'t pull the focus into its box');
     const still = [];

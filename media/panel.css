@@ -372,6 +372,10 @@ svg { display: block; flex: none; }
 .opt { border-radius: var(--r-m); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow .15s ease, background-color .15s ease; }
 .opt:hover { background: var(--hover); }
 .opt.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* The focus is on the choice's own edge, as on the note box: accent and a soft halo. So a focused, picked choice has one
+   outline that follows the whole card, not the button's ring cutting across it. */
+.opt-main:focus-visible { outline: none; }
+.opt:has(> .opt-main:focus-visible) { box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .opt-main {
   display: grid; grid-template-columns: 18px 1fr; column-gap: 10px; align-items: start; width: 100%;
   padding: 9px 10px; border: 0; background: none; text-align: left; border-radius: var(--r-m);

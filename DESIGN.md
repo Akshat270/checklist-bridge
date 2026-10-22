@@ -302,7 +302,7 @@ One easing curve, `cubic-bezier(.16, 1, .3, 1)`, for everything that moves posit
 - **Do** pair every state colour with a shape or icon: check vs minus circle, eye vs clock, square vs bars, dashed vs solid checkbox.
 - **Do** keep exactly one tinted surface on screen: the current task.
 - **Do** use the 16px stroke icon family (1.5px stroke, round caps and joins), inline as SVG and sized 11 to 16px.
-- **Do** show the visible focus outline (2px accent, 2px offset) on every control; the note field's border-plus-halo is the only replacement.
+- **Do** show the visible focus outline (2px accent, 2px offset) on every control; the border-plus-halo of the note field and the answer choices is the only replacement.
 
 ### Don't:
 - **Don't** use a state or priority colour for anything that is not that state or priority.
