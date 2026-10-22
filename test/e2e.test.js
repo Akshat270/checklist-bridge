@@ -12,12 +12,14 @@ const check = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fail
 
 const opened = [];
 const winIds = {};
+const firstLog = {}; // the first line each window writes to its Output channel
 function win(name, folder, focused) {
   const w = fork(path.join(__dirname, 'harness', 'fakewin.js'), [name, folder, EXT, path.join(HOME, 'storage-' + name), focused ? '1' : '0']);
   const waiters = [];
   w.on('message', (m) => {
     if (m.panelOpened) opened.push(`${m.window}:${m.panelOpened}`);
     if (m.windowId) winIds[name] = m.windowId;
+    if (m.log && !(name in firstLog) && m.log.startsWith(`[${name}] [`)) firstLog[name] = m.log;
     if (process.env.VERBOSE && m.log) console.log('   ' + m.log);
     const i = waiters.findIndex((x) => x.k in m);
     if (i >= 0) waiters.splice(i, 1)[0].r(m);
@@ -50,6 +52,9 @@ function chat(label, cwd, env = {}) {
   let U = win('unilytic', '/work/unilytic', false);
   const A = win('atlas', '/work/atlas', true); // Atlas was opened last / focused
   await U.ready; await A.ready;
+  // The first line in the Output says which copy is running and where it was loaded from, so a test build is easy to tell apart.
+  const version = JSON.parse(fs.readFileSync(path.join(EXT, 'package.json'), 'utf8')).version;
+  check(firstLog.unilytic?.endsWith(`Checklist Bridge ${version}, loaded from ${EXT}`), `the Output starts with the version and folder (${firstLog.unilytic})`);
   check(fs.existsSync(path.join(HOME, 'connector', 'connector.js')), 'connector copied to a stable place for Claude Code');
 
   // Chat 1: Claude Code panel inside the Unilytic window -> inherits the window id from the extension host.

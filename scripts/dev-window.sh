@@ -60,7 +60,12 @@ env -u VSCODE_IPC_HOOK_CLI -u ELECTRON_RUN_AS_NODE \
   "$code" --extensionDevelopmentPath="$root" --user-data-dir="$base/vscode" --extensions-dir="$base/exts" "$base/scratch"
 
 echo
-echo "Test window opened. In it: open the terminal, run 'claude' (sign in the first time), then ask for a checklist."
+echo "A test window should open now. Its title ends with [Extension Development Host]: only that window runs this build."
+echo "(Opening the cb-dev folder yourself runs your installed copy instead. If no window opens, run this script again.)"
+echo "In View > Output > Checklist Bridge, the first line says where the running copy was loaded from: this folder."
+echo
+echo "In the test window: open the terminal, run 'claude' (sign in the first time), then ask for a checklist."
+echo "Or, without Claude: Ctrl+Shift+P (Cmd+Shift+P on a Mac) > Checklist Bridge: Open an example checklist."
 echo
 # What to check by hand. Keep it the same as the list in dev-window.ps1.
 cat <<'CHECKS'

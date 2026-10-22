@@ -32,6 +32,14 @@ if (-not $Editor -or -not (Test-Path $Editor)) {
   throw 'Could not find VS Code. Install it from https://code.visualstudio.com, or pass -Editor "C:\path\to\Code.exe".'
 }
 
+# VS Code won't start while it is installing an update ("Code is currently being updated"), and the test window
+# would silently not open. Say so instead.
+$updating = $null
+if ([System.Threading.Mutex]::TryOpenExisting('vscode-updating', [ref]$updating)) {
+  $updating.Dispose()
+  throw 'VS Code is installing an update. Wait for it to finish (or restart VS Code to apply it), then run this script again.'
+}
+
 if ($Fresh -and (Test-Path $Base)) {
   if ((Split-Path -Leaf $Base) -ne 'cb-dev') { throw "-Fresh only deletes a folder named cb-dev. Not deleting $Base." }
   Remove-Item -Recurse -Force $Base
@@ -78,7 +86,12 @@ try {
 }
 
 Write-Host ''
-Write-Host 'Test window opened. In it: open the terminal, run `claude` (sign in the first time), then ask for a checklist.'
+Write-Host 'A test window should open now. Its title ends with [Extension Development Host]: only that window runs this build.'
+Write-Host '(Opening the cb-dev folder yourself runs your installed copy instead. If no window opens, run this script again.)'
+Write-Host 'In View > Output > Checklist Bridge, the first line says where the running copy was loaded from: this folder.'
+Write-Host ''
+Write-Host 'In the test window: open the terminal, run `claude` (sign in the first time), then ask for a checklist.'
+Write-Host 'Or, without Claude: Ctrl+Shift+P > Checklist Bridge: Open an example checklist.'
 Write-Host ''
 # What to check by hand. Keep it the same as the list in dev-window.sh.
 Write-Host @'

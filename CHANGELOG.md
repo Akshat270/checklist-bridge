@@ -8,6 +8,7 @@
 - **Fixed:** the away card said "tomorrow" even after midnight had passed. Claude is now told "tomorrow" only until midnight, too.
 - Closing a checklist now also warns you about questions you haven't answered and answers you haven't shared.
 - The "Claude is waiting" banner and the away card are no longer tinted, so the next task stands out.
+- The first line in *View > Output > Checklist Bridge* now shows the version, and the folder it was loaded from.
 
 ## 0.7.0
 - **Fixed:** a task Claude moved into an ordered group and removed in the same edit no longer comes back.
