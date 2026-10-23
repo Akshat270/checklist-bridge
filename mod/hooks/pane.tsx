@@ -44,6 +44,9 @@ const RANK: Record<string, number> = { urgent: 0, important: 1 }
 const rank = (t: Task) => Math.min(...t.tags.map(x => RANK[x] ?? 2), 2)
 /** Tags that get a coloured badge; any other tag is drawn as plain dim text. */
 const BADGE: Record<string, string> = { urgent: 'error', important: 'warning', blocked: 'permission' }
+/** Columns of a shared row's second line: the read status, then its button, then the note. */
+const STATUS_WIDTH = 18
+const ACTION_WIDTH = 16
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** A step's text without the "Step 2:" Claude sometimes writes, since the pane numbers steps itself. */
 const stepText = (text: string) => text.replace(/^\s*step\s*\d+\s*[:.)\-–]\s*/i, '') || text
@@ -106,6 +109,16 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     </Box>
   )
 
+  /** A labelled text field: the label above, the entry area in a light frame (its ⏎ action sits at the frame's right edge). */
+  const field = (label: string, input: RenderElement) => (
+    <Box flexDirection="column">
+      <Text dimColor>{label}</Text>
+      <Box borderStyle="round" borderColor="subtle" paddingX={1}>
+        {input}
+      </Box>
+    </Box>
+  )
+
   if (!app.isOn)
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -140,6 +153,19 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   const openTask = open.find(t => t.id === view.openId) ?? current
   const unsent = app.store.updateSummary(c, 'line').ids.length
 
+  // The grid every list row follows:  mark (3) · id (padded to the longest id) · " │ " · text.
+  // Ids lead, so the text of every row starts in the same column whatever its id or step number.
+  const idWidth = Math.max(2, ...all.map(t => t.id.length), ...questions.map(q => q.id.length))
+  const idCell = (id: string) => <Text dimColor>{`${id.padEnd(idWidth)} │ `}</Text>
+  /** The same columns with no mark and no id: where a row's second line starts. */
+  const indent = <Text dimColor>{`${' '.repeat(3 + idWidth)} │ `}</Text>
+  /** A fixed-width cell, so the cells after it start in the same column on every row. */
+  const fixed = (width: number, child: RenderElement) => (
+    <Box width={width} flexShrink={0}>
+      {child}
+    </Box>
+  )
+
   const shots = (owner: Task | Question, imgs: Img[]) =>
     imgs.map((img, i) => (
       <Box flexDirection="row" gap={1}>
@@ -163,36 +189,40 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   /** The note box and screenshots under an open task or question. */
   const extras = (owner: Task | Question, note: string, setNote: (v: string) => void, imgs: Img[], withShots: boolean) => (
     <Box flexDirection="column" marginTop={1}>
-      {Input && (
-        <Input
-          key={`${owner.id}-note`}
-          label="Note"
-          placeholder="optional: what you did, or a value Claude needs"
-          value={note}
-          submitLabel="Save"
-          onInput={setNote}
-          onSubmit={async v => {
-            setNote(v)
-            await save()
-          }}
-        />
-      )}
+      {Input &&
+        field(
+          'Note for Claude',
+          <Input
+            key={`${owner.id}-note`}
+            placeholder="optional: what you did, or a value Claude needs"
+            value={note}
+            submitLabel="Save"
+            onInput={setNote}
+            onSubmit={async v => {
+              setNote(v)
+              await save()
+            }}
+          />,
+        )}
       {shots(owner, imgs)}
       {withShots && imgs.length < 8 && (
-        <Box flexDirection="row" gap={1}>
-          <Button key={`${owner.id}-paste`} label="Paste screenshot" variant="secondary" hotkey="v" onPress={() => act.paste(c, owner.id)} />
-          {Input && (
-            <Input
-              key={`${owner.id}-shot`}
-              placeholder="or an image path"
-              submitLabel="Add"
-              onSubmit={async v => {
-                if (!v.trim()) return
-                if (!app.store.addImagePath(c.id, owner.id, v)) return act.toast('That is not a .png, .jpg, .gif or .webp file.')
-                await save()
-              }}
-            />
-          )}
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>Screenshot</Text>
+          <Box flexDirection="row" gap={2}>
+            <Button key={`${owner.id}-paste`} label="Paste from clipboard" variant="secondary" hotkey="v" onPress={() => act.paste(c, owner.id)} />
+            {Input && (
+              <Input
+                key={`${owner.id}-shot`}
+                placeholder="or type an image file's path"
+                submitLabel="Add"
+                onSubmit={async v => {
+                  if (!v.trim()) return
+                  if (!app.store.addImagePath(c.id, owner.id, v)) return act.toast('That is not a .png, .jpg, .gif or .webp file.')
+                  await save()
+                }}
+              />
+            )}
+          </Box>
         </Box>
       )}
     </Box>
@@ -202,7 +232,8 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     const urgent = rank(t) === 0
     return (
       <Box flexDirection="column" borderStyle="round" borderColor={urgent ? 'error' : 'suggestion'} paddingX={1} marginTop={1}>
-        <Box flexDirection="row" justifyContent="space-between">
+        {/* Badges, then a blank line, then the title with its description under it in grey. */}
+        <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
           <Text>
             {t === current ? badge('NEXT', urgent ? 'error' : 'suggestion') : badge('OPEN', 'subtle')}
             {step && <Text dimColor>{`  step ${step.n} of ${step.of}`}</Text>}
@@ -211,7 +242,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Text dimColor>{t.id}</Text>
         </Box>
         <Text bold>{step ? stepText(t.text) : t.text}</Text>
-        {t.detail && <Text dimColor>{t.detail}</Text>}
+        {t.detail && (
+          <Box marginTop={1}>
+            <Text color="inactive">{t.detail}</Text>
+          </Box>
+        )}
         {t.command && (
           <Box flexDirection="column" marginTop={1}>
             <Text dimColor>Run this:</Text>
@@ -219,7 +254,8 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           </Box>
         )}
         {extras(t, t.draft.note, v => app.store.setDraft(c.id, t.id, { note: v }), t.draft.images, true)}
-        <Box flexDirection="row" gap={2} marginTop={1}>
+        {/* One empty line between the fields and the actions. */}
+        <Box flexDirection="row" gap={2} marginTop={1} marginBottom={0}>
           <Button
             key={`${t.id}-share-done`}
             label="✓ Done, share with Claude"
@@ -253,13 +289,14 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     const started = !!(t.draft.note || t.draft.images.length)
     return (
       <Button key={`${t.id}-open`} plain onPress={() => act.open(t.id)}>
-        <Text color={urgent ? 'error' : step ? 'suggestion' : undefined} dimColor={!urgent && !step}>
-          {step ? `${String(step.n).padStart(2)}.` : urgent ? ' ! ' : ' ○ '}
+        <Text color={urgent ? 'error' : undefined} dimColor={!urgent}>
+          {urgent ? ' ! ' : ' • '}
         </Text>
-        <Text>{` ${step ? stepText(t.text) : t.text}`}</Text>
+        {idCell(t.id)}
+        {step ? <Text color="suggestion">{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
+        <Text>{step ? stepText(t.text) : t.text}</Text>
         {started ? <Text color="suggestion"> · draft</Text> : ''}
         {tagBadges(t.tags)}
-        <Text dimColor>{`  ${t.id}`}</Text>
       </Button>
     )
   }
@@ -275,7 +312,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Text dimColor>{q.id}</Text>
         </Box>
         {q.tags.length > 0 && <Text>{tagBadges(q.tags, false)}</Text>}
-        {q.why && <Text dimColor>{q.why}</Text>}
+        {q.why && (
+          <Box marginTop={1}>
+            <Text color="inactive">{q.why}</Text>
+          </Box>
+        )}
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>{q.multi ? 'Pick one or more' : 'Pick one'}</Text>
           {q.options.map((o, i) => {
@@ -308,19 +349,21 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           </Text>
         )}
         {Input && q.allowOther && (
-          <Box marginTop={1}>
-            <Input
-              key={`${q.id}-other`}
-              label="Something else"
-              placeholder="your own answer"
-              value={q.draft.other}
-              submitLabel="Save"
-              onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
-              onSubmit={async v => {
-                app.store.setAnswerDraft(c.id, q.id, { other: v })
-                await save()
-              }}
-            />
+          <Box flexDirection="column" marginTop={1}>
+            {field(
+              'Something else',
+              <Input
+                key={`${q.id}-other`}
+                placeholder="your own answer"
+                value={q.draft.other}
+                submitLabel="Save"
+                onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
+                onSubmit={async v => {
+                  app.store.setAnswerDraft(c.id, q.id, { other: v })
+                  await save()
+                }}
+              />,
+            )}
           </Box>
         )}
         {extras(q, q.draft.note, v => app.store.setAnswerDraft(c.id, q.id, { note: v }), q.draft.images, false)}
@@ -340,7 +383,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   }
 
   const readMark = (seen: boolean, pushed: boolean) =>
-    seen ? <Text color="success">◉ Claude read it</Text> : pushed ? <Text dimColor>◌ sent</Text> : <Text dimColor>◌ not read yet</Text>
+    seen ? <Text color="success">◉ read by Claude</Text> : pushed ? <Text dimColor>◌ sent</Text> : <Text dimColor>◌ not read yet</Text>
 
   /** One shared task or answer: what it was on the first line, its state and a quiet button under it. */
   const sharedRow = (o: {
@@ -354,18 +397,22 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     button: RenderElement
   }) => (
     <Box flexDirection="column" marginBottom={1}>
+      {/* mark · id │ what it was */}
       <Box flexDirection="row">
         {o.mark}
+        {idCell(o.id)}
         {o.title}
       </Box>
-      <Box flexDirection="row" gap={2} paddingLeft={3}>
-        <Text>
-          {readMark(o.seen, o.pushed)}
-          <Text dimColor>{`  ${o.id}`}</Text>
-          {o.note ? <Text dimColor>{`  “${o.note}”`}</Text> : ''}
-          {o.shots ? <Text dimColor>{`  ▣ ${plural(o.shots, 'screenshot')}`}</Text> : ''}
+      {/* under the text column: status | action | note, each in its own fixed column */}
+      <Box flexDirection="row">
+        {indent}
+        {fixed(STATUS_WIDTH, readMark(o.seen, o.pushed))}
+        {fixed(ACTION_WIDTH, o.button)}
+        <Text dimColor>
+          {o.note ? `“${o.note}”` : ''}
+          {o.note && o.shots ? '  ' : ''}
+          {o.shots ? `▣ ${plural(o.shots, 'screenshot')}` : ''}
         </Text>
-        {o.button}
       </Box>
     </Box>
   )
