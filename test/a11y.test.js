@@ -117,6 +117,12 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.focus('#task-t1 .row-main'); await page.keyboard.press('Enter'); await page.waitForTimeout(120); // t1 starts open: shut it
     await page.keyboard.press('Enter'); await page.waitForTimeout(120); // open it again
     check((await focused(page)) === 't1 row-main' && (await page.$eval('#task-t1 textarea', (e) => e.value)) === '', `from the keyboard the focus stays on the row (${await focused(page)})`);
+    // An open task with the focus has one outline, round the whole card (note included), not a ring round its top line.
+    const ring = await page.evaluate(() => {
+      const card = document.querySelector('#task-t1'), row = card.querySelector('.row');
+      return { row: getComputedStyle(row).outlineStyle, edge: getComputedStyle(card).boxShadow, holdsNote: card.contains(document.querySelector('#task-t1 textarea')) };
+    });
+    check(ring.row === 'none' && /0px 0px 0px 2px inset/.test(ring.edge) && /0px 0px 0px 3px(,|$)/.test(ring.edge) && ring.holdsNote, `the focused open task has one outline, round the whole card (${JSON.stringify(ring)})`);
     await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120); // shut
     await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120); // open
     check((await focused(page)) === 't1 note', `with a click it goes on into the empty note (${await focused(page)})`);

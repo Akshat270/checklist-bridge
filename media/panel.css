@@ -126,14 +126,19 @@ svg { display: block; flex: none; }
   display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; column-gap: 10px;
   padding: 9px 10px 9px 8px; border-radius: var(--r-l); cursor: pointer;
 }
-/* The text is the keyboard's way to open the row; the focus ring goes round the whole row, as it looks like one control. */
+/* The text is the keyboard's way to open the row. */
 .row-main { min-width: 0; }
 .row-main:focus-visible { outline: none; }
-.row:has(> .row-main:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .task:not(.open):hover { background: var(--hover); }
 .task.open { background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); }
 .task.current.open { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .task.current.urgent.open { background: color-mix(in srgb, var(--urgent) 11%, var(--ground)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--urgent) 45%, transparent); }
+/* Its focus is on the whole card's edge, as on an answer choice: accent and a soft halo. So an open task has one outline
+   round the card and its note, not a ring round the top line cutting across the card. (After the rules above: it wins.) */
+.task:has(> .row > .row-main:focus-visible) {
+  z-index: 1; /* the halo shows over the next row */
+  box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
 .task.urgent:not(.open) .text { font-weight: 550; }
 /* The id Claude uses (t1, q2…): the last thing at the right edge of each row, so the ids line up in a quiet column and never crowd the title. */
 .item-id {
