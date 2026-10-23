@@ -60,11 +60,14 @@ env -u VSCODE_IPC_HOOK_CLI -u ELECTRON_RUN_AS_NODE \
   "$code" --extensionDevelopmentPath="$root" --user-data-dir="$base/vscode" --extensions-dir="$base/exts" "$base/scratch"
 
 echo
-echo "Test window opened. In it: open the terminal, run 'claude' (sign in the first time), then ask for a checklist."
+echo "A test window should open now. Its title ends with [Extension Development Host]: only that window runs this build."
+echo "(Opening the cb-dev folder yourself runs your installed copy instead. If no window opens, run this script again.)"
+echo "In View > Output > Checklist Bridge, the first line says where the running copy was loaded from: this folder."
 echo
-echo "To try away mode:"
-echo "  1. Ask Claude for a checklist with a few tasks and a question for you, and something it can do on its own."
-echo "  2. Click the moon icon at the top of the checklist, pick 30 min, and press Yes."
-echo "  3. Check that Claude does not wait for you: it does the safe work, adds what it skipped, then stops with a summary."
-echo "  4. Press I'm back. Nothing should be sent to Claude. Use Send now or write to it to carry on."
+echo "In the test window: open the terminal, run 'claude' (sign in the first time), then ask for a checklist."
+echo "Or, without Claude: Ctrl+Shift+P (Cmd+Shift+P on a Mac) > Checklist Bridge: Open an example checklist."
+echo
+# What to check by hand: the same list for both scripts.
+cat "$root/scripts/dev-checks.txt"
+echo
 echo "Everything it uses is in $base. Delete that folder when you're done, or run this script with --fresh."

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+- **Easier to use with a keyboard.** Every row opens with Enter or Space, answered questions too. Task ids and screenshots can be reached with Tab, and a screenshot shown full size closes with Escape. With one choice to pick, the arrow keys move between the choices. When Claude updates the checklist, the focus stays where it was.
+- **Screen readers now hear what the colours and icons show:** urgent or important, shared as done or not done, and whether Claude has read it.
+- **High-contrast light themes** now use the darker colours, so tags and marks are easy to read on white.
+- **Fixed:** the away card said "tomorrow" even after midnight had passed. Claude is now told "tomorrow" only until midnight, too.
+- Closing a checklist now also warns you about questions you haven't answered and answers you haven't shared.
+- The "Claude is waiting" banner and the away card are no longer tinted, so the next task stands out.
+- The first line in *View > Output > Checklist Bridge* now shows the version, and the folder it was loaded from.
+- **The next task stays in its group.** It used to be pulled out and shown above every group (unless it was a numbered step). Now it stays where it belongs, open and highlighted. If it is in a group you collapsed, the group opens, and after you share a task the panel scrolls to the next one.
+
 ## 0.7.1
 - The README and Marketplace page now show a short video of Checklist Bridge in action, with a link to the full 44-second video.
 - **Fixed:** steps in an ordered group or phase no longer pile on top of each other. Since 0.7.0 each step was squashed to one short line, so their text overlapped.

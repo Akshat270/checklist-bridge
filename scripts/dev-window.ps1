@@ -32,6 +32,23 @@ if (-not $Editor -or -not (Test-Path $Editor)) {
   throw 'Could not find VS Code. Install it from https://code.visualstudio.com, or pass -Editor "C:\path\to\Code.exe".'
 }
 
+# VS Code won't start while it is installing an update ("Code is currently being updated"), and the test window
+# would silently not open. Say so instead. The lock's name comes from the editor's own product.json (stable is
+# "vscode", Insiders "vscodeinsiders"); it sits next to Code.exe, or in a folder named after the build in newer versions.
+# -Editor may also be bin\code.cmd, one folder down: then look from the folder above bin.
+$editorDir = Split-Path -Parent $Editor
+if ((Split-Path -Leaf $editorDir) -eq 'bin') { $editorDir = Split-Path -Parent $editorDir }
+$product = @(Join-Path $editorDir 'resources\app\product.json') +
+  @(Get-ChildItem -Directory $editorDir -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'resources\app\product.json' }) |
+  Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $product) { Write-Warning "Could not find VS Code's product.json near $Editor, so the script can't tell whether VS Code is updating." }
+$mutexName = if ($product) { (Get-Content -Raw $product | ConvertFrom-Json).win32MutexName }
+$updating = $null
+if ($mutexName -and [System.Threading.Mutex]::TryOpenExisting("$mutexName-updating", [ref]$updating)) {
+  $updating.Dispose()
+  throw 'VS Code is installing an update. Wait for it to finish (or restart VS Code to apply it), then run this script again.'
+}
+
 if ($Fresh -and (Test-Path $Base)) {
   if ((Split-Path -Leaf $Base) -ne 'cb-dev') { throw "-Fresh only deletes a folder named cb-dev. Not deleting $Base." }
   Remove-Item -Recurse -Force $Base
@@ -78,11 +95,14 @@ try {
 }
 
 Write-Host ''
-Write-Host 'Test window opened. In it: open the terminal, run `claude` (sign in the first time), then ask for a checklist.'
+Write-Host 'A test window should open now. Its title ends with [Extension Development Host]: only that window runs this build.'
+Write-Host '(Opening the cb-dev folder yourself runs your installed copy instead. If no window opens, run this script again.)'
+Write-Host 'In View > Output > Checklist Bridge, the first line says where the running copy was loaded from: this folder.'
 Write-Host ''
-Write-Host 'To try away mode:'
-Write-Host '  1. Ask Claude for a checklist with a few tasks and a question for you, and something it can do on its own.'
-Write-Host '  2. Click the moon icon at the top of the checklist, pick 30 min, and press Yes.'
-Write-Host '  3. Check that Claude does not wait for you: it does the safe work, adds what it skipped, then stops with a summary.'
-Write-Host "  4. Press I'm back. Nothing should be sent to Claude. Use Send now or write to it to carry on."
+Write-Host 'In the test window: open the terminal, run `claude` (sign in the first time), then ask for a checklist.'
+Write-Host 'Or, without Claude: Ctrl+Shift+P > Checklist Bridge: Open an example checklist.'
+Write-Host ''
+# What to check by hand: the same list for both scripts.
+Write-Host (Get-Content -Raw (Join-Path $PSScriptRoot 'dev-checks.txt')).TrimEnd()
+Write-Host ''
 Write-Host "Everything it uses is in $Base. Delete that folder when you're done, or run this script with -Fresh."

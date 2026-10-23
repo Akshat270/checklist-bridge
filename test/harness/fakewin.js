@@ -45,7 +45,7 @@ const vscode = {
     createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
     createTreeView: (_id, o) => ((tree = o.treeDataProvider), { dispose() {}, onDidChangeVisibility: ev() }),
     showInformationMessage: async (m) => (say({ log: `[${name}] NOTIFY ${m}` }), undefined),
-    showWarningMessage: async (m) => (say({ log: `[${name}] WARN ${m}` }), /^Close /.test(m) ? 'Close checklist' : undefined),
+    showWarningMessage: async (m, o) => (say({ log: `[${name}] WARN ${m}`, warn: m, detail: o?.detail }), /^Close /.test(m) ? 'Close checklist' : undefined),
     showQuickPick: async () => undefined,
     withProgress: async (o, task) => { say({ log: `[${name}] PROGRESS ${o.title}` }); return task(); },
     createTerminal: () => ({ show() {}, sendText: (t) => say({ log: `[${name}] TERMINAL ${t}` }) }),
@@ -53,7 +53,7 @@ const vscode = {
     createWebviewPanel: (type, title) => {
       const msg = new EventEmitter(), disp = new EventEmitter();
       const p = {
-        title, webview: { options: {}, cspSource: 'x', asWebviewUri: (u) => u, onDidReceiveMessage: msg.event, postMessage: async (m) => { if (m.type === 'state') { p.state = m.list; p.routes = m.routes; say({ state: m, title: p.title }); } else say({ webMsg: m, title: p.title }); return true; }, set html(v) { setTimeout(() => msg.fire({ type: 'ready' })); } },
+        title, webview: { options: {}, cspSource: 'x', asWebviewUri: (u) => u, onDidReceiveMessage: msg.event, postMessage: async (m) => { if (m.type === 'state') { p.state = m.list; p.routes = m.routes; say({ state: m, title: p.title }); } else say({ webMsg: m, title: p.title }); if (m.type === 'flush') setTimeout(() => { for (const x of p.unsaved || []) msg.fire(x); p.unsaved = []; msg.fire({ type: 'flushed' }); }, 20); return true; }, set html(v) { setTimeout(() => msg.fire({ type: 'ready' })); } },
         onDidDispose: disp.event, reveal() {}, dispose() { if (p.gone) return; p.gone = true; disp.fire(); say({ panelClosed: p.title }); },
         user: (m) => msg.fire(m),
       };
@@ -86,6 +86,8 @@ process.on('message', (m) => {
   if (m.cmd === 'focus') { vscode.window.state.focused = true; focusListener({ focused: true }); }
   if (m.cmd === 'panels') say({ panels: panels.filter((p) => !p.gone).map((p) => ({ title: p.title, away: !!p.state?.away, awayLeft: p.state?.awayLeft, awayLabel: p.state?.awayLabel, awayMs: p.state?.awayMs, id: p.state?.id, routes: p.routes, questions: (p.state?.questions || []).map((q) => ({ id: q.id, answered: !!q.answer, seen: !!q.seenAt, pushed: !!q.pushedAt, retired: !!q.retired })), tasks: (p.state?.tasks || []).map((t) => t.id + (t.shared ? '*' : '')) })) });
   if (m.cmd === 'addTerminal') { const t = { name: 'claude', processId: Promise.resolve(m.pid), show() {}, sendText: (x) => say({ termText: x }) }; terminals.push(t); termOpen.forEach((fn) => fn(t)); setTimeout(() => say({ done: 1 }), 300); }
+  // What the panel holds back and sends only when asked to flush (typing not saved yet), like the real panel.
+  if (m.cmd === 'unsaved') { panels.find((x) => !x.gone && x.title === m.title).unsaved = m.msgs; say({ done: 1 }); }
   if (m.cmd === 'user') { const p = panels.find((x) => !x.gone && x.title === m.title); p.user({ ...m.msg }); setTimeout(() => say({ done: 1 }), 50); }
   if (m.cmd === 'closeTab') { panels.find((x) => !x.gone && x.title === m.title).dispose(); setTimeout(() => say({ done: 1 }), 50); }
   if (m.cmd === 'clickItem') { const c = tree.getChildren().find((x) => x.title === m.title); const k = tree.getTreeItem(c).command; Promise.resolve(commands[k.command](...k.arguments)).then(() => setTimeout(() => say({ done: 1 }), 50)); }
