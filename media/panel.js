@@ -327,7 +327,7 @@
     const isCurrent = t.id === currentId;
     const open = isOpen(t);
     const el = h('div', {
-      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' link' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
+      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' step-line' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
       id: `task-${t.id}`,
       'data-id': t.id,
       onmouseenter: () => (lastHover = t.id),
@@ -1099,7 +1099,7 @@
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('span', { id: 'away-ask' }, clockText(Date.now() + pickMs())), '?')), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('span', { id: 'away-ask' }, clockText(Date.now() + pickMs())), '?')), h('button', { class: 'away-link', onclick: go('picker') }, 'Change')),
         h('p', { class: 'away-note', id: 'away-long', hidden: pickMs() < 3600_000 }, 'Write to Claude when you’re back.'),
         h('div', { class: 'away-actions' },
           h('button', {

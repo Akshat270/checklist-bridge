@@ -118,9 +118,9 @@ svg { display: block; flex: none; }
 .task { position: relative; border-radius: var(--r-l); transition: background-color .15s ease; }
 .task + .task { margin-top: 1px; }
 /* Steps of an ordered group: a hairline from one checkbox down to the next, and none after the last step. */
-.task.link::before { content: ''; position: absolute; left: 17.25px; top: 29px; bottom: -10px; width: 1.5px; background: var(--line-strong); }
+.task.step-line::before { content: ''; position: absolute; left: 17.25px; top: 29px; bottom: -10px; width: 1.5px; background: var(--line-strong); }
 /* An open step is a card: the line does not run through it, only from its bottom edge to the next step. */
-.task.link.open::before { top: 100%; }
+.task.step-line.open::before { top: 100%; }
 .row {
   /* minmax(0, 1fr): the text column may shrink below its longest word or label, so the right side stays inside the card. */
   display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; column-gap: 10px;
@@ -342,8 +342,8 @@ svg { display: block; flex: none; }
 .away-card .btn.small { height: 32px; padding: 0 14px; }
 .ghost-btn { height: 34px; padding: 0 14px; border: 0; border-radius: var(--r-m); background: none; color: var(--ink-2); font-size: 13px; font-weight: 600; transition: background-color .15s ease, color .15s ease; }
 .ghost-btn:hover { background: var(--hover); color: var(--ink); }
-.link { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: var(--r-s); background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
-.link:hover { background: var(--hover); }
+.away-link { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: var(--r-s); background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
+.away-link:hover { background: var(--hover); }
 .away-bar { height: 4px; border-radius: 4px; background: var(--ground); overflow: hidden; }
 .away-fill { height: 100%; width: 100%; border-radius: 4px; background: var(--accent); transition: width .4s var(--ease); }
 @media (prefers-reduced-motion: reduce) {
