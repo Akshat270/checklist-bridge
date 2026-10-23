@@ -161,9 +161,33 @@ export class Panels {
     for (const p of [...this.open.values()]) p.dispose();
   }
 
+  private flushing = new Map<string, () => void>();
+  /**
+   * Asks a checklist's panel to send what was typed or picked there and not saved yet, and waits for it (at most `ms`),
+   * so the window counts it: the panel holds typing back for a moment before saving it. Done at once if no panel is open.
+   */
+  flush(id: string, ms = 500): Promise<void> {
+    const p = this.open.get(id);
+    if (!p || !this.ready.has(id)) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.flushing.get(id)?.(); // an earlier wait for this panel ends too
+      const done = () => {
+        clearTimeout(timer);
+        if (this.flushing.get(id) === done) this.flushing.delete(id);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.flushing.set(id, done);
+      p.webview.postMessage({ type: 'flush' });
+    });
+  }
+
   private async onMessage(id: string, m: any) {
     const s = this.store;
     switch (m?.type) {
+      case 'flushed': // everything held back was sent before this, and messages arrive in order: it is saved
+        this.flushing.get(id)?.();
+        break;
       case 'ready': {
         this.ready.add(id);
         const c = s.get(id);

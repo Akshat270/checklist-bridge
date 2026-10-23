@@ -446,6 +446,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('checklistBridge.close', async (arg) => {
       const c = resolve(arg);
       if (!c) return;
+      await panels.flush(c.id); // an answer picked or typed a moment ago in its panel counts in what is still waiting
       const pick = await vscode.window.showWarningMessage(
         `Close "${c.title}"?`,
         { modal: true, detail: stillOpen(c) + 'Claude will be told the checklist was closed. If it adds tasks later, a new checklist opens.' },

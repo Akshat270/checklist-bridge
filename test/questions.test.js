@@ -151,7 +151,18 @@ const Q = (label, extra = {}) => ({
   r = await w2;
   check(/t1 Create key: DONE/.test(r.text), 'shared task also ends the wait');
 
-  [A, B, C, D].forEach((c) => c.kill());
+  // ---------- closing from the sidebar or the Command Palette counts an answer the panel hasn't saved yet
+  const E = chat('E');
+  await E.tool('checklist_ask', { title: 'Closing', questions: [{ question: 'Which database?', options: ['Postgres', 'MySQL'] }] });
+  await sleep(500);
+  const closingId = (await panel('Closing')).id;
+  W.send({ cmd: 'unsaved', title: 'Closing', msgs: [{ type: 'answerDraft', qid: 'q1', picks: ['o1'], other: '', note: '' }] }); await wwait('done');
+  W.send({ cmd: 'command', name: 'checklistBridge.close', args: [closingId] });
+  const asked = await wwait('warn');
+  check(asked.warn === 'Close "Closing"?' && /^1 answer is still not shared\./.test(asked.detail), `the close warning counts it, not "not answered" (${asked.detail})`);
+  await wwait('done');
+
+  [A, B, C, D, E].forEach((c) => c.kill());
   W.send({ cmd: 'quit' });
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
   setTimeout(() => process.exit(failed ? 1 : 0), 700);

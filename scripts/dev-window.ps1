@@ -35,10 +35,13 @@ if (-not $Editor -or -not (Test-Path $Editor)) {
 # VS Code won't start while it is installing an update ("Code is currently being updated"), and the test window
 # would silently not open. Say so instead. The lock's name comes from the editor's own product.json (stable is
 # "vscode", Insiders "vscodeinsiders"); it sits next to Code.exe, or in a folder named after the build in newer versions.
+# -Editor may also be bin\code.cmd, one folder down: then look from the folder above bin.
 $editorDir = Split-Path -Parent $Editor
+if ((Split-Path -Leaf $editorDir) -eq 'bin') { $editorDir = Split-Path -Parent $editorDir }
 $product = @(Join-Path $editorDir 'resources\app\product.json') +
   @(Get-ChildItem -Directory $editorDir -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'resources\app\product.json' }) |
   Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $product) { Write-Warning "Could not find VS Code's product.json near $Editor, so the script can't tell whether VS Code is updating." }
 $mutexName = if ($product) { (Get-Content -Raw $product | ConvertFrom-Json).win32MutexName }
 $updating = $null
 if ($mutexName -and [System.Threading.Mutex]::TryOpenExisting("$mutexName-updating", [ref]$updating)) {

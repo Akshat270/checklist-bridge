@@ -57,7 +57,16 @@ let failed = 0; const check = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + 
   const after = load(3600_000, 'tomorrow 6:00 AM'); // it is 5 AM now: that midnight has passed
   check(after.c.awayLabel === '6:00 AM' && after.c.awayMidnight === undefined && /until 6:00 AM \(in 1 hour\)/.test(after.st.awayNote(after.c)), 'an older away after midnight: "6:00 AM"');
   const other = load(3600_000, 'tomorrow 下午3:30'); // a time this can't read: no guess
-  check(other.c.awayLabel === '下午3:30' && other.c.awayMidnight === undefined, 'a time in another language keeps the time, without a guessed day');
+  check(other.c.awayLabel === 'tomorrow 下午3:30' && other.c.awayMidnight === undefined, 'a time this can\'t read keeps its "tomorrow" (right until midnight), rather than a guessed day');
+  // In the user's own time zone, the midnight comes from this computer's calendar. With the clocks going forward at
+  // 1 AM (London, 29 March 2026), 6:00 AM is 5 hours after midnight, not 6.
+  if (process.platform !== 'win32') {
+    const out = require('child_process').execFileSync(process.execPath, ['-e', `
+      const { userMidnightBefore } = require(${JSON.stringify(EXT + '/dist/model.js')});
+      const end = new Date(2026, 2, 29, 6, 0, 20).getTime();
+      console.log((end - userMidnightBefore(end, '6:00 AM')) / 60000);`], { env: { ...process.env, TZ: 'Europe/London' }, encoding: 'utf8' }).trim();
+    check(out === '300.3333333333333', `on the night the clocks change, midnight is found by the calendar (${out} min before the end)`);
+  }
 }
 
 const pw = require('./harness/playwright');
@@ -196,17 +205,26 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     check(ring.outline === 'none' && /0px 0px 0px 2px inset/.test(ring.edge) && /0px 0px 0px 3px(,|$)/.test(ring.edge), `the focused choice has one outline, round the whole card (${JSON.stringify(ring)})`);
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp'); await page.waitForTimeout(80);
-    check((await picked()) === 'other' && (await onOpt()) === 'other', 'ArrowUp from the first choice goes round to the last, and "Something else" doesn\'t pull the focus into its box');
+    // "Something else" is moved to, not picked: it is no answer until typed, and the choice made stays.
+    check((await picked()) === 'o1' && (await onOpt()) === 'other' && (await stops()) === '-1,-1,-1,0', `ArrowUp goes round to "Something else" without picking it or opening its box (picked ${await picked()})`);
     const still = [];
-    for (const k of ['Control+ArrowDown', 'Alt+ArrowDown', 'Shift+ArrowDown', 'Meta+ArrowDown']) {
+    for (const k of ['Control+ArrowUp', 'Alt+ArrowUp', 'Shift+ArrowUp', 'Meta+ArrowUp']) {
       await page.keyboard.press(k); await page.waitForTimeout(40);
-      if ((await picked()) === 'other' && (await onOpt()) === 'other') still.push(k);
+      if ((await picked()) === 'o1' && (await onOpt()) === 'other') still.push(k);
     }
     check(still.length === 4, `with Ctrl, Alt, Shift or Cmd the arrow keys leave the answer alone (${still.join(' ')})`);
     // Moving through the choices saves once you stop, not at every key.
     await page.waitForTimeout(450);
     const saves = (await page.posted('answerDraft')).map((m) => m.picks.join());
-    check(saves.join(' ') === 'other', `one save for three moves (${saves.join(' ')})`);
+    check(saves.join(' ') === 'o1', `one save for three moves (${saves.join(' ')})`);
+    // Space on "Something else" picks it and goes on into its box. Home and End go to the first and last choice.
+    await page.keyboard.press(' '); await page.waitForTimeout(80);
+    check((await picked()) === 'other' && (await page.evaluate(() => document.activeElement.classList.contains('other'))), 'Space on "Something else" picks it and goes into its box');
+    await page.focus('#task-q1 .opt[data-opt="o2"] .opt-main');
+    await page.keyboard.press('Home'); await page.waitForTimeout(40);
+    const home = [await onOpt(), await picked()].join();
+    await page.keyboard.press('End'); await page.waitForTimeout(40);
+    check(home === 'o1,o1' && (await onOpt()) === 'other' && (await picked()) === 'o1', `Home picks the first choice, End moves to the last (${home})`);
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80);
     // A redraw (here: a screenshot was added) keeps the focus on the choice you were on.
     const l = state(); l.questions.find((q) => q.id === 'q1').rev++; l.questions.find((q) => q.id === 'q1').draft.picks = ['o3'];
@@ -297,14 +315,14 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await k.close();
   }
 
-  // Close sends typing not saved yet first, so the question before closing counts it.
+  // Before it asks about closing, the window asks the panel for typing not saved yet: it comes first, then "flushed".
   {
     const page = await open();
     await page.click('#task-q1 .opt[data-opt="other"] .opt-main'); await page.waitForTimeout(50);
     await page.fill('#task-q1 .other', 'Purple');
-    await page.click('#close'); await page.waitForTimeout(50);
-    const order = await page.evaluate(() => window.__out.filter((m) => m.type === 'answerDraft' || m.type === 'close').map((m) => m.type + (m.other ? ':' + m.other : '')));
-    check(order.slice(-2).join(' ') === 'answerDraft:Purple close', `the typed answer goes before Close (${order.join(' ')})`);
+    await page.evaluate(() => window.postMessage({ type: 'flush' }, '*')); await page.waitForTimeout(50);
+    const order = await page.evaluate(() => window.__out.filter((m) => ['answerDraft', 'flushed'].includes(m.type)).map((m) => m.type + (m.other ? ':' + m.other : '')));
+    check(order.slice(-2).join(' ') === 'answerDraft:Purple flushed', `asked to, the panel sends the typed answer, then says so (${order.join(' ')})`);
     await page.close();
   }
 
@@ -360,6 +378,52 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     const l = state(); Object.assign(l.tasks.find((t) => t.id === 't1'), { shared: { done: true, note: '', images: [], at: Date.now() }, rev: 9 });
     await page.send(l); await page.waitForTimeout(150);
     check(await page.evaluate(() => !!document.activeElement.closest('.task.current') && document.activeElement.classList.contains('row-main')), `the focus goes to the next task (${await focused(page)})`);
+    await page.close();
+    // The same with "Shared with Claude" open: the shared task is drawn there again, but the focus goes on to the next
+    // task, not down to it. Nothing that moves the focus somewhere new leaves it out of view.
+    const p2 = await open();
+    await p2.click('text=Shared with Claude'); await p2.waitForTimeout(150);
+    await p2.focus('#task-t1 .tick'); await p2.keyboard.press(' '); await p2.waitForTimeout(50);
+    await p2.focus('#task-t1 .share-btn'); await p2.keyboard.press('Enter'); await p2.waitForTimeout(300);
+    await p2.send(l); await p2.waitForTimeout(150);
+    const there = await p2.evaluate(() => { const a = document.activeElement, r = a.getBoundingClientRect(); return [!!a.closest('.task.current'), a.closest('.shared-row') ? 'shared' : 'todo', r.top >= 0 && r.bottom <= innerHeight]; });
+    check(there.join() === 'true,todo,true', `with Shared open, the focus still goes to the next task, in view (${there})`);
+    await p2.close();
+  }
+
+  // Removing a screenshot from the keyboard: the focus goes to the next one's remove button (the last: the one before).
+  {
+    const three = state(); three.tasks.find((t) => t.id === 't4').draft.images = ['a', 'b', 'c'].map((id) => ({ id, mime: 'image/png', data: PNG, w: 1, h: 1 }));
+    const page = await open({ list: three });
+    // Opened by hand (shut, then open): it stays open when its screenshots are gone. (One opened only because it had
+    // screenshots shuts again, and the focus goes to its row.)
+    await page.focus('#task-t4 .row-main'); await page.keyboard.press('Enter'); await page.keyboard.press('Enter'); await page.waitForTimeout(120);
+    const after = async (id) => {
+      await page.focus(`#task-t4 [data-key="remove:t4/${id}"]`); await page.keyboard.press('Enter'); await page.waitForTimeout(50);
+      const t4 = three.tasks.find((t) => t.id === 't4');
+      t4.draft.images = t4.draft.images.filter((x) => x.id !== id); t4.rev++;
+      await page.send(three); await page.waitForTimeout(150);
+      return page.evaluate(() => document.activeElement.dataset.key || document.activeElement.className);
+    };
+    const first = await after('b'), second = await after('c');
+    check(first === 'remove:t4/c' && second === 'remove:t4/a', `the focus moves to the neighbouring screenshot's remove button (${first}, ${second})`);
+    const last = await after('a');
+    check(last === 'note', `when the last one goes, the focus goes to the note (${last})`);
+    await page.close();
+  }
+
+  // Share all from the keyboard while one of its tasks can't be shared (Claude removed it): no stray focus move later.
+  {
+    const two = state(); for (const id of ['t1', 't4']) two.tasks.find((t) => t.id === id).draft.done = true;
+    two.tasks.find((t) => t.id === 't3').draft.done = true; two.tasks.find((t) => t.id === 't3').shared = undefined;
+    const page = await open({ list: two });
+    await page.focus('#share-all'); await page.keyboard.press('Enter'); await page.waitForTimeout(400);
+    // The window shares t1 and t4; t3 is gone (Claude removed it). The bar stays for a moment with nothing in it.
+    const after = JSON.parse(JSON.stringify(two));
+    for (const id of ['t1', 't4']) after.tasks.find((t) => t.id === id).shared = { done: true, note: '', images: [], at: Date.now() };
+    after.tasks = after.tasks.filter((t) => t.id !== 't3');
+    await page.send(after); await page.waitForTimeout(300);
+    check(await page.evaluate(() => !!document.activeElement.closest('#list')), 'with every task shared or gone, the focus is back in the list');
     await page.close();
   }
 

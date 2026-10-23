@@ -224,7 +224,8 @@
       if (!refocus) return;
       // Found again by name: the panel may have been redrawn while this was open. If the screenshot is gone, its task or question.
       const card = document.getElementById(`task-${taskId}`);
-      focusOn(document.querySelector(`[data-shot="${CSS.escape(shot)}"]`) || (card ? homeOf(card) : listHome()));
+      const back = document.querySelector(`[data-shot="${CSS.escape(shot)}"]`);
+      focusOn(back || (card ? homeOf(card) : listHome()), !back);
     };
     // Caught first, so Escape closes only this (not the away card too), and Tab has nowhere else to go.
     const onKey = (e) => {
@@ -287,12 +288,13 @@
     } else send();
   }
 
-  // Share all has the focus (from a key, a screen reader, voice control or a click): when the bar goes, the focus goes to
-  // the list instead of nowhere. After a mouse click the browser shows no focus ring there, so nothing changes on screen.
-  let focusList = false;
+  // Share all had the focus (from a key, a screen reader, voice control or a click): the tasks it is sharing. Once they
+  // are all shared (or gone), the focus goes to the list if the bar has gone, instead of nowhere; then this is cleared.
+  // After a mouse click the browser shows no focus ring there, so nothing changes on screen.
+  let focusList = null;
   function shareAllTicked() {
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done);
-    focusList = document.activeElement === $('#share-all');
+    focusList = document.activeElement === $('#share-all') ? ticked.map((t) => t.id) : null;
     for (const t of ticked) share(t);
     if (ticked.length) toast(`Shared ${plural(ticked.length, 'task', 'tasks')} with Claude`);
   }
@@ -526,18 +528,22 @@
       paint();
       if (id === 'other' && d.picks.includes('other') && !byArrow) setTimeout(() => el.querySelector('.other')?.focus(), 0);
     };
-    // One choice: one Tab stop, and the arrow keys move between the choices, as with any set of radio buttons.
+    // One choice: one Tab stop. The arrow keys (and Home, End) move between the choices and pick them, as with any set of
+    // radio buttons. "Something else" is only moved to: it isn't an answer until you type it, so picking it on the way
+    // past would drop the choice you made. Space or Enter picks it and goes on into its box.
     if (!q.multi)
       opts.addEventListener('keydown', (e) => {
-        const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
         const btns = [...opts.querySelectorAll('.opt-main')];
         const at = btns.indexOf(document.activeElement);
+        const to = { ArrowDown: at + 1, ArrowRight: at + 1, ArrowUp: at - 1, ArrowLeft: at - 1, Home: 0, End: btns.length - 1 }[e.key];
         // With Alt, Ctrl, Shift or Cmd the keys belong to the screen reader or the system, not to the answer.
-        if (!step || at < 0 || e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+        if (to === undefined || at < 0 || e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
         e.preventDefault();
-        const next = btns[(at + step + btns.length) % btns.length];
+        const next = btns[(to + btns.length) % btns.length];
         next.focus();
-        choose(next.closest('.opt').dataset.opt, true);
+        const id = next.closest('.opt').dataset.opt;
+        if (id === 'other') paint();
+        else choose(id, true);
       });
     const all = [...q.options, ...(q.allowOther ? [{ id: 'other', label: 'Something else' }] : [])];
     for (const o of all) {
@@ -630,7 +636,8 @@
 
     function paint() {
       const rows = [...el.querySelectorAll('.opt')];
-      const tabStop = rows.find((r) => d.picks.includes(r.dataset.opt)) || rows[0];
+      // The Tab stop is the choice you are on, else the one picked, else the first.
+      const tabStop = rows.find((r) => r.contains(document.activeElement)) || rows.find((r) => d.picks.includes(r.dataset.opt)) || rows[0];
       for (const row of rows) {
         const on = d.picks.includes(row.dataset.opt);
         row.classList.toggle('on', on);
@@ -752,14 +759,20 @@
   const homeOf = (card) => card.querySelector(':scope > .row .row-main') || card;
   /** …and when its whole card is gone (shared, or removed): the next task, else the top of the list, to Tab on from. */
   const listHome = () => $('#list .task.current .row-main') || $('#list');
-  /** Focus on `el`. A card or the list can't take the focus by Tab or a click, so it can only for as long as it has it. */
-  function focusOn(el) {
+  /**
+   * Focus on `el`. A card or the list can't take the focus by Tab or a click, so it can only for as long as it has it.
+   * `reveal`: the focus moved somewhere else (not the same control drawn again), so scroll it into view if it isn't.
+   */
+  function focusOn(el, reveal) {
     if (!el.matches('button, input, textarea, summary, [tabindex]')) {
       el.tabIndex = -1;
       el.addEventListener('blur', () => el.removeAttribute('tabindex'), { once: true });
     }
     el.focus({ preventScroll: true });
+    if (reveal) el.scrollIntoView({ block: 'nearest' });
   }
+  /** Screenshots are a row of like controls: when one goes, the focus goes to its neighbour ("shot:", "remove:" keys). */
+  const siblingKind = (key) => /^(shot|remove):/.exec(key || '')?.[0];
 
   /* ---------------- page parts ---------------- */
   function renderProgress() {
@@ -827,6 +840,7 @@
   }
 
   let sendOnCard = false;
+  let lastCurrent; // the next task at the last render (undefined before the first)
   function render() {
     if (!list) return;
     $('#title').textContent = list.title;
@@ -840,6 +854,16 @@
     linked = new Set();
     const groups = todoGroups();
     currentId = pickCurrent(groups);
+    // The next task stays in its group, so it must not be hidden there by an old choice: when it moves into a group you
+    // had collapsed, that group opens. (Collapsing the group it is already in keeps it shut, with a hint on its header.)
+    if (lastCurrent !== undefined && currentId && currentId !== lastCurrent) {
+      const g = list.tasks.find((t) => t.id === currentId).group;
+      if (g && ui.collapsed[g] && list.tasks.find((t) => t.id === lastCurrent)?.group !== g) {
+        ui.collapsed[g] = false;
+        saveUi();
+      }
+    }
+    lastCurrent = currentId;
     renderProgress();
     renderDock();
 
@@ -847,7 +871,16 @@
     const active = document.activeElement;
     const scope = active?.closest?.('.task, .qcard') || active?.closest?.('#list');
     // id: the card it is in (none for a control in the list itself, like a section head).
-    const focus = scope && { el: active, id: scope.dataset.id, key: active.dataset.key, start: active.selectionStart, end: active.selectionEnd };
+    const kind = siblingKind(active?.dataset?.key);
+    const focus = scope && {
+      el: active,
+      id: scope.dataset.id,
+      shared: scope.classList.contains('shared-row'), // a task that is shared now is drawn again in another place
+      key: active.dataset.key,
+      at: kind ? [...scope.querySelectorAll(`[data-key^="${kind}"]`)].indexOf(active) : -1,
+      start: active.selectionStart,
+      end: active.selectionEnd,
+    };
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
@@ -924,20 +957,28 @@
     $('#empty').hidden = list.tasks.length + list.questions.length > 0;
 
     if (focus) {
-      const r = focus.id ? document.getElementById(`task-${focus.id}`) : $('#list');
+      let r = focus.id ? document.getElementById(`task-${focus.id}`) : $('#list');
+      // You shared the task: it went from the to-do list to "Shared with Claude". Go on to the next task, not after it.
+      if (r && focus.id && r.classList.contains('shared-row') !== focus.shared) r = null;
       const kept = focus.el.isConnected && !focus.el.disabled && !focus.el.closest('[hidden]');
+      const kind = siblingKind(focus.key);
+      const neighbour = () => {
+        const left = [...r.querySelectorAll(`[data-key^="${kind}"]`)].filter((x) => !x.closest('[hidden]'));
+        return left[Math.min(focus.at, left.length - 1)] || controlIn(r, 'note');
+      };
       // A control that is gone (Share answer, once the answer is shared) never hands the focus to another one in its place.
-      const target = kept ? focus.el : !r ? listHome() : (focus.key && controlIn(r, focus.key)) || homeOf(r);
+      const same = kept ? focus.el : r && focus.key && controlIn(r, focus.key);
+      const target = same || (!r ? listHome() : (kind && neighbour()) || homeOf(r));
       if (target !== document.activeElement) {
-        focusOn(target);
+        focusOn(target, !same);
         if (target.tagName === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
       }
     }
     // After Share all from the keyboard the bar is gone (and out of reach): put the focus on the next task, or at the
     // top of the list, so the next Tab goes on from there. Not on a choice or a button, where Enter would do something.
-    if (focusList && !$('#dock').classList.contains('on')) {
-      focusList = false;
-      focusOn(listHome());
+    if (focusList && focusList.every((id) => !list.tasks.some((t) => t.id === id && !t.shared))) {
+      if (!$('#dock').classList.contains('on')) focusOn(listHome(), true);
+      focusList = null;
     }
     arriveId = null;
   }
@@ -973,7 +1014,7 @@
   const awayView = () => (awayStage !== 'idle' ? awayStage : isAway() ? 'on' : 'idle');
   const timeText = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   /** "3:30 PM", or "tomorrow 1:00 AM" if that isn't today. Worked out each time it is shown, so it is still right after midnight. */
-  const clockText = (ms, time = timeText(ms)) => (new Date(ms).toDateString() === new Date().toDateString() ? time : `tomorrow ${time}`);
+  const clockText = (ms) => (new Date(ms).toDateString() === new Date().toDateString() ? '' : 'tomorrow ') + timeText(ms);
   // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
   const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
   /** The end time for the away card. The window says whether it is "tomorrow", and until when, as it tells Claude. */
@@ -1162,15 +1203,12 @@
 
   $('#away-btn').onclick = toggleAway;
   $('#hide').onclick = () => post({ type: 'hide' });
-  // Typing not saved yet goes first, so the question before closing counts what you see (an answer typed a moment ago).
-  $('#close').onclick = () => {
-    flushDrafts();
-    post({ type: 'close' });
-  };
+  // Before asking about closing, the window has this panel send what isn't saved yet (an answer typed a moment ago).
+  $('#close').onclick = () => post({ type: 'close' });
   $('#share-all').onclick = shareAllTicked;
   // You moved on yourself (Tab, a click): Share all no longer moves the focus when the bar goes.
   document.addEventListener('focusin', (e) => {
-    if (!$('#dock').contains(e.target)) focusList = false;
+    if (!$('#dock').contains(e.target)) focusList = null;
   });
 
   document.addEventListener('paste', (e) => {
@@ -1200,16 +1238,24 @@
       render();
       // The one authored moment: after sharing the current task, the next one opens in its place.
       const wasSharedNow = prevCurrent && !prevShared && list.tasks.find((t) => t.id === prevCurrent)?.shared;
-      if (wasSharedNow && currentId && currentId !== prevCurrent && !reduced()) {
-        arriveId = currentId;
-        rendered.delete(currentId);
-        render();
+      if (wasSharedNow && currentId && currentId !== prevCurrent) {
+        if (!reduced()) {
+          arriveId = currentId;
+          rendered.delete(currentId);
+          render();
+        }
+        // It may be in a group further down: bring it into view (only as far as needed).
+        document.getElementById(`task-${currentId}`)?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
       }
     } else if (m.type === 'awayRefused') {
       // The window said no to that time: back to the picker, not stuck on the question.
       awaySent = false;
       awayStage = 'picker';
       renderAway();
+    } else if (m.type === 'flush') {
+      // The window is about to ask about closing: send what isn't saved yet first, so the question counts it.
+      flushDrafts();
+      post({ type: 'flushed' });
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });

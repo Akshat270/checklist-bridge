@@ -315,14 +315,15 @@ export function normalize(c: Checklist): Checklist {
   c.phases ??= [];
   // An away that ran out while the window was closed means nothing now.
   if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
-  // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes. Keep
-  // the time, and say "tomorrow" until the user's midnight: the label says how long after it the away ends (6 h 0 min),
-  // so it is that long before the end, whatever time zone this computer is in.
+  // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes.
   if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) {
-    c.awayLabel = c.awayLabel.slice('tomorrow '.length);
-    const into = minutesIntoDay(c.awayLabel);
-    const midnight = into === undefined ? 0 : c.awayUntil - into * 60_000 - (c.awayUntil % 60_000); // the label has no seconds
-    if (midnight > Date.now()) c.awayMidnight = midnight;
+    const time = c.awayLabel.slice('tomorrow '.length);
+    const midnight = userMidnightBefore(c.awayUntil, time);
+    // A time that can't be read keeps its "tomorrow": right until midnight, rather than wrong until then.
+    if (midnight !== undefined) {
+      c.awayLabel = time;
+      if (midnight > Date.now()) c.awayMidnight = midnight;
+    }
   }
   return c;
 }
@@ -1162,6 +1163,21 @@ export function minutesIntoDay(label: string): number | undefined {
     h = (h % 12) + (m[3].toLowerCase() === 'p' ? 12 : 0);
   }
   return h < 24 && min < 60 ? h * 60 + min : undefined;
+}
+
+/**
+ * The user's midnight before `end`, when their screen showed `end` as `time` ("6:00 AM"). Undefined if the time can't
+ * be read. If this computer's clock shows the same time at `end`, it is in the user's time zone, and its own calendar
+ * gives the midnight (right on a night the clocks change too). Otherwise (VS Code Remote, another time zone) it is
+ * worked out from the time: `end` less 6 h 0 min, which can be an hour out on such a night there.
+ */
+export function userMidnightBefore(end: number, time: string): number | undefined {
+  const into = minutesIntoDay(time);
+  if (into === undefined) return undefined;
+  const d = new Date(end);
+  const here = d.getHours() * 60 + d.getMinutes();
+  if ([0, 1, 1439].includes((here - into + 1440) % 1440)) return d.setHours(0, 0, 0, 0); // within a minute: the same zone
+  return end - into * 60_000 - (end % 60_000); // the time has no seconds
 }
 
 /** "tomorrow " while the away ends after the user's next midnight and that midnight hasn't come yet, else "". */

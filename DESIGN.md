@@ -224,7 +224,7 @@ A single column, `max-width: 640px`, with 18px side padding (12px below 360px wi
 
 Task rows are a three-column grid: 22px control column, flexible text, auto-width right slot for priority mark or quick-share. Open rows indent their body 40px so notes, commands and actions line up with the task text, not with the checkbox. Inside a row, the rhythm is 4 to 12px; between sections, 18 to 26px.
 
-Ordering is part of the layout: within each group urgent comes first, then important, then the rest in Claude's order. The current task is the highest-ranked unshared task. It stays in its place: first among the ungrouped tasks, or inside its own group (where it is first unless it is a later step), never pulled out above the groups. If its group is collapsed, the group's header says "next task inside".
+Ordering is part of the layout: within each group urgent comes first, then important, then the rest in Claude's order. The current task is the highest-ranked unshared task. It stays in its place: first among the ungrouped tasks, or inside its own group (where it is first unless it is a later step), never pulled out above the groups. When it moves into a group the user collapsed, that group opens; collapsing the group it is already in keeps it shut, with "next task inside" on the header. After a share, the panel scrolls only as far as needed to show the new current task.
 
 ## Elevation & Depth
 

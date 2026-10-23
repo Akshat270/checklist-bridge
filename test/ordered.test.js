@@ -254,6 +254,38 @@ function build() {
     await pg.close();
   }
 
+  // The next task is never hidden or out of view because it stays in its group.
+  {
+    const s = new ChecklistStore(), S = 'x';
+    s.handleTool(S, {}, 'checklist_add_tasks', {
+      title: 'Long',
+      tasks: [...Array.from({ length: 15 }, (_, i) => ({ text: `Read page ${i + 1}`, group: 'Docs' })), { text: 'Add the key', group: 'Payments', tags: ['urgent'] }, { text: 'Test the payment', group: 'Payments', tags: ['urgent'] }],
+    });
+    const pl = JSON.parse(JSON.stringify(s.all()[0]));
+    const send = (pg, l) => pg.evaluate((x) => window.postMessage({ type: 'state', list: x, routes: { waiting: false, channel: false, terminal: false } }, '*'), l);
+    const pg = await open(pl);
+    // You collapse Docs; Claude then makes a Docs task urgent: it becomes the next task, and Docs opens again.
+    await pg.click('.section-head:has-text("Docs")'); await pg.waitForTimeout(150);
+    const l2 = JSON.parse(JSON.stringify(pl)); Object.assign(l2.tasks.find((x) => x.id === 't9'), { tags: ['urgent'], rev: 5 });
+    for (const id of ['t16', 't17']) l2.tasks.find((x) => x.id === id).tags = [];
+    await send(pg, l2); await pg.waitForTimeout(200);
+    check((await next(pg)) === 't9' && (await pg.$eval('.section-head:has-text("Docs")', (x) => x.getAttribute('aria-expanded'))) === 'true', 'when the next task moves into a group you collapsed, the group opens');
+    // Collapsing the group the next task is already in keeps it shut, with the hint.
+    await pg.click('.section-head:has-text("Docs")'); await pg.waitForTimeout(150);
+    await send(pg, l2); await pg.waitForTimeout(150);
+    check((await pg.$eval('.section-head:has-text("Docs")', (x) => x.getAttribute('aria-expanded'))) === 'false', 'collapsing the group it is already in keeps it shut');
+    await pg.close();
+    // After you share the next task, the new one is scrolled into view, even far down in its group.
+    const pg2 = await open(pl);
+    await pg2.setViewportSize({ width: 400, height: 500 });
+    await pg2.evaluate(() => scrollTo(0, 0));
+    const l3 = JSON.parse(JSON.stringify(pl)); l3.tasks.find((x) => x.id === 't16').shared = { at: 1, done: true, note: '', images: [] };
+    await send(pg2, l3); await pg2.waitForTimeout(900); // the share's slide and the scroll
+    const seen = await pg2.$eval('.task.current', (x) => { const r = x.getBoundingClientRect(); return [x.dataset.id, r.top >= 0 && r.top < innerHeight]; });
+    check(seen.join() === 't17,true', `after sharing, the next task is scrolled into view (${seen})`);
+    await pg2.close();
+  }
+
   await b.close();
   console.log(failed ? `${failed} FAILED` : 'ALL PASS'); process.exit(failed ? 1 : 0);
 })();
