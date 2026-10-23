@@ -89,7 +89,7 @@ test('Claude adds tasks, the user shares one, Send now hands it to Claude', asyn
     expect(await ui.find({ key: 't1-share-done' })).toBeDefined()
     expect(await ui.find({ key: 't2-share-done' })).toBeUndefined()
     expect(await ui.find({ key: 't2-open' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /0 of 2 shared with Claude · 2 to do/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /2 tasks waiting on you/ })).toBeDefined()
     await ui.unmount()
   }
 
@@ -106,11 +106,12 @@ test('Claude adds tasks, the user shares one, Send now hands it to Claude', asyn
   // Shared: it leaves To do, the next task opens, and Send now appears at the top.
   expect(await ui.find({ key: 't1-share-done' })).toBeUndefined()
   expect(await ui.find({ key: 't2-share-done' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /1 of 2 shared with Claude/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1\/2/ })).toBeDefined()
   expect(await ui.find({ key: 't1-unshare' })).toBeUndefined()
   await ui.press({ key: 'shared-toggle' })
   expect(await ui.find({ key: 't1-unshare' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Note: key is in 1Password · 1 screenshot/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /“key is in 1Password”/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /▣ 1 screenshot/ })).toBeDefined()
   expect(seen.status.at(-1)).toBe('1 on your checklist, 1 shared, not sent (/checklist)')
   await ui.press({ key: 'send' })
   expect(seen.prompts.length).toBe(1)
