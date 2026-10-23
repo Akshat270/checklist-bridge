@@ -1,6 +1,6 @@
 {
-  "version": "0.7.1",
-  "vsix": "releases/checklist-bridge-0.7.1.vsix",
-  "sha256": "d661f83a0999bc33a099216f4f5aae0b697d3b6109a5d00f5bddf6546b570b13",
-  "notes": "Fixes steps in ordered groups and phases piling on top of each other."
+  "version": "0.7.2",
+  "vsix": "releases/checklist-bridge-0.7.2.vsix",
+  "sha256": "e6766f5630d5f13d181ee2748e50f6bb6fde2758a4b1d66a809584cb48e70ec1",
+  "notes": "Keyboard and screen-reader support, the next task stays in its group, and away-mode fixes."
 }

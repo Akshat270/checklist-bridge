@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.2
 - **Easier to use with a keyboard.** Every row opens with Enter or Space, answered questions too. Task ids and screenshots can be reached with Tab, and a screenshot shown full size closes with Escape. With one choice to pick, the arrow keys move between the choices. When Claude updates the checklist, the focus stays where it was.
 - **Screen readers now hear what the colours and icons show:** urgent or important, shared as done or not done, and whether Claude has read it.
 - **High-contrast light themes** now use the darker colours, so tags and marks are easy to read on white.
