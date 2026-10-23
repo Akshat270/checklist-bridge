@@ -8,6 +8,8 @@ const T = 'mcp__checklist-bridge__'
 
 function world(on: any, files: Record<string, string> = {}) {
   const chat = { sid: 'chat-1' }
+  // What the clipboard holds for "Paste screenshot": 'image', 'text' or 'no-tool' (wl-paste/xclip missing).
+  const clipboard = { holds: 'image' as 'image' | 'text' | 'no-tool', runs: [] as string[][] }
   const seen = { status: [] as (string | undefined)[], toasts: [] as string[], prompts: [] as string[], opened: 0, tools: [] as string[] }
   on('env.get', (_: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
   on('fs.exists', (_: any, e: any) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(e.path + '/')) }))
@@ -21,7 +23,15 @@ function world(on: any, files: Record<string, string> = {}) {
       .filter(f => f.startsWith(e.path + '/') && !f.slice(e.path.length + 1).includes('/'))
       .map(f => ({ name: f.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })),
   }))
+  on('process.run', (_: any, e: any) => {
+    clipboard.runs.push([...e.argv])
+    if (e.argv[0] === 'uname') return { value: { exitCode: 0, stdout: 'Linux\n', stderr: '' } }
+    if (clipboard.holds === 'no-tool') return { value: { exitCode: 0, stdout: 'notool\n', stderr: '' } }
+    if (clipboard.holds === 'image') files[e.init.env.CB_SHOT] = 'PNG'
+    return { value: { exitCode: 0, stdout: clipboard.holds === 'image' ? 'ok\n' : 'none\n', stderr: '' } }
+  })
   on('session.id', () => ({ value: chat.sid }))
+  on('tool.check', () => ({ decision: 'ask' }))
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', (_: any, e: any) => ({ value: { command: e.name } }))
   on('tool.register', (_: any, e: any) => {
@@ -45,7 +55,7 @@ function world(on: any, files: Record<string, string> = {}) {
     return { text: e.text }
   })
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }))
-  return { files, seen, chat }
+  return { files, seen, chat, clipboard }
 }
 
 const PANE = {
@@ -74,24 +84,39 @@ test('Claude adds tasks, the user shares one, Send now hands it to Claude', asyn
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ type: 'Text', text: /t1 Create an API key/ })).toBeDefined()
+    // The next task is open as a card; the other is one line you can open.
+    expect(await ui.find({ type: 'Text', text: /Create an API key/ })).toBeDefined()
+    expect(await ui.find({ key: 't1-share-done' })).toBeDefined()
+    expect(await ui.find({ key: 't2-share-done' })).toBeUndefined()
+    expect(await ui.find({ key: 't2-open' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /0 of 2 shared with Claude · 2 to do/ })).toBeDefined()
     await ui.unmount()
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 't1-done' })
+  await ui.press({ key: 't2-open' })
+  expect(await ui.find({ key: 't2-share-done' })).toBeDefined()
+  expect(await ui.find({ key: 't1-share-done' })).toBeUndefined()
+  await ui.press({ key: 't1-open' })
   await ui.input({ key: 't1-note', text: 'key is in 1Password' })
   await ui.input({ key: 't1-shot', text: '/home/u/Desktop/key.png' })
-  await ui.press({ key: 't1-share' })
-  expect(await ui.find({ type: 'Text', text: /Shared/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Screenshot 1/ })).toBeDefined()
+  expect(await ui.find({ key: 'send' })).toBeUndefined()
+  await ui.press({ key: 't1-share-done' })
+  // Shared: it leaves To do, the next task opens, and Send now appears at the top.
+  expect(await ui.find({ key: 't1-share-done' })).toBeUndefined()
+  expect(await ui.find({ key: 't2-share-done' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1 of 2 shared with Claude/ })).toBeDefined()
+  expect(await ui.find({ key: 't1-unshare' })).toBeUndefined()
+  await ui.press({ key: 'shared-toggle' })
+  expect(await ui.find({ key: 't1-unshare' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Note: key is in 1Password · 1 screenshot/ })).toBeDefined()
   expect(seen.status.at(-1)).toBe('1 on your checklist, 1 shared, not sent (/checklist)')
   await ui.press({ key: 'send' })
   expect(seen.prompts.length).toBe(1)
   expect(seen.prompts[0]).toMatch(/t1/)
   expect(seen.prompts[0]).toMatch(/1Password/)
-  await ui.press({ key: 'send' })
-  expect(seen.prompts.length).toBe(1)
-  expect(seen.toasts.at(-1)).toMatch(/Nothing new to send/)
+  expect(await ui.find({ key: 'send' })).toBeUndefined()
   await ui.unmount()
 
   const r = textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))
@@ -110,10 +135,13 @@ test('answering a question', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'q1-answer' })
   expect(seen.toasts.at(-1)).toMatch(/Pick an option/)
-  const opt = (await ui.findAll({ type: 'Button' })).find((b: any) => /SQLite \(recommended\)/.test(b.text ?? b.label ?? ''))
-  expect(opt).toBeDefined()
-  await ui.press({ key: (opt as any).key })
+  expect(await ui.find({ type: 'Text', text: /recommended/ })).toBeDefined()
+  await ui.press({ key: 'q1-opt-' + (await ui.findAll({ type: 'Button' })).map((b: any) => b.key).find((k: string) => k?.startsWith('q1-opt-'))!.slice(7) })
+  await ui.press({ key: (await ui.findAll({ type: 'Button' })).map((b: any) => b.key).filter((k: string) => k?.startsWith('q1-opt-'))[1] })
   await ui.press({ key: 'q1-answer' })
+  expect(await ui.find({ key: 'q1-answer' })).toBeUndefined()
+  await ui.press({ key: 'shared-toggle' })
+  expect(await ui.find({ type: 'Text', text: /Which DB\? SQLite/ })).toBeDefined()
   await ui.unmount()
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/ANSWER: SQLite/)
 })
@@ -123,8 +151,10 @@ test('the phone app shows the list without text fields', async ($, on) => {
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Check the page' }] } as any)
   const ui = await $.ui.mount({ ...PANE, surface: 'mobile' })
-  expect(await ui.find({ type: 'Text', text: /t1 Check the page/ })).toBeDefined()
-  expect(await ui.find({ key: 't1-share' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Check the page/ })).toBeDefined()
+  expect(await ui.find({ key: 't1-share-done' })).toBeDefined()
+  expect(await ui.find({ key: 't1-paste' })).toBeDefined()
+  expect(await ui.find({ key: 't1-note' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -186,4 +216,37 @@ test('an earlier checklist can be continued in a new chat', async ($, on) => {
   expect((await $.command.run({ command: 'checklist', args: 'list' } as any)).text).toMatch(/1\. Old work: 1 tasks waiting/)
   expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"Old work" is this chat's checklist now/)
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/Checklist "Old work"/)
+})
+
+test('Paste screenshot saves the image on the clipboard to the task', async ($, on) => {
+  const { files, seen, clipboard } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Check the page' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  clipboard.holds = 'text'
+  await ui.press({ key: 't1-paste' })
+  expect(seen.toasts.at(-1)).toMatch(/No image on the clipboard/)
+  expect(await ui.find({ type: 'Text', text: /Screenshot 1/ })).toBeUndefined()
+
+  clipboard.holds = 'no-tool'
+  await ui.press({ key: 't1-paste' })
+  expect(seen.toasts.at(-1)).toMatch(/wl-clipboard|xclip/)
+
+  clipboard.holds = 'image'
+  await ui.press({ key: 't1-paste' })
+  expect(seen.toasts.at(-1)).toBe('Screenshot added.')
+  expect(await ui.find({ type: 'Text', text: /Screenshot 1/ })).toBeDefined()
+  const run = clipboard.runs.at(-1)!
+  expect(run[0]).toBe('sh')
+  const shot = Object.keys(files).find(f => f.endsWith('.png'))!
+  expect(shot).toMatch(new RegExp(`^${ROOT}/mod/images/[0-9a-f-]+-t1-\\w+\\.png$`))
+  await ui.press({ key: 't1-share-done' })
+  await ui.unmount()
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toContain(`${shot} (open it with your Read tool)`)
+
+  // Claude may open that screenshot without asking, but nothing else (Claude Code's own verdict here is "ask").
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: shot } })).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: `${ROOT}/mod/images/other.png` } })).decision).toBe('ask')
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/etc/passwd' } })).decision).toBe('ask')
 })

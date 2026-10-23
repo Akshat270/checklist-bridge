@@ -128,8 +128,11 @@ Answer `y` to add the marketplace, pick a scope, then start a new chat. From a s
 
 **Use it.** When Claude adds tasks or asks a question, the checklist opens next to the chat. You can also type `/checklist` to open it.
 
-- Tick a task, add a note, then press **Share**. Pick an answer to a question, then press **Answer**.
-- **Screenshots:** type or drop the path of an image file into a task's screenshot box. Claude opens the file itself.
+- The next task is open at the top of **To do**. Add a note if you like, then press **Done, share with Claude** (or **Couldn't do it, share note**). Press any other task to open it instead.
+- For a question, pick an option (or type *Something else*), then press **Answer**.
+- **Screenshots:** take one to the clipboard (Win+Shift+S on Windows, Cmd+Ctrl+Shift+4 on a Mac), then press **Paste screenshot** on the task. You can also type an image file's path. On Linux, pasting needs `wl-clipboard` or `xclip`.
+- What you shared folds into **Shared with Claude** at the bottom. Open it to see what Claude has read, or to take something back.
+- With the checklist focused (Ctrl+X, then Tab), keys work too: `d` done, `n` couldn't do it, `v` paste screenshot, `1`–`9` pick an option, `s` send now.
 - **Send now** hands what you shared to Claude as a message. If Claude is busy, it gets the message as soon as it finishes.
 - `/checklist away 2h` (or `45m`, `18:30`, `6:30pm`) tells Claude you're away. `/checklist back` ends it.
 - `/checklist list` shows earlier checklists in this folder, and `/checklist continue 2` makes one of them this chat's checklist.

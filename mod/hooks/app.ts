@@ -53,6 +53,17 @@ export class App {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
+  /**
+   * Whether `file` is a screenshot the user shared on this chat's checklist. Claude may open exactly those
+   * files without asking (they are usually outside the project, so Claude Code would ask each time).
+   */
+  isSharedShot(sid: string, file: string): boolean {
+    const c = this.current(sid)
+    if (!c || !file) return false
+    const imgs = [...c.tasks.map(t => t.shared?.images ?? []), ...c.questions.map(q => q.answer?.images ?? [])].flat()
+    return imgs.some(i => i.path === file)
+  }
+
   /** Marks a checklist as changed; the next flush() saves it. */
   touch(c: Checklist | undefined) {
     if (!c) return

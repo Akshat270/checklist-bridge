@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Use it without VS Code.** Checklist Bridge now also comes as a mod for Claude Code, so the checklist shows in a pane next to the chat in the terminal or the Claude desktop app. Install it with `/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge`.
+- In the mod, press **Paste screenshot** to add the screenshot on your clipboard to a task. Claude can open the screenshots you share without asking each time.
 - You can switch between the VS Code extension and the mod at any time, and your open checklists come with you. In VS Code, run *Checklist Bridge: Use the Claude Code mod instead*; in Claude Code, type `/checklist use-extension` to come back.
 
 ## 0.7.2

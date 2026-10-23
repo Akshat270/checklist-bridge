@@ -1,13 +1,16 @@
-// The checklist pane: the same checklist as the VS Code panel, drawn with Claude Code's own elements.
-// Calm and plain (see DESIGN.md): ids always shown, colour only for what needs the user.
+// The checklist pane, drawn with Claude Code's own elements: the same checklist as the VS Code panel,
+// laid out for a terminal column (see DESIGN.md for the rules it follows).
+//
+//   Title, progress bar, "Send now"            what to do first is at the top
+//   Decide        open questions, each a card   options are buttons, 1–9 pick in the first one
+//   To do         one open card (the next task), every other task one line you can open
+//   Shared with Claude (n)                      folded away; open it to take something back
+//
 // No `$` here: register.tsx resolves the elements and passes in what a press should do.
 import type { Elements, RenderElement } from 'claude-code'
 
 import type { App } from './app'
 import { groupsOf, isSequence, sequenceOf, type Checklist, type Img, type Question, type Task } from './lib/model'
-
-const tagText = (tags: string[]) => (tags.length ? ` [${tags.join(', ')}]` : '')
-const URGENT = new Set(['urgent', 'blocked'])
 
 export type Actions = {
   /** Saves `c` and redraws. */
@@ -15,18 +18,52 @@ export type Actions = {
   toast: (text: string) => void
   /** Send now. */
   send: (c: Checklist) => Promise<void>
+  /** Saves the image on the clipboard as a screenshot of this task or question. */
+  paste: (c: Checklist, itemId: string) => Promise<void>
+  /** Opens this task's card (the others fold to one line). */
+  open: (taskId: string) => Promise<void>
+  toggleShared: () => Promise<void>
 }
 
-export function drawPane(els: Elements[keyof Elements], app: App, sid: string, act: Actions): RenderElement {
-  const { Box, Text, Button } = els
+export type View = {
+  /** The task whose card is open, if the user picked one. */
+  openId: string
+  showShared: boolean
+  /** Cells across the pane, for rules and the progress bar. */
+  width: number
+}
+
+const RANK: Record<string, number> = { urgent: 0, important: 1 }
+const rank = (t: Task) => Math.min(...t.tags.map(x => RANK[x] ?? 2), 2)
+const TAG_COLOR: Record<string, string> = { urgent: 'error', important: 'warning', quick: 'suggestion', blocked: 'permission' }
+/** "pasted" for one Paste screenshot saved, else the file's name. */
+const shotName = (listId: string, img: Img) => {
+  const name = (img.path ?? '').split(/[\\/]/).pop() ?? ''
+  return name.startsWith(listId + '-') ? 'pasted' : name.length > 32 ? '…' + name.slice(-31) : name || 'saved'
+}
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+
+/** The tasks in the order the panel shows them: Claude's order, urgent and important first unless the group is a sequence. */
+function ordered(c: Checklist) {
+  return groupsOf(c).map(g => {
+    const seq = g.name && isSequence(c, g.name) ? sequenceOf(c, g.name) : []
+    const tasks = seq.length ? g.tasks : [...g.tasks].sort((a, b) => rank(a) - rank(b))
+    return { ...g, tasks, seq }
+  })
+}
+
+export function drawPane(els: Elements[keyof Elements], app: App, sid: string, view: View, act: Actions): RenderElement {
+  const { Box, Text, Button, Code } = els
   // The phone app has no text fields: there the pane shows the list with its buttons only.
   const Input = 'Input' in els ? els.Input : undefined
+  const width = Math.max(20, Math.min(view.width, 100))
+  const rule = <Text dimColor>{'─'.repeat(width)}</Text>
 
   if (!app.isOn)
     return (
       <Box flexDirection="column">
-        <Text>Checklists are in the VS Code extension now.</Text>
-        <Text dimColor>Run /checklist use-mod to use them here again.</Text>
+        <Text bold>Checklists are in the VS Code extension now.</Text>
+        <Text dimColor>To use them here again, type /checklist use-mod.</Text>
       </Box>
     )
 
@@ -34,158 +71,244 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, a
   if (!c)
     return (
       <Box flexDirection="column">
-        <Text>No checklist in this chat yet.</Text>
-        <Text dimColor>When Claude needs you to do something by hand or make a decision, it shows up here.</Text>
-        {app.others(sid).length > 0 && <Text dimColor>Run /checklist list to continue an earlier one.</Text>}
+        <Text bold>No checklist in this chat yet.</Text>
+        <Text dimColor>When Claude needs you to do something by hand or make a decision, it appears here.</Text>
+        {app.others(sid).length > 0 && <Text dimColor>To pick up an earlier one, type /checklist list.</Text>}
       </Box>
     )
 
   const save = () => act.changed(c)
-  const toast = act.toast
+  const groups = ordered(c)
+  const all = groups.flatMap(g => g.tasks)
+  const open = all.filter(t => !t.shared)
+  const shared = all.filter(t => t.shared)
+  const questions = c.questions.filter(q => !q.retired)
+  const asking = questions.filter(q => !q.answer)
+  const answered = questions.filter(q => q.answer)
+  const current = open[0]
+  const openTask = open.find(t => t.id === view.openId) ?? current
+  const unsent = app.store.updateSummary(c, 'line').ids.length
 
-  const shots = (owner: Task | Question, imgs: Img[], locked: boolean) => (
+  const tags = (list: string[]) =>
+    list.map(x => (
+      <Text color={TAG_COLOR[x]} dimColor={!TAG_COLOR[x]}>
+        {' '}
+        {x}
+      </Text>
+    ))
+
+  const shots = (owner: Task | Question, imgs: Img[]) => (
     <Box flexDirection="column">
-      {imgs.map(img => (
+      {imgs.map((img, i) => (
         <Box flexDirection="row" gap={1}>
-          <Text dimColor>Screenshot: {img.path ?? '(saved)'}</Text>
-          {!locked && (
-            <Button
-              key={`${owner.id}-rm-${img.id}`}
-              label="Remove"
-              plain
-              dimColor
-              onPress={async () => {
-                app.store.removeImage(c.id, owner.id, img.id)
-                await save()
-              }}
-            />
-          )}
+          <Text>
+            Screenshot {i + 1} <Text dimColor>({shotName(c.id, img)})</Text>
+          </Text>
+          <Button
+            key={`${owner.id}-rm-${img.id}`}
+            label="Remove"
+            dimColor
+            onPress={async () => {
+              app.store.removeImage(c.id, owner.id, img.id)
+              await save()
+            }}
+          />
         </Box>
       ))}
-      {!locked && Input && imgs.length < 8 && (
+    </Box>
+  )
+
+  /** The note box, screenshots and their buttons, under an open task or question. */
+  const extras = (owner: Task | Question, note: string, setNote: (v: string) => void, imgs: Img[], withShots = true) => (
+    <Box flexDirection="column" marginTop={1}>
+      {Input && (
         <Input
-          key={`${owner.id}-shot`}
-          placeholder="Add a screenshot: type or drop its file path"
-          submitLabel="Add"
+          key={`${owner.id}-note`}
+          label="Note for Claude"
+          placeholder="Optional: what you did, a value Claude needs…"
+          value={note}
+          submitLabel="Save"
+          onInput={setNote}
           onSubmit={async v => {
-            if (!v.trim()) return
-            if (!app.store.addImagePath(c.id, owner.id, v)) return toast('That is not a .png, .jpg, .gif or .webp file.')
+            setNote(v)
             await save()
           }}
         />
       )}
-    </Box>
-  )
-
-  const taskRow = (t: Task, step?: string) => {
-    const s = t.shared
-    const done = s ? s.done : t.draft.done
-    return (
-      <Box flexDirection="column" marginBottom={1}>
-        <Box flexDirection="row" gap={1}>
-          <Button
-            key={`${t.id}-done`}
-            label={done ? '[x]' : '[ ]'}
-            plain
-            onPress={async () => {
-              if (s) return toast(`Unshare ${t.id} first to change it.`)
-              app.store.setDraft(c.id, t.id, { done: !t.draft.done })
-              await save()
-            }}
-          />
-          <Text bold={!done} dimColor={!!s} strikethrough={done && !!s} color={t.tags.some(x => URGENT.has(x)) && !s ? 'red' : undefined}>
-            {t.id}
-            {step ?? ''} {t.text}
-            {tagText(t.tags)}
-          </Text>
-        </Box>
-        {t.detail && <Text dimColor>{t.detail}</Text>}
-        {t.command && <Text mono>{t.command}</Text>}
-        {s ? (
+      {shots(owner, imgs)}
+      {withShots && imgs.length < 8 && (
+        <Box flexDirection="column">
           <Box flexDirection="row" gap={1}>
-            <Text dimColor>
-              Shared{t.seenAt && t.seenAt >= s.at ? ', Claude has read it' : t.pushedAt ? ', sent' : ''}
-              {s.note ? `. Note: ${s.note}` : ''}
-            </Text>
-            <Button
-              key={`${t.id}-unshare`}
-              label="Unshare"
-              plain
-              dimColor
-              onPress={async () => {
-                app.store.unshare(c.id, t.id)
-                await save()
-              }}
-            />
-          </Box>
-        ) : (
-          <Box flexDirection="column">
+            <Button key={`${owner.id}-paste`} label="Paste screenshot" hotkey="v" onPress={() => act.paste(c, owner.id)} />
             {Input && (
               <Input
-                key={`${t.id}-note`}
-                placeholder="Note for Claude (optional)"
-                value={t.draft.note}
-                submitLabel="Save"
-                onInput={v => app.store.setDraft(c.id, t.id, { note: v })}
+                key={`${owner.id}-shot`}
+                placeholder="or type an image file's path"
+                submitLabel="Add"
                 onSubmit={async v => {
-                  app.store.setDraft(c.id, t.id, { note: v })
+                  if (!v.trim()) return
+                  if (!app.store.addImagePath(c.id, owner.id, v)) return act.toast('That is not a .png, .jpg, .gif or .webp file.')
                   await save()
                 }}
               />
             )}
-            {shots(t, t.draft.images, false)}
-            <Button
-              key={`${t.id}-share`}
-              label={`Share ${t.id} with Claude`}
-              onPress={async () => {
-                app.store.share(c.id, t.id)
+          </Box>
+        </Box>
+      )}
+    </Box>
+  )
+
+  const taskCard = (t: Task, step?: string) => {
+    const isCurrent = t === current
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={rank(t) === 0 ? 'error' : 'suggestion'} paddingX={1} marginY={1}>
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>{t.id}</Text>
+          <Text bold wrap="wrap">
+            {t.text}
+          </Text>
+        </Box>
+        {(step || t.tags.length > 0 || isCurrent) && (
+          <Text>
+            {isCurrent && <Text color="suggestion">Next task </Text>}
+            {step && <Text dimColor>{step} </Text>}
+            {tags(t.tags)}
+          </Text>
+        )}
+        {t.detail && <Text>{t.detail}</Text>}
+        {t.command && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>Command to run:</Text>
+            <Code source={t.command} language="shell" />
+          </Box>
+        )}
+        {extras(t, t.draft.note, v => app.store.setDraft(c.id, t.id, { note: v }), t.draft.images)}
+        <Box flexDirection="row" gap={1} marginTop={1}>
+          <Button
+            key={`${t.id}-share-done`}
+            label="Done, share with Claude"
+            variant="primary"
+            hotkey="d"
+            autoFocus
+            onPress={async () => {
+              app.store.setDraft(c.id, t.id, { done: true })
+              app.store.share(c.id, t.id)
+              await save()
+            }}
+          />
+          <Button
+            key={`${t.id}-share-notdone`}
+            label="Couldn't do it, share note"
+            hotkey="n"
+            onPress={async () => {
+              app.store.setDraft(c.id, t.id, { done: false })
+              app.store.share(c.id, t.id)
+              await save()
+            }}
+          />
+        </Box>
+      </Box>
+    )
+  }
+
+  const taskLine = (t: Task, step?: string) => (
+    <Button key={`${t.id}-open`} plain onPress={() => act.open(t.id)}>
+      <Text color={rank(t) === 0 ? 'error' : undefined}>{rank(t) === 0 ? '!' : '○'} </Text>
+      <Text dimColor>{t.id} </Text>
+      {step ? `${step}  ` : ''}
+      {t.text}
+      {t.draft.note || t.draft.images.length ? <Text dimColor> (draft)</Text> : ''}
+      {tags(t.tags)}
+    </Button>
+  )
+
+  const questionCard = (q: Question, first: boolean) => {
+    const picks = q.draft.picks
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={q.tags.includes('urgent') ? 'error' : 'warning'} paddingX={1} marginY={1}>
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>{q.id}</Text>
+          <Text bold wrap="wrap">
+            {q.question}
+          </Text>
+        </Box>
+        {q.tags.length > 0 && <Text>{tags(q.tags)}</Text>}
+        {q.why && <Text>{q.why}</Text>}
+        <Text dimColor>{q.multi ? 'Pick one or more:' : 'Pick one:'}</Text>
+        {q.options.map((o, i) => {
+          const on = picks.includes(o.id)
+          return (
+            <Box flexDirection="column">
+              <Button
+                key={`${q.id}-opt-${o.id}`}
+                plain
+                hotkey={first && i < 9 ? String(i + 1) : undefined}
+                onPress={async () => {
+                  const next = q.multi ? (on ? picks.filter(p => p !== o.id) : [...picks, o.id]) : [o.id]
+                  app.store.setAnswerDraft(c.id, q.id, { picks: next })
+                  await save()
+                }}
+              >
+                <Text color={on ? 'suggestion' : undefined}>{on ? (q.multi ? '[x] ' : '(•) ') : q.multi ? '[ ] ' : '( ) '}</Text>
+                <Text bold={on}>{o.label}</Text>
+                {q.recommended === o.id ? <Text color="success"> recommended</Text> : ''}
+              </Button>
+              {(o.summary || o.details) && <Text dimColor>{'    '}{o.summary ?? o.details}</Text>}
+            </Box>
+          )
+        })}
+        {q.recommended && q.reason && <Text dimColor>Why Claude recommends it: {q.reason}</Text>}
+        {Input && q.allowOther && (
+          <Box marginTop={1}>
+            <Input
+              key={`${q.id}-other`}
+              label="Something else"
+              placeholder="Type your own answer"
+              value={q.draft.other}
+              submitLabel="Save"
+              onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
+              onSubmit={async v => {
+                app.store.setAnswerDraft(c.id, q.id, { other: v })
                 await save()
               }}
             />
           </Box>
         )}
+        {extras(q, q.draft.note, v => app.store.setAnswerDraft(c.id, q.id, { note: v }), q.draft.images, false)}
+        <Box marginTop={1}>
+          <Button
+            key={`${q.id}-answer`}
+            label={`Answer ${q.id}`}
+            variant="primary"
+            onPress={async () => {
+              if (!app.store.shareAnswer(c.id, q.id)) return act.toast(`Pick an option for ${q.id} first.`)
+              await save()
+            }}
+          />
+        </Box>
       </Box>
     )
   }
 
-  const questionRow = (q: Question) => {
-    const a = q.answer
-    const picks = a ? a.picks : q.draft.picks
-    return (
-      <Box flexDirection="column" marginBottom={1}>
-        <Text bold={!a} color={q.tags.some(x => URGENT.has(x)) && !a ? 'red' : undefined}>
-          {q.id} {q.question}
-          {tagText(q.tags)}
-        </Text>
-        {q.why && <Text dimColor>{q.why}</Text>}
-        {q.options.map(o => (
-          <Box flexDirection="column">
-            <Button
-              key={`${q.id}-opt-${o.id}`}
-              label={`${picks.includes(o.id) ? (q.multi ? '[x]' : '(•)') : q.multi ? '[ ]' : '( )'} ${o.label}${q.recommended === o.id ? ' (recommended)' : ''}`}
-              plain
-              onPress={async () => {
-                if (a) return toast(`Change your answer to ${q.id} first.`)
-                const next = q.multi ? (picks.includes(o.id) ? picks.filter(p => p !== o.id) : [...picks, o.id]) : [o.id]
-                app.store.setAnswerDraft(c.id, q.id, { picks: next })
-                await save()
-              }}
-            />
-            {o.summary && <Text dimColor>    {o.summary}</Text>}
-          </Box>
-        ))}
-        {q.recommended && q.reason && <Text dimColor>Why Claude recommends it: {q.reason}</Text>}
-        {a ? (
+  const readMark = (seen: boolean, pushed: boolean) =>
+    seen ? <Text color="success"> · Claude read it</Text> : pushed ? <Text dimColor> · sent</Text> : <Text dimColor> · not read yet</Text>
+
+  const sharedRows = () => (
+    <Box flexDirection="column">
+      {answered.map(q => {
+        const a = q.answer!
+        const choice = [...q.options.filter(o => a.picks.includes(o.id)).map(o => o.label), ...(a.other ? [a.other] : [])].join(', ')
+        return (
           <Box flexDirection="row" gap={1}>
-            <Text dimColor>
-              Answered{q.seenAt && q.seenAt >= a.at ? ', Claude has read it' : q.pushedAt ? ', sent' : ''}
-              {a.other ? `. Something else: ${a.other}` : ''}
-              {a.note ? `. Note: ${a.note}` : ''}
+            <Text>
+              <Text color="success">✓ </Text>
+              <Text dimColor>{q.id} </Text>
+              {q.question} <Text bold>{choice}</Text>
+              {readMark(!!q.seenAt && q.seenAt >= a.at, !!q.pushedAt)}
             </Text>
             <Button
               key={`${q.id}-change`}
-              label="Change answer"
-              plain
+              label="Change"
               dimColor
               onPress={async () => {
                 app.store.unshareAnswer(c.id, q.id)
@@ -193,65 +316,70 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, a
               }}
             />
           </Box>
-        ) : (
+        )
+      })}
+      {shared.map(t => {
+        const s = t.shared!
+        return (
           <Box flexDirection="column">
-            {Input && q.allowOther && (
-              <Input
-                key={`${q.id}-other`}
-                placeholder="Something else"
-                value={q.draft.other}
-                submitLabel="Save"
-                onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
-                onSubmit={async v => {
-                  app.store.setAnswerDraft(c.id, q.id, { other: v })
+            <Box flexDirection="row" gap={1}>
+              <Text>
+                <Text color={s.done ? 'success' : 'warning'}>{s.done ? '✓ ' : '– '}</Text>
+                <Text dimColor>{t.id} </Text>
+                <Text dimColor={s.done}>{t.text}</Text>
+                {!s.done && <Text color="warning"> not done</Text>}
+                {readMark(!!t.seenAt && t.seenAt >= s.at, !!t.pushedAt)}
+              </Text>
+              <Button
+                key={`${t.id}-unshare`}
+                label="Take back"
+                dimColor
+                onPress={async () => {
+                  app.store.unshare(c.id, t.id)
                   await save()
                 }}
               />
+            </Box>
+            {(s.note || s.images.length > 0) && (
+              <Text dimColor>
+                {'    '}
+                {s.note ? `Note: ${s.note}` : ''}
+                {s.note && s.images.length ? ' · ' : ''}
+                {s.images.length ? plural(s.images.length, 'screenshot') : ''}
+              </Text>
             )}
-            {Input && (
-              <Input
-                key={`${q.id}-note`}
-                placeholder="Note for Claude (optional)"
-                value={q.draft.note}
-                submitLabel="Save"
-                onInput={v => app.store.setAnswerDraft(c.id, q.id, { note: v })}
-                onSubmit={async v => {
-                  app.store.setAnswerDraft(c.id, q.id, { note: v })
-                  await save()
-                }}
-              />
-            )}
-            {shots(q, q.draft.images, false)}
-            <Button
-              key={`${q.id}-answer`}
-              label={`Answer ${q.id}`}
-              onPress={async () => {
-                if (!app.store.shareAnswer(c.id, q.id)) return toast(`Pick an option for ${q.id} first.`)
-                await save()
-              }}
-            />
           </Box>
-        )}
-      </Box>
-    )
-  }
+        )
+      })}
+    </Box>
+  )
 
-  const questions = c.questions.filter(q => !q.retired)
-  const fresh = app.store.updateSummary(c, 'line').ids.length
-  const left = c.tasks.filter(t => !t.shared).length + questions.filter(q => !q.answer).length
+  const total = all.length + questions.length
+  const finished = shared.length + answered.length
+  const filled = total ? Math.round((finished / total) * Math.min(width, 40)) : 0
   const away = app.store.isAway(c)
 
   return (
     <Box flexDirection="column">
-      <Text bold>{c.title}</Text>
-      <Text dimColor>{left ? `${left} waiting on you` : 'Nothing waiting on you'}</Text>
+      <Text bold size="title">
+        {c.title}
+      </Text>
+      <Box flexDirection="row">
+        <Text color="success">{'━'.repeat(filled)}</Text>
+        <Text dimColor>{'━'.repeat(Math.min(width, 40) - filled)}</Text>
+      </Box>
+      <Text dimColor>
+        {finished} of {total} shared with Claude
+        {asking.length ? ` · ${plural(asking.length, 'question')} to answer` : ''}
+        {open.length ? ` · ${open.length} to do` : ''}
+      </Text>
+
       {away && (
         <Box flexDirection="row" gap={1} marginTop={1}>
-          <Text color="yellow">Away until {c.awayLabel ?? 'later'}. Claude won't wait for you.</Text>
+          <Text color="warning">☾ Away until {c.awayLabel ?? 'later'}. Claude won't wait for you.</Text>
           <Button
             key="back"
             label="I'm back"
-            plain
             onPress={async () => {
               app.store.endAway(c.id)
               await save()
@@ -259,30 +387,74 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, a
           />
         </Box>
       )}
-      {questions.length > 0 && (
+
+      {unsent > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>Decide</Text>
-          {questions.map(questionRow)}
+          <Button key="send" label={`Send ${plural(unsent, 'update')} to Claude now`} variant="primary" hotkey="s" onPress={() => act.send(c)} />
+          <Text dimColor>Otherwise Claude sees them the next time it reads the checklist.</Text>
         </Box>
       )}
-      {groupsOf(c).map(g => {
-        const whole = g.name && isSequence(c, g.name) ? sequenceOf(c, g.name) : []
-        const how = g.phase ? ` (phase ${g.phase} of ${g.phases}, in order)` : g.ordered ? ' (in order)' : ''
-        return (
-          <Box flexDirection="column" marginTop={1}>
-            {g.name && <Text bold>{g.name + how}</Text>}
-            {g.tasks.map(t => taskRow(t, whole.length ? ` step ${whole.indexOf(t) + 1}/${whole.length}` : undefined))}
-          </Box>
-        )
-      })}
-      <Box flexDirection="row" gap={1} marginTop={1}>
-        <Button
-          key="send"
-          label={fresh ? `Send now (${fresh})` : 'Send now'}
-          variant="primary"
-          onPress={() => act.send(c)}
-        />
-      </Box>
+
+      {!open.length && !asking.length && (
+        <Box marginTop={1}>
+          <Text color="success">✓ All done. Claude has everything it asked for.</Text>
+        </Box>
+      )}
+
+      {asking.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          {rule}
+          <Text bold>
+            Decide <Text dimColor>({asking.length})</Text>
+          </Text>
+          {asking.map((q, i) => questionCard(q, i === 0))}
+        </Box>
+      )}
+
+      {open.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          {rule}
+          <Text bold>
+            To do <Text dimColor>({open.length})</Text>
+          </Text>
+          {groups.filter(g => g.tasks.some(t => !t.shared)).map(g => {
+            const left = g.tasks.filter(t => !t.shared)
+            const how = g.phase ? `phase ${g.phase} of ${g.phases}, in order` : g.seq.length ? 'in order' : ''
+            return (
+              <Box flexDirection="column" marginTop={g.name ? 1 : 0}>
+                {g.name && (
+                  <Text bold>
+                    {g.name}
+                    {how ? <Text dimColor> ({how})</Text> : ''}
+                  </Text>
+                )}
+                {left.map(t => {
+                  const step = g.seq.length ? `Step ${g.seq.indexOf(t) + 1} of ${g.seq.length}` : undefined
+                  return t === openTask ? taskCard(t, step) : taskLine(t, step)
+                })}
+              </Box>
+            )
+          })}
+        </Box>
+      )}
+
+      {finished > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          {rule}
+          <Button key="shared-toggle" plain onPress={() => act.toggleShared()}>
+            <Text bold>
+              {view.showShared ? '▾' : '▸'} Shared with Claude <Text dimColor>({finished})</Text>
+            </Text>
+          </Button>
+          {view.showShared && sharedRows()}
+        </Box>
+      )}
+
+      {Input && (open.length > 0 || asking.length > 0) && (
+        <Box marginTop={1}>
+          <Text dimColor>Tab moves between buttons. Keys: d done · n couldn't do it · v paste screenshot · 1–9 pick · s send</Text>
+        </Box>
+      )}
     </Box>
   )
 }

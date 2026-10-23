@@ -11,13 +11,17 @@ import type { Register } from 'claude-code'
 
 import { App, filesToLoad, rootFrom } from './app'
 import { parseAway } from './away'
-import { modeFile, modeText, parseMode, sharedDir } from './lib/handover'
+import { noImage, pasteResult, pasteCommand, platformFrom, type Platform } from './clipboard'
+import { imagesDir, join, modeFile, modeText, parseMode, sharedDir } from './lib/handover'
 import { MOD_INSTRUCTIONS, MOD_TOOLS } from './lib/model'
 import { drawPane } from './pane'
 
 const PANE = 'checklist'
 // Goes up on every change, so the pane redraws.
 const rev = atom({ plugin: 'checklist-bridge', key: 'rev' } as const, 0)
+// What the pane shows: the task whose card is open ('' for the next task), and the shared section.
+const openTask = atom({ plugin: 'checklist-bridge', key: 'openTask' } as const, '')
+const showShared = atom({ plugin: 'checklist-bridge', key: 'showShared' } as const, false)
 const PREFIX = 'mcp__checklist-bridge__'
 const TOOL_NAMES = new Set(MOD_TOOLS.map(t => PREFIX + t.name))
 const INSTALL_EXTENSION = 'https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge'
@@ -34,6 +38,7 @@ const HELP = [
 
 let app: App | undefined
 let toolsRegistered = false
+let platform: Platform | undefined
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -51,6 +56,10 @@ export const register: Register = on => {
         loaded.push([await $.fs.read(f.main).catch(() => undefined), await $.fs.read(f.bak).catch(() => undefined)])
     }
     app = new App(root, e.cwd, parseMode(mode), loaded)
+    // Which clipboard tool "Paste screenshot" uses. Windows says so in OS; elsewhere ask uname.
+    const os = await $.env.get('OS')
+    const uname = os === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s']).catch(() => undefined)
+    platform = platformFrom(os, uname?.stdout)
 
     await $.command.register({
       name: 'checklist',
@@ -98,6 +107,14 @@ export const register: Register = on => {
     // A tool's result reaches Claude as a string or a list of content blocks.
     return { result: res.content, ...(res.isError ? { isError: true } : {}) }
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'Checklist Bridge could not handle this call.' }))
+
+  // Claude opens the screenshots the user shared without a permission question each time: exactly those
+  // files, nothing else in their folder. Anything else goes on to Claude Code's own decision.
+  on('tool.check', { tool: 'Read' }, async ($, e, next) => {
+    const file = (e.input as { file_path?: unknown } | undefined)?.file_path
+    if (app?.isOn && typeof file === 'string' && app.isSharedShot(await $.session.id(), file)) return { decision: 'allow' as const }
+    return next(e)
+  })
 
   on('command.run', { command: 'checklist' }, async ($, e) => {
     let a = app!
@@ -188,7 +205,9 @@ export const register: Register = on => {
     const a = app
     if (!a) return <els.Text dimColor>Loading…</els.Text>
     const sid = await $.session.id()
-    return drawPane(els, a, sid, {
+    const p = platform ?? 'linux'
+    const view = { openId: await read($, openTask), showShared: await read($, showShared), width: e.props.bodyColumns }
+    return drawPane(els, a, sid, view, {
       changed: async c => {
         a.touch(c)
         for (const [p, t] of a.flush()) await $.fs.write(p, t)
@@ -204,6 +223,26 @@ export const register: Register = on => {
         $.ui.status(a.status(sid))
         void $.prompt.submit({ text })
         void $.ui.toast('Sent to Claude.')
+      },
+      paste: async (c, itemId) => {
+        // The system's own tool writes the PNG (a mod can't write binary files). Its folder must exist first.
+        const dir = imagesDir(a.root)
+        await $.fs.write(join(dir, '.keep'), '')
+        const file = join(dir, `${c.id}-${itemId}-${Date.now().toString(36)}.png`)
+        const r = await $.process.run(pasteCommand(p), { env: { CB_SHOT: file }, timeoutMs: 20_000 }).catch(() => undefined)
+        const result = pasteResult(r?.stdout)
+        if (result !== 'ok') return void $.ui.toast(noImage(p, result))
+        if (!a.store.addImagePath(c.id, itemId, file)) return void $.ui.toast('This one already has 8 screenshots.')
+        a.touch(c)
+        for (const [p, t] of a.flush()) await $.fs.write(p, t)
+        await update($, rev, n => n + 1)
+        void $.ui.toast('Screenshot added.')
+      },
+      open: async taskId => {
+        await update($, openTask, () => taskId)
+      },
+      toggleShared: async () => {
+        await update($, showShared, v => !v)
       },
     })
   })
