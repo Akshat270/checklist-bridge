@@ -43,7 +43,7 @@ function build(stage) {
     await page.setContent(`<!doctype html><html><head><style>html{${THEMES[theme]}}${css}</style></head><body class="vscode-${theme === 'light' ? 'light' : 'dark'}"><script>window.acquireVsCodeApi=()=>({postMessage(){},getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
     await page.evaluate(([l, r]) => window.postMessage({ type: 'state', list: l, routes: r }, '*'), [build(stage), routes]);
     await page.waitForTimeout(150);
-    // First as it opens, with every row collapsed (including the pinned next task)...
+    // First as it opens, with every row collapsed (including the next task, which starts open)...
     for (const t of await page.$$('.task.open .row .text')) { await t.click().catch(() => {}); await page.waitForTimeout(40); }
     await measure('rows collapsed');
     // ...then open the Shared section and every collapsed row

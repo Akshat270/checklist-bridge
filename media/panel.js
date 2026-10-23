@@ -104,8 +104,6 @@
   let steps = new Map();
   // Steps drawn with a line down to the next step (every shown step of an ordered group except the last). Rebuilt on every render.
   let linked = new Set();
-  // The next task is one step of an ordered group: it stays in its group, in its place in the sequence, instead of being pinned above.
-  let currentInPlace = false;
   const inLaterStep = (t) => steps.has(t.id) && !steps.get(t.id).head;
   // Tags rank tasks that can be done in any order. A later step in a sequence never jumps the queue.
   const rank = (t) => (inLaterStep(t) ? 2 : tagRank(t));
@@ -308,7 +306,6 @@
       out.push(h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)));
     }
     if (steps.has(t.id)) out.push(h('span', { class: 'chip soft step', title: 'Do the steps in this order' }, `Step ${steps.get(t.id).n} of ${steps.get(t.id).of}`));
-    if (isCurrent && t.group && !currentInPlace) out.push(h('span', { class: 'chip soft' }, t.group));
     const note = (t.shared ? t.shared.note : noteOf(t)).trim();
     const pics = (t.shared ? t.shared.images : t.draft.images).length;
     if (!open && note) out.push(h('span', { class: 'chip soft', title: 'Has a note', html: `${I.note}<span>Note</span>` }));
@@ -820,7 +817,7 @@
   }
 
   function row(t, renderFn, extraKey) {
-    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${t.id === currentId && currentInPlace}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
+    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
     let r = rendered.get(t.id);
     if (!r || r.key !== key) {
       r = { key, el: renderFn(t) };
@@ -872,22 +869,19 @@
       nodes.push(box);
     }
 
+    // The next task stays where it belongs, in its group (it is tinted and open, so it stands out there). Ungrouped tasks
+    // come first, so a next task without a group is at the top anyway.
     const current = currentId && list.tasks.find((t) => t.id === currentId);
-    currentInPlace = !!current && steps.has(current.id); // a step stays in its group, even if you collapse the group
-    if (current && !currentInPlace) nodes.push(h('section', { class: 'section', 'aria-label': 'Next task' }, row(current, renderTodo)));
-
     for (const g of groups) {
-      const rest = g.tasks.filter((t) => t.id !== currentId || currentInPlace);
-      if (!rest.length) continue;
-      if (g.ordered && !ui.collapsed[g.name]) rest.slice(0, -1).forEach((t) => linked.add(t.id));
+      if (g.ordered && !ui.collapsed[g.name]) g.tasks.slice(0, -1).forEach((t) => linked.add(t.id));
       const box = h('section', { class: 'section' });
       if (g.name) {
         const open = !ui.collapsed[g.name];
-        const hidesNext = !open && currentInPlace && g.tasks.some((t) => t.id === currentId); // you collapsed the group the next task is in
-        box.append(sectionHead(g.name, g.name, rest.length, open, hidesNext ? 'next task inside' : g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
-        if (open) rest.forEach((t) => box.append(row(t, renderTodo)));
+        const hidesNext = !open && g.tasks.some((t) => t.id === currentId); // you collapsed the group the next task is in
+        box.append(sectionHead(g.name, g.name, g.tasks.length, open, hidesNext ? 'next task inside' : g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
+        if (open) g.tasks.forEach((t) => box.append(row(t, renderTodo)));
       } else {
-        rest.forEach((t) => box.append(row(t, renderTodo)));
+        g.tasks.forEach((t) => box.append(row(t, renderTodo)));
       }
       nodes.push(box);
     }

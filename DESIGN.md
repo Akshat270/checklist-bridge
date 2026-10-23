@@ -220,11 +220,11 @@ The palette has two parts: neutrals taken from the editor theme, and a set of sa
 
 ## Layout
 
-A single column, `max-width: 640px`, with 18px side padding (12px below 360px wide) and 96px of bottom padding so the dock never covers the last row. Reading order is fixed: header (title plus icon actions in a two-column grid, subtitle below), progress bar and label 16px below, then the current task alone in its own section, then ungrouped tasks, then named groups (18px apart), then the "Shared with Claude" section set 26px down behind a top rule.
+A single column, `max-width: 640px`, with 18px side padding (12px below 360px wide) and 96px of bottom padding so the dock never covers the last row. Reading order is fixed: header (title plus icon actions in a two-column grid, subtitle below), progress bar and label 16px below, then ungrouped tasks, then named groups (18px apart), then the "Shared with Claude" section set 26px down behind a top rule.
 
 Task rows are a three-column grid: 22px control column, flexible text, auto-width right slot for priority mark or quick-share. Open rows indent their body 40px so notes, commands and actions line up with the task text, not with the checkbox. Inside a row, the rhythm is 4 to 12px; between sections, 18 to 26px.
 
-Ordering is part of the layout: within each group urgent comes first, then important, then the rest in Claude's order. The current task is the highest-ranked unshared task and is pinned above every group.
+Ordering is part of the layout: within each group urgent comes first, then important, then the rest in Claude's order. The current task is the highest-ranked unshared task. It stays in its place: first among the ungrouped tasks, or inside its own group (where it is first unless it is a later step), never pulled out above the groups. If its group is collapsed, the group's header says "next task inside".
 
 ## Elevation & Depth
 
@@ -251,7 +251,7 @@ Soft corners on three steps: 4px for chips, icon buttons, ghost buttons and sect
 The list's unit: checkbox, text with chips beneath, and a right slot.
 - **Closed:** transparent, 5% hover tint, text clamped to two lines. The right slot shows the priority mark, or a quiet "Share" button once ticked.
 - **Open:** 4% surface with a hairline. Reveals detail, command well, note field, thumbnails, and an actions row ("Add image" ghost on the left, share button on the right).
-- **Current:** open by default, accent-tinted surface, 600 text, group name shown as a soft chip. It turns red-orange when urgent.
+- **Current:** open by default, accent-tinted surface, 600 text, in its place in its group. It turns red-orange when urgent.
 - **Started** (note or image added, not ticked): the checkbox goes dashed in accent with a light accent fill.
 - **Shared:** the checkbox is replaced by a filled circle (green check or orange minus), text drops to Ink 3, and the right slot shows an eye in green (read) or a clock in Ink 3 (not read yet). Opening it shows the shared note and a "Take back" ghost.
 
@@ -270,7 +270,7 @@ The list's unit: checkbox, text with chips beneath, and a right slot.
 - **Icon button** (`icon-button`): 28px square, Ink 3, hover tint. Used for hide and close in the header.
 
 ### Chips
-20px tall, 4px corners, 12px/600 label. Coloured tags take their colour for the text and a 14% tint of it for the fill (urgent, important, quick, blocked). Optional tags use Ink 3 at 500. Soft chips (group name, note and screenshot indicators) use a line-tinted fill and Ink 3 text, with an optional 12px icon.
+20px tall, 4px corners, 12px/600 label. Coloured tags take their colour for the text and a 14% tint of it for the fill (urgent, important, quick, blocked). Optional tags use Ink 3 at 500. Soft chips (note and screenshot indicators, step numbers) use a line-tinted fill and Ink 3 text, with an optional 12px icon.
 
 ### Inputs / Fields
 - **Note field:** full-width textarea, 8px corners, strong-line border, 6% field fill, vertically resizable from 64 to 280px.

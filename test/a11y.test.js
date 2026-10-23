@@ -152,7 +152,7 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     await page.click('text=Shared with Claude'); await page.waitForTimeout(150);
     const nameOf = (id) => page.$eval(`#task-${id} .row-main`, (e) => e.textContent.replace(/\s+/g, ' ').trim());
     const role = async (re) => page.getByRole('button', { name: re }).count();
-    // Close the pinned next task first: a closed urgent row shows a mark, not a chip.
+    // Close the next task first (it starts open): a closed urgent row shows a mark, not a chip.
     if (await isOpen(page, 't1')) { await page.click('#task-t1 .row'); await page.waitForTimeout(120); }
     check(/Urgent/.test(await nameOf('t1')) && (await role(/Restart the server.*Urgent/)) === 1, `a closed urgent row says Urgent (${await nameOf('t1')})`);
     check(/Shared as done\. Claude has read this\./.test(await nameOf('t2')) && (await role(/Read one.*Shared as done/)) === 1, `a shared row says how it was shared and that Claude read it (${await nameOf('t2')})`);

@@ -152,15 +152,18 @@ function build() {
   }
   const ids = (page) => page.$$eval('.task', (xs) => xs.map((x) => x.dataset.id).join(' '));
   const next = (page) => page.$eval('.task.current', (x) => x.dataset.id).catch(() => null);
-  // Where the next task is shown: the section named by its heading, or pinned above as "Next task".
+  // Where the next task is shown: the section named by its heading, or 'ungrouped' (the tasks without a group, at the top).
+  // There is no section of its own above them any more: the next task always stays where it belongs.
   const where = (page) => page.$eval('.task.current', (x) => {
+    if (document.querySelector('[aria-label="Next task"]')) return 'pinned';
     const sec = x.closest('section');
-    return sec.getAttribute('aria-label') === 'Next task' ? 'pinned' : (sec.querySelector('.section-head span') || {}).textContent;
+    return (sec.querySelector('.section-head span') || {}).textContent || 'ungrouped';
   }).catch(() => null);
+  const first = (page) => page.$eval('.task', (x) => x.dataset.id);
 
   let list = JSON.parse(JSON.stringify(build().s.all()[0]));
   let page = await open(list);
-  check((await next(page)) === 't4' && (await where(page)) === 'pinned', 'an important task that can be done in any order is still the next task, pinned above');
+  check((await next(page)) === 't4' && (await where(page)) === 'ungrouped' && (await first(page)) === 't4', 'an important task without a group is the next task, first among the ungrouped tasks at the top');
   const order = await ids(page);
   check(order.indexOf('t1') < order.indexOf('t2') && order.indexOf('t2') < order.indexOf('t3'), `steps stay in Claude's order (${order})`);
   const steps = await page.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
@@ -214,7 +217,40 @@ function build() {
     rl = roadList();
     rl.tasks.push({ id: 't99', text: 'Fix the build now', tags: ['urgent'], addedAt: 1, rev: 1, draft: { done: false, note: '', images: [] } });
     pg = await open(rl);
-    check((await next(pg)) === 't99' && (await where(pg)) === 'pinned', 'an urgent task outside the roadmap can still be next');
+    check((await next(pg)) === 't99' && (await where(pg)) === 'ungrouped' && (await first(pg)) === 't99', 'an urgent task outside the roadmap can still be next, at the top');
+    await pg.close();
+  }
+
+  // An ordinary group (any order): its task that is next stays in the group, under its heading, not pulled out above it.
+  {
+    const s = new ChecklistStore(), S = 'x';
+    s.handleTool(S, {}, 'checklist_add_tasks', {
+      title: 'Launch',
+      tasks: [
+        { text: 'Write the release notes', group: 'Docs' },
+        { text: 'Create the Razorpay account', group: 'Payments' },
+        { text: 'Add the key to .env', group: 'Payments', tags: ['urgent'] },
+        { text: 'Check the pricing page', group: 'Payments' },
+      ],
+    });
+    const pl = JSON.parse(JSON.stringify(s.all()[0]));
+    let pg = await open(pl);
+    const inGroup = await pg.$eval('.task.current', (x) => {
+      const sec = x.closest('section');
+      return [x.dataset.id, sec.querySelector('.section-head span')?.textContent, [...sec.querySelectorAll('.task')].map((t) => t.dataset.id).join(' ')];
+    });
+    check((await where(pg)) === 'Payments' && inGroup.join('|') === 't3|Payments|t3 t2 t4', `the urgent next task stays in its group, first there (${inGroup.join(' | ')})`);
+    check((await pg.$$eval('.section-head span:first-of-type', (xs) => xs.map((x) => x.textContent).join())) === 'Docs,Payments' && (await first(pg)) === 't1', 'the groups keep their order: the next task does not move its group up');
+    check(await pg.$eval('#task-t3', (e) => e.classList.contains('open') && !e.querySelector('.chip.soft')), 'it is open and tinted there, without its group name repeated as a tag');
+    check(await pg.$eval('.section-head:has-text("Payments") .count', (x) => x.textContent === '3'), 'its group counts it');
+    // Collapsing the group hides it there too, with a hint.
+    await pg.click('.section-head:has-text("Payments")'); await pg.waitForTimeout(200);
+    check(!(await pg.$('.task.current')) && (await pg.$eval('.section-head:has-text("Payments")', (x) => x.textContent)).includes('next task inside'), 'collapsing its group hides it there, with a hint');
+    await pg.close();
+    // Shared, the next one in the group takes its place.
+    pl.tasks.find((x) => x.id === 't3').shared = { at: 1, done: true, note: '', images: [] };
+    pg = await open(pl);
+    check((await next(pg)) === 't1' && (await where(pg)) === 'Docs', 'when it is shared, the next task is the first one left, in its own group');
     await pg.close();
   }
 

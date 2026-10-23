@@ -9,6 +9,7 @@
 - Closing a checklist now also warns you about questions you haven't answered and answers you haven't shared.
 - The "Claude is waiting" banner and the away card are no longer tinted, so the next task stands out.
 - The first line in *View > Output > Checklist Bridge* now shows the version, and the folder it was loaded from.
+- **The next task stays in its group.** It used to be pulled out and shown above every group (unless it was a numbered step). Now it stays where it belongs, open and highlighted.
 
 ## 0.7.0
 - **Fixed:** a task Claude moved into an ordered group and removed in the same edit no longer comes back.

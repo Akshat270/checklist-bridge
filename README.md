@@ -36,7 +36,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 
 ## Why people install it
 
-- **Never scroll the chat for "what do I need to do?"** The next task is pinned at the top. Urgent ones turn red.
+- **Never scroll the chat for "what do I need to do?"** The next task is open and highlighted. Urgent ones turn red.
 - **Keep Claude working while you think.** Questions that don't need an answer right now go to a **Decide** section. Claude carries on with everything else.
 - **Step away without stalling Claude.** Tell it when you'll be back. It stops waiting for your answers, does what it safely can, and leaves the rest for you. [How it works](#when-youre-away).
 - **Claude never assumes.** It sees only what you've shared: done, not done, your note, your screenshots. Nothing else is guessed.
@@ -152,7 +152,7 @@ While you're away, the card shows the time left with a bar that shrinks. Press *
 ## The checklist in detail
 
 - **One checklist per chat.** Each chat's checklist opens in the VS Code window where that chat is running. Two agents in the same window get two separate checklists.
-- **The next task comes first.** It's pinned at the top and already open. Urgent tasks jump ahead and turn it red. Everything else is a one-line row you can click to open.
+- **The next task stands out.** It's already open and highlighted, in its place: first among the tasks without a group, or inside its own group. Urgent tasks jump ahead and turn it red. Everything else is a one-line row you can click to open.
 - **Share tasks one at a time.** Tick a task, optionally add a note or screenshots (paste, drag in, or click the picture icon in the note box), and press **Share**. Tick several and **Share all**. You can also share a task as *not done*, with a note saying what went wrong.
 - **Claude only sees what you share.** The progress bar counts shared tasks only. Shared tasks move to **Shared with Claude**, which shows whether Claude has read each one. **Take back** hides a task from Claude again so you can change it.
 - **Every item has an id.** The small label at the right edge of each task and question (t1, q2…) is the name Claude uses for it. Click it to copy it, then paste it into the chat.
