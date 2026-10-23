@@ -1,7 +1,3 @@
-
-
-Uploading checklist-bridge-promo-square (1).mp4…
-
 <p align="center">
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/hero.png" alt="Checklist Bridge for Claude Code: every Claude chat gets its own checklist in VS Code" width="100%">
 </p>
@@ -22,8 +18,8 @@ The things only you can do, and the decisions you can make later, no longer get 
 When Claude Code needs you to do something by hand, like create an API key, run a command, click through a dashboard or test a page, it usually buries the steps in a long chat. Checklist Bridge puts them in a checklist next to the chat instead. Claude adds tasks while you keep talking. You tick them off, write a note or paste a screenshot, and press **Share** when a task is ready. Claude can read only the tasks you've shared, so it never assumes you did something you haven't.
 
 <p align="center">
-  <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-square.mp4"><img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/video-preview.gif" width="480" alt="Checklist Bridge in action: Claude adds an urgent task, you tick it, write a note, paste a screenshot and press Share, and Claude reads it"></a><br>
-  <b>▶ <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-square.mp4">Watch the 44-second video</a></b> (with sound) · <a href="https://github.com/Akshat270/checklist-bridge/raw/main/promo/video/output/checklist-bridge-promo-vertical.mp4">vertical version</a>
+  <a href="https://github.com/Akshat270/checklist-bridge/blob/main/promo/video/output/checklist-bridge-promo-square.mp4"><img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/video-preview.gif" width="480" alt="Checklist Bridge in action: Claude adds an urgent task, you tick it, write a note, paste a screenshot and press Share, and Claude reads it"></a><br>
+  <b>▶ <a href="https://github.com/Akshat270/checklist-bridge/blob/main/promo/video/output/checklist-bridge-promo-square.mp4">Watch the 44-second video</a></b> (with sound) · <a href="https://github.com/Akshat270/checklist-bridge/blob/main/promo/video/output/checklist-bridge-promo-vertical.mp4">vertical version</a>
 </p>
 
 <p align="center">
@@ -36,7 +32,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 
 ## Why people install it
 
-- **Never scroll the chat for "what do I need to do?"** The next task is pinned at the top. Urgent ones turn red.
+- **Never scroll the chat for "what do I need to do?"** The next task is open and highlighted. Urgent ones turn red.
 - **Keep Claude working while you think.** Questions that don't need an answer right now go to a **Decide** section. Claude carries on with everything else.
 - **Step away without stalling Claude.** Tell it when you'll be back. It stops waiting for your answers, does what it safely can, and leaves the rest for you. [How it works](#when-youre-away).
 - **Claude never assumes.** It sees only what you've shared: done, not done, your note, your screenshots. Nothing else is guessed.
@@ -85,7 +81,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
    ```
    code --install-extension Akshat270.checklist-bridge
    ```
-   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.7.0.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
+   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.7.2.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
 2. That's it: the extension connects itself to Claude Code the first time VS Code starts, and tells you when it's done. There's no command to type.
 3. Start a **new** Claude chat (Claude Code loads tools when a chat starts). Run `/mcp` to check that `checklist` is connected.
 
@@ -185,12 +181,13 @@ While you're away, the card shows the time left with a bar that shrinks. Press *
 ## The checklist in detail
 
 - **One checklist per chat.** Each chat's checklist opens in the VS Code window where that chat is running. Two agents in the same window get two separate checklists.
-- **The next task comes first.** It's pinned at the top and already open. Urgent tasks jump ahead and turn it red. Everything else is a one-line row you can click to open.
+- **The next task stands out.** It's already open and highlighted, in its place: first among the tasks without a group, or inside its own group. An urgent task becomes the next task and turns it red. If the next task is in a group you collapsed, the group opens; after you share a task, the panel scrolls to the next one. Everything else is a one-line row you can click to open.
 - **Share tasks one at a time.** Tick a task, optionally add a note or screenshots (paste, drag in, or click the picture icon in the note box), and press **Share**. Tick several and **Share all**. You can also share a task as *not done*, with a note saying what went wrong.
 - **Claude only sees what you share.** The progress bar counts shared tasks only. Shared tasks move to **Shared with Claude**, which shows whether Claude has read each one. **Take back** hides a task from Claude again so you can change it.
 - **Every item has an id.** The small label at the right edge of each task and question (t1, q2…) is the name Claude uses for it. Click it to copy it, then paste it into the chat.
 - **Claude can organise the list.** It can tag tasks (*urgent*, *important*, *quick*, *optional*, *blocked*), group them, reword them and remove ones that are no longer needed. Tags decide the order of tasks that can be done in any order. When steps must be done one after another, Claude puts them in an ordered group: they show as numbered steps in its order, and tags never move them. It can reorder the steps later if the plan changes. For a roadmap with stages (set up, then testing, then wrap up), Claude can also put the groups themselves in order: they show as Phase 1 of 3, Phase 2 of 3 and so on, and the steps are numbered across all of them.
-- **Hide or close.** Closing a tab only hides that checklist. The **Claude checklists** icon in the activity bar lists every checklist with show, hide and close. Click one in the list to open it and bring it to the front. Closing a checklist for good tells Claude, and the next tasks it adds start a new checklist.
+- **Hide or close.** Closing a tab only hides that checklist. The **Claude checklists** icon in the activity bar lists every checklist with show, hide and close. Click one in the list to open it and bring it to the front. Closing a checklist for good asks first, and says what is still waiting on you (tasks not shared, questions not answered, answers not shared). It tells Claude, and the next tasks it adds start a new checklist.
+- **Works with the keyboard and screen readers.** Tab moves through the checklist. Enter or Space opens and shuts a task. In a question, the arrow keys move between the choices. Enter shows a screenshot full size, and Escape closes it. Screen readers say what the colours and icons show: urgent, shared as done or not done, and whether Claude has read it.
 - **Nothing is lost on reload.** Checklists survive a window reload.
 
 Claude gets five tools:

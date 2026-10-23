@@ -8,6 +8,7 @@
   let routes = { waiting: false, channel: false, terminal: false };
   const qDrafts = {}; // qid -> { picks, other, note } as typed here
   const qTimers = {};
+  const openDetails = new Set(); // "q1/o2": an option's Details you opened
   let currentId = null;
   let arriveId = null;
   const notes = {}; // note text typed here, not yet confirmed saved
@@ -58,16 +59,36 @@
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   /** The id Claude uses for this item (t1, q2…), shown so you can refer to it in the chat. Click to copy. */
-  // Plain text, not a button: the row is already a button, and a screen reader reads it as part of the title.
   const idTag = (id) =>
-    h('span', {
+    h('button', {
+      type: 'button',
       class: 'item-id',
+      'data-key': 'id',
       title: `Claude calls this ${id}. Click to copy.`,
+      'aria-label': `Copy ${id}`,
       onclick: (e) => {
         e.stopPropagation();
         post({ type: 'copy', text: id, label: id });
       },
     }, id);
+  /** Words only a screen reader hears, for things the eye gets from a colour or an icon. */
+  const sr = (text) => text && h('span', { class: 'sr' }, text);
+  /**
+   * A row: the whole of it opens and shuts on a click. For the keyboard and screen readers, only the middle (the text) is
+   * the button, so the checkbox, Share and the id next to it stay controls of their own instead of sitting inside a button.
+   */
+  function rowOf(t, open, lead, main, right) {
+    const toggleKey = (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+        e.preventDefault();
+        toggle(t, true);
+      }
+    };
+    return h('div', { class: 'row', onclick: () => toggle(t) },
+      lead,
+      h('div', { class: 'row-main', 'data-key': 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onkeydown: toggleKey }, main),
+      h('div', { class: 'right' }, right));
+  }
 
   function toast(text) {
     const t = $('#toast');
@@ -83,8 +104,6 @@
   let steps = new Map();
   // Steps drawn with a line down to the next step (every shown step of an ordered group except the last). Rebuilt on every render.
   let linked = new Set();
-  // The next task is one step of an ordered group: it stays in its group, in its place in the sequence, instead of being pinned above.
-  let currentInPlace = false;
   const inLaterStep = (t) => steps.has(t.id) && !steps.get(t.id).head;
   // Tags rank tasks that can be done in any order. A later step in a sequence never jumps the queue.
   const rank = (t) => (inLaterStep(t) ? 2 : tagRank(t));
@@ -142,11 +161,12 @@
 
   const isOpen = (t) => (t.id in ui.expanded ? ui.expanded[t.id] : t.id === currentId || (!t.shared && hasContent(t)));
 
-  function toggle(t) {
+  /** Opens or shuts a row. A click goes on into an empty note; from the keyboard the focus stays on the row (Tab reaches the note). */
+  function toggle(t, byKey) {
     ui.expanded[t.id] = !isOpen(t);
     saveUi();
     render();
-    if (ui.expanded[t.id]) {
+    if (ui.expanded[t.id] && !byKey) {
       const ta = document.querySelector(`#task-${t.id} textarea`);
       if (ta && !ta.value) setTimeout(() => ta.focus({ preventScroll: true }), 0);
     }
@@ -191,16 +211,35 @@
     post({ type: 'addImages', taskId, images: imgs });
   }
 
-  function lightbox(src) {
-    const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-label': 'Screenshot', tabindex: '-1' }, h('img', { src, alt: '' }));
-    const close = () => {
+  let closeLightbox = null; // set while a screenshot is open full size
+  /** A screenshot full size. Everything behind it is out of reach until it closes; then the focus goes back to the screenshot. */
+  function lightbox(src, taskId, shot) {
+    const box = h('div', { class: 'lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Screenshot. Press Escape to close.', tabindex: '-1' }, h('img', { src, alt: '' }));
+    const close = (refocus = true) => {
+      closeLightbox = null;
       box.remove();
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
+      $('.page').inert = false;
+      renderDock();
+      if (!refocus) return;
+      // Found again by name: the panel may have been redrawn while this was open. If the screenshot is gone, its task or question.
+      const card = document.getElementById(`task-${taskId}`);
+      const back = document.querySelector(`[data-shot="${CSS.escape(shot)}"]`);
+      focusOn(back || (card ? homeOf(card) : listHome()), !back);
     };
-    const onKey = (e) => e.key === 'Escape' && close();
-    box.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
+    // Caught first, so Escape closes only this (not the away card too), and Tab has nowhere else to go.
+    const onKey = (e) => {
+      if (e.key !== 'Escape' && e.key !== 'Tab') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') close();
+    };
+    box.addEventListener('click', () => close());
+    document.addEventListener('keydown', onKey, true);
+    closeLightbox = close;
+    $('.page').inert = true;
     document.body.append(box);
+    renderDock();
     box.focus();
   }
 
@@ -209,17 +248,20 @@
     return h(
       'div',
       { class: 'shots' },
-      images.map((img) => {
+      images.map((img, i) => {
         const src = img.src || `data:${img.mime};base64,${img.data}`;
+        const name = images.length > 1 ? `screenshot ${i + 1} of ${images.length}` : 'screenshot';
+        const shot = `${taskId}/${img.id || i}`;
         return h(
           'div',
           { class: 'shot' },
-          h('img', { src, alt: 'Screenshot', onclick: () => lightbox(src) }),
+          h('button', { type: 'button', class: 'shot-open', 'data-shot': shot, 'data-key': `shot:${shot}`, title: 'Show it full size', 'aria-label': `Show ${name} full size`, onclick: () => lightbox(src, taskId, shot) }, h('img', { src, alt: '' })),
           removable &&
             h('button', {
               class: 'x',
+              'data-key': `remove:${shot}`,
               title: 'Remove screenshot',
-              'aria-label': 'Remove screenshot',
+              'aria-label': `Remove ${name}`,
               html: I.close,
               onclick: () => post({ type: 'removeImage', taskId, imageId: img.id }),
             })
@@ -246,8 +288,13 @@
     } else send();
   }
 
+  // Share all had the focus (from a key, a screen reader, voice control or a click): the tasks it is sharing. Once they
+  // are all shared (or gone), the focus goes to the list if the bar has gone, instead of nowhere; then this is cleared.
+  // After a mouse click the browser shows no focus ring there, so nothing changes on screen.
+  let focusList = null;
   function shareAllTicked() {
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done);
+    focusList = document.activeElement === $('#share-all') ? ticked.map((t) => t.id) : null;
     for (const t of ticked) share(t);
     if (ticked.length) toast(`Shared ${plural(ticked.length, 'task', 'tasks')} with Claude`);
   }
@@ -261,26 +308,26 @@
       out.push(h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)));
     }
     if (steps.has(t.id)) out.push(h('span', { class: 'chip soft step', title: 'Do the steps in this order' }, `Step ${steps.get(t.id).n} of ${steps.get(t.id).of}`));
-    if (isCurrent && t.group && !currentInPlace) out.push(h('span', { class: 'chip soft' }, t.group));
     const note = (t.shared ? t.shared.note : noteOf(t)).trim();
     const pics = (t.shared ? t.shared.images : t.draft.images).length;
     if (!open && note) out.push(h('span', { class: 'chip soft', title: 'Has a note', html: `${I.note}<span>Note</span>` }));
-    if (!open && pics) out.push(h('span', { class: 'chip soft', title: 'Screenshots', html: `${I.image}<span>${pics}</span>` }));
+    if (!open && pics) out.push(h('span', { class: 'chip soft', title: 'Screenshots', html: `${I.image}<span>${pics}</span><span class="sr"> ${pics === 1 ? 'screenshot' : 'screenshots'}</span>` }));
     return out;
   }
 
+  /** Urgent or important, shown as a mark on a closed row (an open row shows the chip instead). Null for a later step: its order ranks it. */
+  const prioOf = (t) => (inLaterStep(t) ? null : t.tags.includes('urgent') ? 'Urgent' : t.tags.includes('important') ? 'Important' : null);
   function prioMark(t) {
-    if (inLaterStep(t)) return null;
-    if (t.tags.includes('urgent')) return h('span', { title: 'Urgent', html: I.urgent });
-    if (t.tags.includes('important')) return h('span', { title: 'Important', html: I.important });
-    return null;
+    const p = prioOf(t);
+    // The words are in the row's text for screen readers; the mark is for the eye.
+    return p && h('span', { title: p, 'aria-hidden': 'true', html: p === 'Urgent' ? I.urgent : I.important });
   }
 
   function renderTodo(t) {
     const isCurrent = t.id === currentId;
     const open = isOpen(t);
     const el = h('div', {
-      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' link' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
+      class: `task${open ? ' open' : ''}${isCurrent ? ' current' : ''}${linked.has(t.id) ? ' step-line' : ''}${rank(t) === 0 ? ' urgent' : ''}${!t.draft.done && hasContent(t) ? ' started' : ''}${t.id === arriveId ? ' arrive' : ''}`,
       id: `task-${t.id}`,
       'data-id': t.id,
       onmouseenter: () => (lastHover = t.id),
@@ -289,6 +336,7 @@
     const tick = h('input', {
       type: 'checkbox',
       class: 'tick',
+      'data-key': 'tick',
       'aria-label': `Done: ${t.text}`,
       checked: t.draft.done,
       onclick: (e) => e.stopPropagation(),
@@ -300,38 +348,26 @@
     });
     const quickShare = h('button', {
       class: 'btn small quiet qs',
+      'data-key': 'quick-share',
       title: 'Share with Claude',
+      'aria-label': `Share ${t.id} with Claude`,
       onclick: (e) => {
         e.stopPropagation();
         share(t);
       },
     }, 'Share');
 
-    const row = h(
-      'div',
-      {
-        class: 'row',
-        role: 'button',
-        tabindex: '0',
-        'aria-expanded': String(open),
-        onclick: () => toggle(t),
-        onkeydown: (e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-            e.preventDefault();
-            toggle(t);
-          }
-        },
-      },
-      tick,
-      h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent))),
-      h('div', { class: 'right' }, open ? null : quickShare, open ? null : prioMark(t), idTag(t.id))
+    el.append(
+      rowOf(t, open, tick,
+        [h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, isCurrent)), !open && sr(prioOf(t))],
+        [open ? null : quickShare, open ? null : prioMark(t), idTag(t.id)])
     );
-    el.append(row);
 
     if (open) {
       const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, hidden: true, onchange: (e) => attach(t.id, e.target.files) });
       const ta = h('textarea', {
         class: 'note',
+        'data-key': 'note',
         rows: '2',
         placeholder: 'Add a note…',
         'aria-label': `Note for ${t.text}`,
@@ -353,8 +389,8 @@
       });
       ta.value = noteOf(t);
       // Attaching a screenshot is rare, so it is an icon in the corner of the note, not a row of its own.
-      const attachBtn = h('button', { class: 'attach', type: 'button', title: 'Add an image (or paste one into the note)', 'aria-label': `Add an image to ${t.id}`, html: I.image, onclick: () => file.click() });
-      const shareBtn = h('button', { class: 'btn share-btn', onclick: () => share(t) });
+      const attachBtn = h('button', { class: 'attach', 'data-key': 'attach', type: 'button', title: 'Add an image (or paste one into the note)', 'aria-label': `Add an image to ${t.id}`, html: I.image, onclick: () => file.click() });
+      const shareBtn = h('button', { class: 'btn share-btn', 'data-key': 'share', onclick: () => share(t) });
       el.append(
         h(
           'div',
@@ -365,7 +401,7 @@
               'div',
               { class: 'cmd' },
               h('code', {}, t.command),
-              h('button', { title: 'Copy command', html: `${I.copy}<span>Copy</span>`, onclick: () => post({ type: 'copy', text: t.command }) })
+              h('button', { 'data-key': 'copy-command', title: 'Copy command', html: `${I.copy}<span>Copy</span>`, onclick: () => post({ type: 'copy', text: t.command }) })
             ),
           h('div', { class: 'note-box' }, ta, attachBtn, file),
           shots(t.draft.images, true, t.id),
@@ -407,33 +443,14 @@
     const s = t.shared;
     const open = isOpen(t);
     const el = h('div', { class: `task shared-row${open ? ' open' : ''}`, id: `task-${t.id}`, 'data-id': t.id });
+    const how = s.done ? 'Shared as done' : 'Shared as not done';
+    const read = t.seenAt ? 'Claude has read this' : 'Claude hasn’t read this yet';
+    // The circle and the eye or clock are for the eye; the same words are in the row's text for screen readers.
     el.append(
-      h(
-        'div',
-        {
-          class: 'row',
-          role: 'button',
-          tabindex: '0',
-          'aria-expanded': String(open),
-          onclick: () => toggle(t),
-          onkeydown: (e) => {
-            if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-              e.preventDefault();
-              toggle(t);
-            }
-          },
-        },
-        h('span', { class: `mark ${s.done ? 'done' : 'notdone'}`, title: s.done ? 'Shared as done' : 'Shared as not done', html: s.done ? I.check : I.minus }),
-        h('div', {}, h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, false))),
-        h(
-          'div',
-          { class: 'right' },
-          t.seenAt
-            ? h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye })
-            : h('span', { class: 'status', title: 'Claude hasn’t read this yet', html: I.clock }),
-          idTag(t.id)
-        )
-      )
+      rowOf(t, open,
+        h('span', { class: `mark ${s.done ? 'done' : 'notdone'}`, title: how, 'aria-hidden': 'true', html: s.done ? I.check : I.minus }),
+        [h('div', { class: 'text' }, t.text), h('div', { class: 'meta' }, chipsFor(t, open, false)), sr(`${how}. ${read}.`)],
+        [h('span', { class: `status${t.seenAt ? ' seen' : ''}`, title: read, 'aria-hidden': 'true', html: t.seenAt ? I.eye : I.clock }), idTag(t.id)])
     );
     if (open) {
       el.append(
@@ -451,6 +468,7 @@
             h('span', { class: 'grow' }),
             h('button', {
               class: 'ghost',
+              'data-key': 'take-back',
               title: 'Hide this from Claude again so you can change it',
               html: `${I.undo}<span>Take back</span>`,
               onclick: () => post({ type: 'unshare', taskId: t.id }),
@@ -465,6 +483,7 @@
   /* ---------------- questions ---------------- */
   const openQs = () => list.questions.filter((q) => !q.retired && (!q.answer || !q.seenAt));
   const qDraftOf = (q) => qDrafts[q.id] || (qDrafts[q.id] = { picks: [...q.draft.picks], other: q.draft.other, note: q.draft.note });
+  // What can be shared. The window decides the same way (draftAnswer in model.ts) when it shares and before closing.
   const qReady = (q) => {
     const d = qDraftOf(q);
     return d.picks.some((p) => p !== 'other') || (d.picks.includes('other') && d.other.trim());
@@ -487,7 +506,7 @@
   function renderQuestion(q) {
     const d = qDraftOf(q);
     const urgent = q.tags.includes('urgent');
-    const el = h('div', { class: `qcard${urgent ? ' urgent' : ''}`, id: `task-${q.id}`, 'data-id': q.id, onmouseenter: () => (lastHover = q.id) });
+    const el = h('div', { class: `qcard${urgent ? ' urgent' : ''}`, id: `task-${q.id}`, 'data-id': q.id, role: 'group', 'aria-labelledby': `qt-${q.id}`, onmouseenter: () => (lastHover = q.id) });
     const tags = q.tags.length ? h('div', { class: 'meta' }, q.tags.map((g) => h('span', { class: `chip ${g}` }, g[0].toUpperCase() + g.slice(1)))) : null;
 
     el.append(
@@ -500,13 +519,32 @@
 
     const role = q.multi ? 'checkbox' : 'radio';
     const opts = h('div', { class: 'opts', role: q.multi ? 'group' : 'radiogroup', 'aria-labelledby': `qt-${q.id}` });
-    const choose = (id) => {
+    // byArrow: moving through the choices with the arrow keys picks as it goes. It is saved once you stop (like typing),
+    // not at every key, and "Something else" doesn't take the focus away.
+    const choose = (id, byArrow) => {
       if (q.multi) d.picks = d.picks.includes(id) ? d.picks.filter((x) => x !== id) : [...d.picks, id];
       else d.picks = [id];
-      saveQDraft(q, true);
+      saveQDraft(q, !byArrow);
       paint();
-      if (id === 'other' && d.picks.includes('other')) setTimeout(() => el.querySelector('.other')?.focus(), 0);
+      if (id === 'other' && d.picks.includes('other') && !byArrow) setTimeout(() => el.querySelector('.other')?.focus(), 0);
     };
+    // One choice: one Tab stop. The arrow keys (and Home, End) move between the choices and pick them, as with any set of
+    // radio buttons. "Something else" is only moved to: it isn't an answer until you type it, so picking it on the way
+    // past would drop the choice you made. Space or Enter picks it and goes on into its box.
+    if (!q.multi)
+      opts.addEventListener('keydown', (e) => {
+        const btns = [...opts.querySelectorAll('.opt-main')];
+        const at = btns.indexOf(document.activeElement);
+        const to = { ArrowDown: at + 1, ArrowRight: at + 1, ArrowUp: at - 1, ArrowLeft: at - 1, Home: 0, End: btns.length - 1 }[e.key];
+        // With Alt, Ctrl, Shift or Cmd the keys belong to the screen reader or the system, not to the answer.
+        if (to === undefined || at < 0 || e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+        e.preventDefault();
+        const next = btns[(to + btns.length) % btns.length];
+        next.focus();
+        const id = next.closest('.opt').dataset.opt;
+        if (id === 'other') paint();
+        else choose(id, true);
+      });
     const all = [...q.options, ...(q.allowOther ? [{ id: 'other', label: 'Something else' }] : [])];
     for (const o of all) {
       const rec = q.recommended === o.id;
@@ -515,7 +553,7 @@
         { class: `opt${rec ? ' rec' : ''}`, 'data-opt': o.id },
         h(
           'button',
-          { class: 'opt-main', role, 'aria-checked': 'false', onclick: () => choose(o.id) },
+          { class: 'opt-main', 'data-key': `opt:${o.id}`, role, 'aria-checked': 'false', onclick: () => choose(o.id) },
           h('span', { class: `pick ${q.multi ? 'multi' : 'single'}` }),
           h(
             'span',
@@ -525,7 +563,8 @@
             rec && q.reason && h('span', { class: 'opt-why' }, q.reason)
           )
         ),
-        o.details && h('details', { class: 'opt-details' }, h('summary', {}, 'Details'), h('p', {}, o.details))
+        // Stays open when the card is drawn again.
+        o.details && h('details', { class: 'opt-details', open: openDetails.has(`${q.id}/${o.id}`), ontoggle: (e) => openDetails[e.currentTarget.open ? 'add' : 'delete'](`${q.id}/${o.id}`) }, h('summary', { 'data-key': `details:${o.id}` }, 'Details'), h('p', {}, o.details))
       );
       opts.append(row);
     }
@@ -533,6 +572,7 @@
 
     const other = h('textarea', {
       class: 'note other',
+      'data-key': 'other',
       rows: '2',
       placeholder: 'Your answer…',
       'aria-label': 'Something else',
@@ -547,6 +587,7 @@
 
     const note = h('textarea', {
       class: 'note',
+      'data-key': 'note',
       rows: '2',
       placeholder: 'Add a note…',
       'aria-label': `Note for ${q.question}`,
@@ -565,7 +606,7 @@
     const noteOpen = !!d.note || q.draft.images.length > 0 || ui.expanded[q.id];
     const noteWrap = h('div', { class: 'note-wrap', hidden: !noteOpen }, note, shots(q.draft.images, true, q.id));
     const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, hidden: true, onchange: (e) => attach(q.id, e.target.files) });
-    const shareBtn = h('button', { class: 'btn share-q', html: `${I.send}<span>Share answer</span>`, onclick: () => shareQ(q) });
+    const shareBtn = h('button', { class: 'btn share-q', 'data-key': 'share-answer', html: `${I.send}<span>Share answer</span>`, onclick: () => shareQ(q) });
 
     el.append(
       otherWrap,
@@ -575,6 +616,7 @@
         { class: 'actions' },
         h('button', {
           class: 'ghost add-note',
+          'data-key': 'add-note',
           hidden: noteOpen,
           html: `${I.note}<span>Note</span>`,
           onclick: (e) => {
@@ -585,7 +627,7 @@
             note.focus();
           },
         }),
-        h('button', { class: 'ghost', title: 'Attach a screenshot (or paste one into the note)', html: `${I.image}<span>Image</span>`, onclick: () => file.click() }),
+        h('button', { class: 'ghost', 'data-key': 'add-image', title: 'Attach a screenshot (or paste one into the note)', html: `${I.image}<span>Image</span>`, onclick: () => file.click() }),
         file,
         h('span', { class: 'grow' }),
         shareBtn
@@ -593,10 +635,15 @@
     );
 
     function paint() {
-      for (const row of el.querySelectorAll('.opt')) {
+      const rows = [...el.querySelectorAll('.opt')];
+      // The Tab stop is the choice you are on, else the one picked, else the first.
+      const tabStop = rows.find((r) => r.contains(document.activeElement)) || rows.find((r) => d.picks.includes(r.dataset.opt)) || rows[0];
+      for (const row of rows) {
         const on = d.picks.includes(row.dataset.opt);
         row.classList.toggle('on', on);
-        row.querySelector('.opt-main').setAttribute('aria-checked', String(on));
+        const btn = row.querySelector('.opt-main');
+        btn.setAttribute('aria-checked', String(on));
+        if (!q.multi) btn.tabIndex = row === tabStop ? 0 : -1;
       }
       otherWrap.hidden = !d.picks.includes('other');
       shareBtn.disabled = !qReady(q);
@@ -627,9 +674,10 @@
   function sendControl(compact) {
     if (routes.waiting) return h('span', { class: 'status seen', html: `${I.check}<span>Claude is waiting and gets it right away</span>` });
     if (routes.channel || routes.terminal)
-      return h('button', { class: `btn${compact ? ' small' : ''}`, title: 'Hand this to Claude now instead of waiting for its next read', html: `${I.send}<span>Send now</span>`, onclick: () => post({ type: 'sendNow' }) });
+      return h('button', { class: `btn${compact ? ' small' : ''}`, 'data-key': 'send-now', title: 'Hand this to Claude now instead of waiting for its next read', html: `${I.send}<span>Send now</span>`, onclick: () => post({ type: 'sendNow' }) });
     return h('button', {
       class: 'ghost',
+      'data-key': 'send-now',
       title: 'Claude can\'t be reached from here while it\'s idle. Copies a one-line message to paste into the Claude chat.',
       html: `${I.paste}<span>Copy for chat</span>`,
       onclick: () => post({ type: 'sendNow' }),
@@ -639,11 +687,11 @@
   /** An answered question Claude hasn't read yet: stays in Decide, with Send now. */
   function renderAnsweredQ(q) {
     const a = q.answer;
-    const el = h('div', { class: 'qcard answered', id: `task-${q.id}`, 'data-id': q.id });
+    const el = h('div', { class: 'qcard answered', id: `task-${q.id}`, 'data-id': q.id, role: 'group', 'aria-label': q.question });
     el.append(
       h('div', { class: 'qhead' },
-        h('span', { class: 'mark done small', html: I.check }),
-        h('div', {}, h('div', { class: 'qtext muted' }, q.question), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id)),
+        h('span', { class: 'mark done small', title: 'Answered', 'aria-hidden': 'true', html: I.check }),
+        h('div', {}, h('div', { class: 'qtext muted' }, q.question), sr('Your answer:'), h('div', { class: 'qanswer' }, answerText(q, a), a.picks.length === 1 && !a.other && (q.options.find((o) => o.id === a.picks[0]) || {}).summary && h('span', { class: 'qsum' }, q.options.find((o) => o.id === a.picks[0]).summary)), a.note && h('p', { class: 'said' }, a.note), shots(a.images, false, q.id)),
         idTag(q.id)
       ),
       h(
@@ -655,7 +703,7 @@
             ? h('span', { class: 'status seen', html: `${I.check}<span>Claude is waiting and gets it right away</span>` })
             : h('span', { class: 'status', html: `${I.clock}<span>Shared. Claude reads it on its next turn</span>` }),
         h('span', { class: 'grow' }),
-        h('button', { class: 'ghost', title: 'Hide your answer from Claude again so you can change it', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }),
+        h('button', { class: 'ghost', 'data-key': 'take-back', title: 'Hide your answer from Claude again so you can change it', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }),
         !q.pushedAt && !routes.waiting && sendOnCard && sendControl(true)
       )
     );
@@ -668,13 +716,14 @@
     const el = h('div', { class: `task shared-row q-row${open ? ' open' : ''}${q.retired ? ' retired' : ''}`, id: `task-${q.id}`, 'data-id': q.id });
     const answer = q.answer ? answerText(q, q.answer) : '';
     el.append(
-      h(
-        'div',
-        { class: 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onclick: () => toggle(q) },
-        h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, html: q.retired ? I.minus : I.ask }),
-        h('div', {}, h('div', { class: 'text' }, q.question), h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : h('span', { class: 'chip decided' }, answer))),
-        h('div', { class: 'right' }, q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', html: I.eye }), idTag(q.id))
-      )
+      rowOf(q, open,
+        h('span', { class: `mark ${q.retired ? 'retired' : 'decided'}`, title: q.retired ? 'No longer needed' : 'Answered', 'aria-hidden': 'true', html: q.retired ? I.minus : I.ask }),
+        [
+          h('div', { class: 'text' }, q.question),
+          h('div', { class: 'meta' }, q.retired ? h('span', { class: 'chip soft' }, 'No longer needed') : [sr('Your answer:'), h('span', { class: 'chip decided', title: answer }, answer)]),
+          !q.retired && sr('Claude has read this.'),
+        ],
+        [q.retired ? null : h('span', { class: 'status seen', title: 'Claude has read this', 'aria-hidden': 'true', html: I.eye }), idTag(q.id)])
     );
     if (open)
       el.append(
@@ -686,7 +735,7 @@
           q.answer && shots(q.answer.images, false, q.id),
           q.answer &&
             h('div', { class: 'actions' }, h('span', { class: 'status seen', html: `${I.eye}<span>Claude has read this</span>` }), h('span', { class: 'grow' }),
-              h('button', { class: 'ghost', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }))
+              h('button', { class: 'ghost', 'data-key': 'take-back', title: 'Hide your answer from Claude again so you can change it', html: `${I.undo}<span>Take back</span>`, onclick: () => post({ type: 'unshareAnswer', qid: q.id }) }))
         )
       );
     return el;
@@ -699,6 +748,31 @@
       ...list.questions.filter((q) => q.answer && !q.seenAt && !q.pushedAt && !q.retired),
     ];
   }
+
+  /* ---------------- focus ---------------- */
+  // Every control in the list has a data-key saying what it is ("note", "share", "opt:o2"), so after a redraw the focus
+  // goes back to the same control. Never its place (another button may be there now) or its words (Claude can change them).
+  /** The control named `key` in `scope` (a card, or the list itself, not counting its cards' controls), if it can take the focus. */
+  const controlIn = (scope, key) =>
+    [...scope.querySelectorAll(`[data-key="${CSS.escape(key)}"]`)].find((x) => !x.disabled && !x.closest('[hidden]') && (scope.id !== 'list' || !x.closest('.task, .qcard')));
+  /** Where the focus goes when its control is gone: the row's toggle, else the card (or list) itself, where Enter does nothing. */
+  const homeOf = (card) => card.querySelector(':scope > .row .row-main') || card;
+  /** …and when its whole card is gone (shared, or removed): the next task, else the top of the list, to Tab on from. */
+  const listHome = () => $('#list .task.current .row-main') || $('#list');
+  /**
+   * Focus on `el`. A card or the list can't take the focus by Tab or a click, so it can only for as long as it has it.
+   * `reveal`: the focus moved somewhere else (not the same control drawn again), so scroll it into view if it isn't.
+   */
+  function focusOn(el, reveal) {
+    if (!el.matches('button, input, textarea, summary, [tabindex]')) {
+      el.tabIndex = -1;
+      el.addEventListener('blur', () => el.removeAttribute('tabindex'), { once: true });
+    }
+    el.focus({ preventScroll: true });
+    if (reveal) el.scrollIntoView({ block: 'nearest' });
+  }
+  /** Screenshots are a row of like controls: when one goes, the focus goes to its neighbour ("shot:", "remove:" keys). */
+  const siblingKind = (key) => /^(shot|remove):/.exec(key || '')?.[0];
 
   /* ---------------- page parts ---------------- */
   function renderProgress() {
@@ -729,7 +803,8 @@
     const ticked = list.tasks.filter((t) => !t.shared && t.draft.done).length;
     const dock = $('#dock');
     dock.classList.toggle('on', ticked >= 2);
-    dock.setAttribute('aria-hidden', String(ticked < 2));
+    // Out of reach while it is hidden (also while it slides away) and while a screenshot is open over it.
+    dock.inert = ticked < 2 || !!$('.lightbox');
     $('#dock-text').innerHTML = `<b>${ticked}</b> ticked and not shared yet`;
   }
 
@@ -738,6 +813,7 @@
       'button',
       {
         class: 'section-head',
+        'data-key': `section:${key}`, // its count and hint change, but it is the same head
         'aria-expanded': String(open),
         onclick: () => {
           if (key === '__shared') ui.sharedOpen = !ui.sharedOpen;
@@ -754,7 +830,7 @@
   }
 
   function row(t, renderFn, extraKey) {
-    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${t.id === currentId && currentInPlace}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
+    const key = `${t.rev}|${t.seenAt || 0}|${isOpen(t)}|${t.id === currentId}|${t.id === arriveId}|${linked.has(t.id)}|${steps.has(t.id) ? steps.get(t.id).n + '/' + steps.get(t.id).of + (steps.get(t.id).head ? 'h' : '') : ''}|${extraKey || ''}`;
     let r = rendered.get(t.id);
     if (!r || r.key !== key) {
       r = { key, el: renderFn(t) };
@@ -764,6 +840,7 @@
   }
 
   let sendOnCard = false;
+  let lastCurrent; // the next task at the last render (undefined before the first)
   function render() {
     if (!list) return;
     $('#title').textContent = list.title;
@@ -777,14 +854,33 @@
     linked = new Set();
     const groups = todoGroups();
     currentId = pickCurrent(groups);
+    // The next task stays in its group, so it must not be hidden there by an old choice: when it moves into a group you
+    // had collapsed, that group opens. (Collapsing the group it is already in keeps it shut, with a hint on its header.)
+    if (lastCurrent !== undefined && currentId && currentId !== lastCurrent) {
+      const g = list.tasks.find((t) => t.id === currentId).group;
+      if (g && ui.collapsed[g] && list.tasks.find((t) => t.id === lastCurrent)?.group !== g) {
+        ui.collapsed[g] = false;
+        saveUi();
+      }
+    }
+    lastCurrent = currentId;
     renderProgress();
     renderDock();
 
-    // Keep focus and caret across re-renders.
+    // Keep focus and caret across re-renders: on the same control (moving it drops the focus), or the same one drawn again.
     const active = document.activeElement;
-    const activeRow = active && active.closest && active.closest('.task');
-    const activeCard = active && active.closest && (active.closest('.task') || active.closest('.qcard'));
-    const focus = activeCard && { id: activeCard.dataset.id, tag: active.tagName, cls: active.classList.contains('other') ? '.other' : 'textarea:not(.other)', start: active.selectionStart, end: active.selectionEnd };
+    const scope = active?.closest?.('.task, .qcard') || active?.closest?.('#list');
+    // id: the card it is in (none for a control in the list itself, like a section head).
+    const kind = siblingKind(active?.dataset?.key);
+    const focus = scope && {
+      el: active,
+      id: scope.dataset.id,
+      shared: scope.classList.contains('shared-row'), // a task that is shared now is drawn again in another place
+      key: active.dataset.key,
+      at: kind ? [...scope.querySelectorAll(`[data-key^="${kind}"]`)].indexOf(active) : -1,
+      start: active.selectionStart,
+      end: active.selectionEnd,
+    };
 
     const nodes = [];
     $('#waiting').hidden = !routes.waiting;
@@ -806,22 +902,19 @@
       nodes.push(box);
     }
 
+    // The next task stays where it belongs, in its group (it is tinted and open, so it stands out there). Ungrouped tasks
+    // come first, so a next task without a group is at the top anyway.
     const current = currentId && list.tasks.find((t) => t.id === currentId);
-    currentInPlace = !!current && steps.has(current.id); // a step stays in its group, even if you collapse the group
-    if (current && !currentInPlace) nodes.push(h('section', { class: 'section', 'aria-label': 'Next task' }, row(current, renderTodo)));
-
     for (const g of groups) {
-      const rest = g.tasks.filter((t) => t.id !== currentId || currentInPlace);
-      if (!rest.length) continue;
-      if (g.ordered && !ui.collapsed[g.name]) rest.slice(0, -1).forEach((t) => linked.add(t.id));
+      if (g.ordered && !ui.collapsed[g.name]) g.tasks.slice(0, -1).forEach((t) => linked.add(t.id));
       const box = h('section', { class: 'section' });
       if (g.name) {
         const open = !ui.collapsed[g.name];
-        const hidesNext = !open && currentInPlace && g.tasks.some((t) => t.id === currentId); // you collapsed the group the next task is in
-        box.append(sectionHead(g.name, g.name, rest.length, open, hidesNext ? 'next task inside' : g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
-        if (open) rest.forEach((t) => box.append(row(t, renderTodo)));
+        const hidesNext = !open && g.tasks.some((t) => t.id === currentId); // you collapsed the group the next task is in
+        box.append(sectionHead(g.name, g.name, g.tasks.length, open, hidesNext ? 'next task inside' : g.phase ? `Phase ${g.phase} of ${g.phases}` : g.ordered ? 'in this order' : undefined));
+        if (open) g.tasks.forEach((t) => box.append(row(t, renderTodo)));
       } else {
-        rest.forEach((t) => box.append(row(t, renderTodo)));
+        g.tasks.forEach((t) => box.append(row(t, renderTodo)));
       }
       nodes.push(box);
     }
@@ -859,16 +952,33 @@
     }
 
     for (const id of [...rendered.keys()]) if (!list.tasks.some((t) => t.id === id) && !list.questions.some((q) => q.id === id)) rendered.delete(id);
+    for (const k of openDetails) if (!decideQs.some((q) => !q.answer && k.startsWith(`${q.id}/`))) openDetails.delete(k); // answered or gone
     $('#list').replaceChildren(...nodes);
     $('#empty').hidden = list.tasks.length + list.questions.length > 0;
 
     if (focus) {
-      const r = document.getElementById(`task-${focus.id}`);
-      const target = r && (focus.tag === 'TEXTAREA' ? r.querySelector(focus.cls) : r.querySelector('.row, .opt-main'));
-      if (target) {
-        target.focus({ preventScroll: true });
-        if (focus.tag === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
+      let r = focus.id ? document.getElementById(`task-${focus.id}`) : $('#list');
+      // You shared the task: it went from the to-do list to "Shared with Claude". Go on to the next task, not after it.
+      if (r && focus.id && r.classList.contains('shared-row') !== focus.shared) r = null;
+      const kept = focus.el.isConnected && !focus.el.disabled && !focus.el.closest('[hidden]');
+      const kind = siblingKind(focus.key);
+      const neighbour = () => {
+        const left = [...r.querySelectorAll(`[data-key^="${kind}"]`)].filter((x) => !x.closest('[hidden]'));
+        return left[Math.min(focus.at, left.length - 1)] || controlIn(r, 'note');
+      };
+      // A control that is gone (Share answer, once the answer is shared) never hands the focus to another one in its place.
+      const same = kept ? focus.el : r && focus.key && controlIn(r, focus.key);
+      const target = same || (!r ? listHome() : (kind && neighbour()) || homeOf(r));
+      if (target !== document.activeElement) {
+        focusOn(target, !same);
+        if (target.tagName === 'TEXTAREA' && typeof focus.start === 'number') target.setSelectionRange(focus.start, focus.end);
       }
+    }
+    // After Share all from the keyboard the bar is gone (and out of reach): put the focus on the next task, or at the
+    // top of the list, so the next Tab goes on from there. Not on a choice or a button, where Enter would do something.
+    if (focusList && focusList.every((id) => !list.tasks.some((t) => t.id === id && !t.shared))) {
+      if (!$('#dock').classList.contains('on')) focusOn(listHome(), true);
+      focusList = null;
     }
     arriveId = null;
   }
@@ -876,18 +986,23 @@
   function jump(id) {
     const t = list && list.tasks.find((x) => x.id === id);
     if (!t) return;
+    // The task asked for comes first: close a screenshot shown over the page, and give its focus to the task.
+    const covered = !!closeLightbox;
+    closeLightbox?.(false);
     if (t.shared) ui.sharedOpen = true;
     if (t.group) ui.collapsed[t.group] = false;
     ui.expanded[id] = true;
     saveUi();
     render();
-    document.getElementById(`task-${id}`)?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
+    const el = document.getElementById(`task-${id}`);
+    if (covered && el) focusOn(homeOf(el));
+    el?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
   }
 
   /* ---------------- away ---------------- */
   // The card under the title. 'on' follows the window (list.away); the rest is what the user opened here.
   let awayStage = 'idle'; // idle | picker | confirm | back
-  let awayPick = null; // { ms, label } chosen in the picker, waiting for a yes
+  let awayPick = null; // chosen in the picker, waiting for a yes: { ms } for a length ("2 hours"), { until } for a time ("17:30")
   let awayBase = 0; // the end time when the user said yes, to see the new one arrive
   let awaySent = false; // yes was pressed and the window hasn't answered yet
   let awayShown = ''; // which card is built now
@@ -897,13 +1012,26 @@
   // The window decides whether the user is away, so this panel's clock can't disagree with it.
   const isAway = () => !!(list && list.away);
   const awayView = () => (awayStage !== 'idle' ? awayStage : isAway() ? 'on' : 'idle');
-  const clockText = (ms) => {
-    const d = new Date(ms);
-    const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return d.toDateString() === new Date().toDateString() ? t : `tomorrow ${t}`;
-  };
+  const timeText = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  /** "3:30 PM", or "tomorrow 1:00 AM" if that isn't today. Worked out each time it is shown, so it is still right after midnight. */
+  const clockText = (ms) => (new Date(ms).toDateString() === new Date().toDateString() ? '' : 'tomorrow ') + timeText(ms);
   // The window tells us how long is left (so this clock can't disagree with its own). If an older window doesn't, work it out from the end time.
   const leftMs = () => Math.max(0, (list.awayLeft ?? Math.max(0, list.awayUntil - awayGot)) - (Date.now() - awayGot));
+  /** The end time for the away card. The window says whether it is "tomorrow", and until when, as it tells Claude. */
+  const untilText = () =>
+    ((list.awayMidnightLeft ?? 0) - (Date.now() - awayGot) > 0 ? 'tomorrow ' : '') + (list.awayLabel || timeText(Date.now() + leftMs()));
+  /**
+   * Asks to be away for `ms` from now, with the end time as it shows now. If that end is after midnight, the window also
+   * gets how long until midnight (a duration, like `ms`), so it says "tomorrow" until then and not after.
+   */
+  const setAway = (ms) => {
+    const now = Date.now(), midnight = new Date(now).setHours(24, 0, 0, 0);
+    post({ type: 'setAway', ms, label: timeText(now + ms), midnightIn: now + ms >= midnight ? midnight - now : undefined });
+  };
+  // How long the picked time is from now: "2 hours" stays 2 hours and "Or at 17:30" stays 17:30, however long the question is open.
+  const pickMs = () => (awayPick.until ? awayPick.until - Date.now() : awayPick.ms);
+  // Change the text only when it changes: the card is a live region, and a screen reader may read it out again.
+  const setText = (el, text) => el.textContent !== text && (el.textContent = text);
   const leftText = (ms) => {
     const m = Math.max(1, Math.ceil(ms / 60000));
     return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
@@ -919,28 +1047,45 @@
   };
   let awaySeen = 0; // the most time left we have seen for this away, for the bar if the window doesn't say how long it was
   function awayTick() {
+    // Times that count from now (the picker's buttons, the question) move on with the clock.
+    for (const el of document.querySelectorAll('[data-from-now]')) setText(el, clockText(Date.now() + Number(el.dataset.fromNow)));
+    // (Not once Yes is sent: the window has it, and its answer closes the question.)
+    if (awayView() === 'confirm' && !awaySent) {
+      // The time picked has come while the question was open: ask again, rather than set an away for the next day.
+      if (pickMs() < 1000) return awayExpired();
+      setText($('#away-ask'), clockText(Date.now() + pickMs()));
+      $('#away-long').hidden = pickMs() < 3600_000;
+    }
     const left = $('#away-left'), fill = $('#away-fill');
     if (!left || awayView() !== 'on') return;
+    setText($('#away-until'), untilText());
     const ms = leftMs();
     awaySeen = Math.max(awaySeen, ms);
     const total = list.awayMs || awaySeen || 1;
-    left.textContent = `${leftText(ms)} left`;
+    setText(left, `${leftText(ms)} left`);
     fill.style.width = `${Math.round(Math.min(1, ms / total) * 100)}%`;
     $('#away-bar').title = `${leftText(ms)} left`;
   }
   setInterval(awayTick, 15_000);
 
+  function awayExpired() {
+    awayStage = 'picker';
+    awaySent = false;
+    renderAway();
+    toast('That time has passed. Pick another.');
+  }
+
   // Running late: stay away 30 minutes longer. No question asked; it is one small step and Change undoes it.
   function extend() {
-    const ms = Math.min(leftMs() + 30 * 60_000, DAY);
-    post({ type: 'setAway', ms, label: clockText(Date.now() + ms) });
+    setAway(Math.min(leftMs() + 30 * 60_000, DAY));
   }
   const awayCard = (view) => {
     const go = (stage) => () => ((awayStage = stage), (awaySent = false), renderAway());
     if (view === 'picker') {
-      const choose = (ms) => {
+      // isTime: a time of day ("Or at 17:30"), which stays that time; else a length ("2 hours"), which counts from Yes.
+      const choose = (ms, isTime) => {
         if (!ms) return toast('Pick a time first');
-        awayPick = { ms, label: clockText(Date.now() + ms) };
+        awayPick = isTime ? { until: Date.now() + ms } : { ms };
         go('confirm')();
       };
       const soon = new Date(Date.now() + 3600_000);
@@ -949,28 +1094,29 @@
         h('div', { class: 'away-title', html: `<span class="away-moon">${I.away}</span>Back at?` }),
         h('div', { class: 'away-chips' },
           [[30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']].map(([m, label]) =>
-            h('button', { class: 'away-chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t' }, clockText(Date.now() + m * 60_000))))),
-        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small', onclick: () => choose(untilClock(input.value)) }, 'Set')));
+            h('button', { class: 'away-chip', onclick: () => choose(m * 60_000) }, h('span', { class: 'away-chip-l' }, label), h('span', { class: 'away-chip-t', 'data-from-now': m * 60_000 }, clockText(Date.now() + m * 60_000))))),
+        h('div', { class: 'away-at' }, h('label', { for: 'away-time' }, 'Or at'), input, h('button', { class: 'btn small', onclick: () => choose(untilClock(input.value), true) }, 'Set')));
     }
     if (view === 'confirm') {
       return h('section', { class: 'away-card soft card-in', role: 'group', 'aria-label': 'Confirm' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, `Away until ${awayPick.label}?`), h('button', { class: 'link', onclick: go('picker') }, 'Change')),
-        awayPick.ms >= 3600_000 ? h('p', { class: 'away-note' }, 'Write to Claude when you’re back.') : null,
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('span', { id: 'away-ask' }, clockText(Date.now() + pickMs())), '?')), h('button', { class: 'away-link', onclick: go('picker') }, 'Change')),
+        h('p', { class: 'away-note', id: 'away-long', hidden: pickMs() < 3600_000 }, 'Write to Claude when you’re back.'),
         h('div', { class: 'away-actions' },
           h('button', {
             class: 'btn',
             onclick: () => {
+              if (pickMs() < 1000) return awayExpired();
               awayBase = (list && list.awayUntil) || 0;
               awaySent = true;
               // How long, not a time of day: the window works out the end, so a different clock there changes nothing.
-              post({ type: 'setAway', ms: awayPick.ms, label: awayPick.label });
+              setAway(pickMs());
             },
           }, 'Yes'),
           h('button', { class: 'ghost-btn', onclick: go('idle') }, 'Not now')));
     }
     if (view === 'on') {
       return h('section', { class: 'away-card soft card-in', role: 'status', 'aria-live': 'polite' },
-        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, list.awayLabel || clockText(list.awayUntil)))), h('span', { class: 'away-left', id: 'away-left' })),
+        h('div', { class: 'away-head' }, h('div', { class: 'away-title' }, h('span', {}, 'Away until ', h('strong', { id: 'away-until' }, untilText()))), h('span', { class: 'away-left', id: 'away-left', 'aria-live': 'off' })),
         h('div', { class: 'away-bar', id: 'away-bar', 'aria-hidden': 'true' }, h('div', { class: 'away-fill', id: 'away-fill' })),
         h('div', { class: 'away-actions' },
           h('button', { class: 'btn', onclick: () => { awayStage = 'back'; post({ type: 'endAway' }); renderAway(); } }, 'I’m back'),
@@ -1007,13 +1153,15 @@
       return;
     }
     // Every state update comes through here: only build a card again when it changes, or typing in it would be lost.
-    const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${awayPick.ms}` : view;
-    if (key === awayShown) return;
+    const key = view === 'on' ? `on|${list.awayUntil}|${list.awayLabel}` : view === 'confirm' ? `confirm|${JSON.stringify(awayPick)}` : view;
+    if (key === awayShown) {
+      if (view === 'on') awayTick(); // the same card: bring its times up to date
+      return;
+    }
     if (view === 'on' && awayShown.startsWith('on|') && $('#away-until')) {
       // Same card, new end time (stayed away longer): change the text, don't build the card again.
       awayShown = key;
       awaySeen = 0;
-      $('#away-until').textContent = list.awayLabel || clockText(list.awayUntil);
       awayTick();
       return;
     }
@@ -1050,17 +1198,22 @@
       <div id="list"></div>
       <div class="empty" id="empty" hidden><strong>Nothing here yet</strong><p>When Claude needs you to do something by hand, or to decide something, it appears here.</p></div>
     </main>
-    <div class="dock" id="dock" aria-hidden="true"><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
+    <div class="dock" id="dock" inert><div class="dock-in"><span id="dock-text"></span><button class="btn" id="share-all">${I.send}<span>Share all</span></button></div></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>`;
 
   $('#away-btn').onclick = toggleAway;
   $('#hide').onclick = () => post({ type: 'hide' });
+  // Before asking about closing, the window has this panel send what isn't saved yet (an answer typed a moment ago).
   $('#close').onclick = () => post({ type: 'close' });
   $('#share-all').onclick = shareAllTicked;
+  // You moved on yourself (Tab, a click): Share all no longer moves the focus when the bar goes.
+  document.addEventListener('focusin', (e) => {
+    if (!$('#dock').contains(e.target)) focusList = null;
+  });
 
   document.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    if (!files.length || closeLightbox) return; // nothing to paste into while a screenshot covers the page
     const r = (document.activeElement?.closest && (document.activeElement.closest('.task') || document.activeElement.closest('.qcard'))) || (lastHover && document.getElementById(`task-${lastHover}`));
     const t = r && (list.tasks.find((x) => x.id === r.dataset.id) || list.questions.find((x) => x.id === r.dataset.id));
     if (!t || t.shared || t.answer) return toast('Click into a task or question first, then paste');
@@ -1085,16 +1238,24 @@
       render();
       // The one authored moment: after sharing the current task, the next one opens in its place.
       const wasSharedNow = prevCurrent && !prevShared && list.tasks.find((t) => t.id === prevCurrent)?.shared;
-      if (wasSharedNow && currentId && currentId !== prevCurrent && !reduced()) {
-        arriveId = currentId;
-        rendered.delete(currentId);
-        render();
+      if (wasSharedNow && currentId && currentId !== prevCurrent) {
+        if (!reduced()) {
+          arriveId = currentId;
+          rendered.delete(currentId);
+          render();
+        }
+        // It may be in a group further down: bring it into view (only as far as needed).
+        document.getElementById(`task-${currentId}`)?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
       }
     } else if (m.type === 'awayRefused') {
       // The window said no to that time: back to the picker, not stuck on the question.
       awaySent = false;
       awayStage = 'picker';
       renderAway();
+    } else if (m.type === 'flush') {
+      // The window is about to ask about closing: send what isn't saved yet first, so the question counts it.
+      flushDrafts();
+      post({ type: 'flushed' });
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });

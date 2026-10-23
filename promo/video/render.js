@@ -12,14 +12,18 @@ const HERE = __dirname;
 const OUT = path.join(HERE, 'build');
 fs.mkdirSync(OUT, { recursive: true });
 
-const FORMAT = process.argv[2] || 'vertical';
-const PREVIEW = process.argv.includes('--preview') ? process.argv[process.argv.indexOf('--preview') + 1].split(',').map(Number) : null;
+const USAGE = 'Usage: node promo/video/render.js vertical|square [--preview t1,t2,...]';
+const FORMAT = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'vertical';
+const pi = process.argv.indexOf('--preview');
+const PREVIEW = pi < 0 ? null : (process.argv[pi + 1] || '').split(',').filter(Boolean).map(Number);
+if (PREVIEW && (!PREVIEW.length || PREVIEW.some((t) => !(t >= 0)))) { console.error(USAGE); process.exit(2); }
 const FPS = 30, DURATION = 44.0, END_AT = 34.67;
 const LAYOUTS = {
   vertical: { W: 540, H: 960, VX: 20, VY: 262, VW: 500, CAP_Y: 74, CAP_SIZE: 34, SUB_SIZE: 18 },
   square: { W: 540, H: 540, VX: 20, VY: 146, VW: 500, CAP_Y: 18, CAP_SIZE: 25, SUB_SIZE: 14 },
 };
 const L = LAYOUTS[FORMAT];
+if (!L) { console.error(`Unknown format "${FORMAT}". ${USAGE}`); process.exit(2); }
 const PANEL_X = 480, PANEL_Y = 66; // where the panel iframe sits in world coords
 
 /* ------------------------------------------------------------------ script ------------------------------------------------------------------ */
@@ -457,6 +461,13 @@ async function cursorAt(t, fr) {
   let ff = null;
   if (!PREVIEW) {
     ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'mjpeg', '-i', '-', '-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outFile], { stdio: ['pipe', 'inherit', 'inherit'] });
+    // If ffmpeg is missing or fails, stop with an error instead of saying the video was written.
+    ff.done = new Promise((resolve, reject) => {
+      ff.on('error', reject);
+      ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`))));
+    });
+    ff.done.catch(() => {});
+    ff.stdin.on('error', () => {}); // a closed pipe is reported through ff.done, with ffmpeg's exit code
   }
   const want = PREVIEW ? new Set(PREVIEW.map((t) => Math.round(t * FPS))) : null;
   const last = PREVIEW ? Math.max(...want) : frames - 1;
@@ -475,10 +486,11 @@ async function cursorAt(t, fr) {
     if (want && !want.has(f)) continue;
     const buf = await page.screenshot({ type: 'jpeg', quality: 94 });
     if (want) fs.writeFileSync(path.join(OUT, `prev-${FORMAT}-${t.toFixed(2)}.jpg`), buf);
-    else if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
+    else if (!ff.stdin.write(buf)) await Promise.race([new Promise((r) => ff.stdin.once('drain', r)), ff.done]);
     if (f % 150 === 0) console.log(`frame ${f}/${last} t=${t.toFixed(1)} (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
   }
-  if (ff) { ff.stdin.end(); await new Promise((r) => ff.on('close', r)); console.log('wrote', outFile); }
-  fs.writeFileSync(path.join(OUT, 'events.json'), JSON.stringify({ duration: DURATION, events: events.sort((a, b) => a.t - b.t) }, null, 1));
+  if (ff) { ff.stdin.end(); await ff.done; console.log('wrote', outFile); }
+  // A preview stops early, so its events would be a cut-down list: keep the full one from the last real render.
+  if (!PREVIEW) fs.writeFileSync(path.join(OUT, 'events.json'), JSON.stringify({ duration: DURATION, events: events.sort((a, b) => a.t - b.t) }, null, 1));
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });

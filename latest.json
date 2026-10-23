@@ -1,6 +1,6 @@
 {
-  "version": "0.7.0",
-  "vsix": "releases/checklist-bridge-0.7.0.vsix",
-  "sha256": "01c42b06cc0e0aa4b8e26a2fef21b38126f5eadf0093fcfcf2cb7795d44a90e8",
-  "notes": "Away mode: tell Claude you're away and it stops waiting for you."
+  "version": "0.7.2",
+  "vsix": "releases/checklist-bridge-0.7.2.vsix",
+  "sha256": "e6766f5630d5f13d181ee2748e50f6bb6fde2758a4b1d66a809584cb48e70ec1",
+  "notes": "Keyboard and screen-reader support, the next task stays in its group, and away-mode fixes."
 }

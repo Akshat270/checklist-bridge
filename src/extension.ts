@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { Checklist, ChecklistStore } from './model';
+import { Checklist, ChecklistStore, stillOpen } from './model';
 import { createWindowServer, WindowServer } from './windowServer';
 import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
 import { Panels, Routes, VIEW_TYPE } from './panels';
@@ -27,6 +27,14 @@ let ownersRef: Ownership | undefined;
 export async function activate(ctx: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Checklist Bridge');
   const log = (s: string) => output.appendLine(`[${new Date().toLocaleTimeString()}] ${s}`);
+  let version = '0.0.0';
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(ctx.extensionUri.fsPath, 'package.json'), 'utf8')).version;
+  } catch {
+    /* keep 0.0.0 */
+  }
+  // The first line says which copy is running: a test build is loaded from your checkout, an installed one from the extensions folder.
+  log(`Checklist Bridge ${version}, loaded from ${ctx.extensionUri.fsPath}`);
 
   /* ---------- identity of this window ---------- */
   // Stable per workspace so chats started before a reload still find the window afterwards.
@@ -441,15 +449,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('checklistBridge.close', async (arg) => {
       const c = resolve(arg);
       if (!c) return;
-      const waiting = c.tasks.filter((t) => !t.shared).length;
+      await panels.flush(c.id); // an answer picked or typed a moment ago in its panel counts in what is still waiting
       const pick = await vscode.window.showWarningMessage(
         `Close "${c.title}"?`,
-        {
-          modal: true,
-          detail:
-            (waiting ? `${waiting} task${waiting === 1 ? ' is' : 's are'} still not shared. ` : '') +
-            'Claude will be told the checklist was closed. If it adds tasks later, a new checklist opens.',
-        },
+        { modal: true, detail: stillOpen(c) + 'Claude will be told the checklist was closed. If it adds tasks later, a new checklist opens.' },
         'Close checklist'
       );
       if (pick === 'Close checklist') store.close(c.id);
@@ -577,12 +580,6 @@ export async function activate(ctx: vscode.ExtensionContext) {
   );
 
   // Keep the extension (and with it the Claude Code connector) up to date from GitHub.
-  let version = '0.0.0';
-  try {
-    version = JSON.parse(fs.readFileSync(path.join(ctx.extensionUri.fsPath, 'package.json'), 'utf8')).version;
-  } catch {
-    /* keep 0.0.0 */
-  }
   startUpdater(ctx, version, log);
 
   // Versions before 0.3.1 were published as "akshat.checklist-bridge". Remove that copy so the two don't both run.

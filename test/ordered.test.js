@@ -152,20 +152,38 @@ function build() {
   }
   const ids = (page) => page.$$eval('.task', (xs) => xs.map((x) => x.dataset.id).join(' '));
   const next = (page) => page.$eval('.task.current', (x) => x.dataset.id).catch(() => null);
-  // Where the next task is shown: the section named by its heading, or pinned above as "Next task".
+  // Where the next task is shown: the section named by its heading, or 'ungrouped' (the tasks without a group, at the top).
+  // There is no section of its own above them any more: the next task always stays where it belongs.
   const where = (page) => page.$eval('.task.current', (x) => {
+    if (document.querySelector('[aria-label="Next task"]')) return 'pinned';
     const sec = x.closest('section');
-    return sec.getAttribute('aria-label') === 'Next task' ? 'pinned' : (sec.querySelector('.section-head span') || {}).textContent;
+    return (sec.querySelector('.section-head span') || {}).textContent || 'ungrouped';
   }).catch(() => null);
+  const first = (page) => page.$eval('.task', (x) => x.dataset.id);
 
   let list = JSON.parse(JSON.stringify(build().s.all()[0]));
   let page = await open(list);
-  check((await next(page)) === 't4' && (await where(page)) === 'pinned', 'an important task that can be done in any order is still the next task, pinned above');
+  check((await next(page)) === 't4' && (await where(page)) === 'ungrouped' && (await first(page)) === 't4', 'an important task without a group is the next task, first among the ungrouped tasks at the top');
   const order = await ids(page);
   check(order.indexOf('t1') < order.indexOf('t2') && order.indexOf('t2') < order.indexOf('t3'), `steps stay in Claude's order (${order})`);
   const steps = await page.$$eval('.chip.step', (xs) => xs.map((x) => x.textContent).join());
   check(steps === 'Step 1 of 3,Step 2 of 3,Step 3 of 3', `steps are numbered (${steps})`);
   check(await page.$eval('#task-t3', (e) => !e.querySelector('.prio')), 'the last step gets no priority mark');
+  // The class that draws the line between steps adds only the line. (A button style named "link" once also matched it and
+  // squashed every step to 26 px, so the rows overlapped.) Steps with the line must look like the last step, which has none.
+  const lineLeaks = await page.$$eval('.task', (xs) => {
+    const props = ['padding', 'border', 'border-radius', 'flex', 'background-color', 'color', 'font-size', 'font-weight'];
+    const last = xs.find((x) => x.dataset.id === 't3');
+    const base = getComputedStyle(last);
+    const out = [];
+    for (const x of xs.filter((x) => x.classList.contains('step-line'))) {
+      if (x.getBoundingClientRect().height < x.querySelector('.row').scrollHeight - 1) out.push(`${x.dataset.id} is squashed`);
+      const st = getComputedStyle(x);
+      for (const p of props) if (st.getPropertyValue(p) !== base.getPropertyValue(p)) out.push(`${x.dataset.id} ${p}`);
+    }
+    return [xs.filter((x) => x.classList.contains('step-line')).length, out];
+  });
+  check(lineLeaks[0] === 2 && lineLeaks[1].length === 0, `step rows look like ordinary rows apart from the line (${lineLeaks[1].join(', ') || 'no differences'})`);
   check(await page.$eval('#task-t6', (e) => !!e.querySelector('.prio')), 'a task that can be done in any order keeps its priority mark');
   await page.close();
 
@@ -177,7 +195,7 @@ function build() {
   check(await page.$eval('#task-t1', (e) => !!e.querySelector('.note-box > .attach') && !/Add image/.test(e.textContent) && getComputedStyle(e.querySelector('.actions')).display === 'none'), 'an open task has no row of its own for adding an image, only an icon in the note');
   await page.fill('#task-t1 textarea', 'done it');
   check(await page.$eval('#task-t1', (e) => getComputedStyle(e.querySelector('.actions')).display !== 'none' && !e.querySelector('.share-btn').hidden), 'the share row appears once there is a note');
-  check(await page.$eval('#task-t1', (e) => e.classList.contains('link') && parseFloat(getComputedStyle(e, '::before').top) >= e.offsetHeight - 1), 'the line between steps does not run through an open step, only below it');
+  check(await page.$eval('#task-t1', (e) => e.classList.contains('step-line') && parseFloat(getComputedStyle(e, '::before').top) >= e.offsetHeight - 1), 'the line between steps does not run through an open step, only below it');
   check(await page.$eval('#task-t1', (e) => e.classList.contains('open') && !!e.closest('section').querySelector('#task-t2') && !e.querySelector('.chip.soft:not(.step)')), 'it is open in its place, ahead of the later steps, without a repeated group chip');
   await page.close();
   list.tasks[0].shared = { at: 1, done: true, note: '', images: [] };
@@ -214,8 +232,73 @@ function build() {
     rl = roadList();
     rl.tasks.push({ id: 't99', text: 'Fix the build now', tags: ['urgent'], addedAt: 1, rev: 1, draft: { done: false, note: '', images: [] } });
     pg = await open(rl);
-    check((await next(pg)) === 't99' && (await where(pg)) === 'pinned', 'an urgent task outside the roadmap can still be next');
+    check((await next(pg)) === 't99' && (await where(pg)) === 'ungrouped' && (await first(pg)) === 't99', 'an urgent task outside the roadmap can still be next, at the top');
     await pg.close();
+  }
+
+  // An ordinary group (any order): its task that is next stays in the group, under its heading, not pulled out above it.
+  {
+    const s = new ChecklistStore(), S = 'x';
+    s.handleTool(S, {}, 'checklist_add_tasks', {
+      title: 'Launch',
+      tasks: [
+        { text: 'Write the release notes', group: 'Docs' },
+        { text: 'Create the Razorpay account', group: 'Payments' },
+        { text: 'Add the key to .env', group: 'Payments', tags: ['urgent'] },
+        { text: 'Check the pricing page', group: 'Payments' },
+      ],
+    });
+    const pl = JSON.parse(JSON.stringify(s.all()[0]));
+    let pg = await open(pl);
+    const inGroup = await pg.$eval('.task.current', (x) => {
+      const sec = x.closest('section');
+      return [x.dataset.id, sec.querySelector('.section-head span')?.textContent, [...sec.querySelectorAll('.task')].map((t) => t.dataset.id).join(' ')];
+    });
+    check((await where(pg)) === 'Payments' && inGroup.join('|') === 't3|Payments|t3 t2 t4', `the urgent next task stays in its group, first there (${inGroup.join(' | ')})`);
+    check((await pg.$$eval('.section-head span:first-of-type', (xs) => xs.map((x) => x.textContent).join())) === 'Docs,Payments' && (await first(pg)) === 't1', 'the groups keep their order: the next task does not move its group up');
+    check(await pg.$eval('#task-t3', (e) => e.classList.contains('open') && !e.querySelector('.chip.soft')), 'it is open and tinted there, without its group name repeated as a tag');
+    check(await pg.$eval('.section-head:has-text("Payments") .count', (x) => x.textContent === '3'), 'its group counts it');
+    // Collapsing the group hides it there too, with a hint.
+    await pg.click('.section-head:has-text("Payments")'); await pg.waitForTimeout(200);
+    check(!(await pg.$('.task.current')) && (await pg.$eval('.section-head:has-text("Payments")', (x) => x.textContent)).includes('next task inside'), 'collapsing its group hides it there, with a hint');
+    await pg.close();
+    // Shared, the next one in the group takes its place.
+    pl.tasks.find((x) => x.id === 't3').shared = { at: 1, done: true, note: '', images: [] };
+    pg = await open(pl);
+    check((await next(pg)) === 't1' && (await where(pg)) === 'Docs', 'when it is shared, the next task is the first one left, in its own group');
+    await pg.close();
+  }
+
+  // The next task is never hidden or out of view because it stays in its group.
+  {
+    const s = new ChecklistStore(), S = 'x';
+    s.handleTool(S, {}, 'checklist_add_tasks', {
+      title: 'Long',
+      tasks: [...Array.from({ length: 15 }, (_, i) => ({ text: `Read page ${i + 1}`, group: 'Docs' })), { text: 'Add the key', group: 'Payments', tags: ['urgent'] }, { text: 'Test the payment', group: 'Payments', tags: ['urgent'] }],
+    });
+    const pl = JSON.parse(JSON.stringify(s.all()[0]));
+    const send = (pg, l) => pg.evaluate((x) => window.postMessage({ type: 'state', list: x, routes: { waiting: false, channel: false, terminal: false } }, '*'), l);
+    const pg = await open(pl);
+    // You collapse Docs; Claude then makes a Docs task urgent: it becomes the next task, and Docs opens again.
+    await pg.click('.section-head:has-text("Docs")'); await pg.waitForTimeout(150);
+    const l2 = JSON.parse(JSON.stringify(pl)); Object.assign(l2.tasks.find((x) => x.id === 't9'), { tags: ['urgent'], rev: 5 });
+    for (const id of ['t16', 't17']) l2.tasks.find((x) => x.id === id).tags = [];
+    await send(pg, l2); await pg.waitForTimeout(200);
+    check((await next(pg)) === 't9' && (await pg.$eval('.section-head:has-text("Docs")', (x) => x.getAttribute('aria-expanded'))) === 'true', 'when the next task moves into a group you collapsed, the group opens');
+    // Collapsing the group the next task is already in keeps it shut, with the hint.
+    await pg.click('.section-head:has-text("Docs")'); await pg.waitForTimeout(150);
+    await send(pg, l2); await pg.waitForTimeout(150);
+    check((await pg.$eval('.section-head:has-text("Docs")', (x) => x.getAttribute('aria-expanded'))) === 'false', 'collapsing the group it is already in keeps it shut');
+    await pg.close();
+    // After you share the next task, the new one is scrolled into view, even far down in its group.
+    const pg2 = await open(pl);
+    await pg2.setViewportSize({ width: 400, height: 500 });
+    await pg2.evaluate(() => scrollTo(0, 0));
+    const l3 = JSON.parse(JSON.stringify(pl)); l3.tasks.find((x) => x.id === 't16').shared = { at: 1, done: true, note: '', images: [] };
+    await send(pg2, l3); await pg2.waitForTimeout(900); // the share's slide and the scroll
+    const seen = await pg2.$eval('.task.current', (x) => { const r = x.getBoundingClientRect(); return [x.dataset.id, r.top >= 0 && r.top < innerHeight]; });
+    check(seen.join() === 't17,true', `after sharing, the next task is scrolled into view (${seen})`);
+    await pg2.close();
   }
 
   await b.close();

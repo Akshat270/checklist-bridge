@@ -88,6 +88,8 @@ export interface Checklist {
   awayUntil?: number;
   /** The end time as the user saw it on their screen ("6:30 PM"), so Claude is told the same thing. */
   awayLabel?: string;
+  /** Set when the away ends after the user's next midnight: when that midnight comes, by this computer's clock. Until then the end is "tomorrow". */
+  awayMidnight?: number;
   /** How long the user said they would be away, for the panel's bar. */
   awayMs?: number;
 }
@@ -359,7 +361,17 @@ export function normalize(c: Checklist): Checklist {
   c.orderedGroups ??= [];
   c.phases ??= [];
   // An away that ran out while the window was closed means nothing now.
-  if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = undefined;
+  if (c.awayUntil && (c.closed || c.awayUntil <= Date.now())) c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
+  // Saved by an older version, with the day in the label ("tomorrow 6:00 AM"), which is wrong once midnight passes.
+  if (c.awayUntil && c.awayLabel?.startsWith('tomorrow ') && !c.awayMidnight) {
+    const time = c.awayLabel.slice('tomorrow '.length);
+    const midnight = userMidnightBefore(c.awayUntil, time);
+    // A time that can't be read keeps its "tomorrow": right until midnight, rather than wrong until then.
+    if (midnight !== undefined) {
+      c.awayLabel = time;
+      if (midnight > Date.now()) c.awayMidnight = midnight;
+    }
+  }
   return c;
 }
 
@@ -526,11 +538,10 @@ export class ChecklistStore {
   shareAnswer(listId: string, qid: string): boolean {
     const x = this.item(listId, qid);
     if (!x?.q || x.q.answer || x.q.retired) return false;
+    const a = draftAnswer(x.q);
+    if (!a) return false;
     const d = x.q.draft;
-    const picks = d.picks.filter((p) => p !== 'other');
-    const other = d.picks.includes('other') || (!picks.length && x.q.allowOther) ? d.other.trim() : '';
-    if (!picks.length && !other) return false;
-    x.q.answer = { at: Date.now(), picks, other, note: d.note.trim(), images: [...d.images] };
+    x.q.answer = { at: Date.now(), ...a, note: d.note.trim(), images: [...d.images] };
     x.q.withdrawn = false;
     x.q.pushedAt = undefined;
     x.q.rev++;
@@ -571,14 +582,16 @@ export class ChecklistStore {
   /**
    * The user will be away for `ms` from now. The window works out the end time, so a clock that runs
    * differently from the panel's (VS Code Remote, a skewed clock) can't make it early, late or refused.
-   * Refuses nothing or more than a day. `label` is the end time as the user saw it.
+   * Refuses nothing or more than a day. `label` is the end time as the user saw it, as a time of day. If the away ends
+   * after the user's next midnight, `midnightIn` says how long until that midnight (a duration too, for the same reason).
    */
-  setAway(listId: string, ms: number, label?: string, now = Date.now()): boolean {
+  setAway(listId: string, ms: number, label?: string, midnightIn?: number, now = Date.now()): boolean {
     const c = this.lists.get(listId);
     if (!c || c.closed || typeof ms !== 'number' || !Number.isFinite(ms) || ms < 1000 || ms > MAX_AWAY_MS) return false;
     c.awayUntil = Math.round(now + ms);
     c.awayMs = Math.round(ms);
     c.awayLabel = cleanLabel(label);
+    c.awayMidnight = typeof midnightIn === 'number' && midnightIn > 0 && midnightIn <= ms ? Math.round(now + midnightIn) : undefined;
     this.emit({ checklist: c, kind: 'updated' });
     return true;
   }
@@ -587,7 +600,7 @@ export class ChecklistStore {
   endAway(listId: string): boolean {
     const c = this.lists.get(listId);
     if (!c || !c.awayUntil) return false;
-    c.awayUntil = c.awayLabel = c.awayMs = undefined;
+    c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
     for (const k of [...this.awayTold]) if (k.startsWith(`${c.id}|`)) this.awayTold.delete(k);
     this.emit({ checklist: c, kind: 'updated' });
     return true;
@@ -611,7 +624,7 @@ export class ChecklistStore {
     const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const left = mins < 60 ? plural(mins, 'minute') : [plural(Math.floor(mins / 60), 'hour'), mins % 60 && plural(mins % 60, 'minute')].filter(Boolean).join(' ');
     // The label is what the user's screen showed. Without one, use this computer's clock.
-    const clock = c.awayLabel ?? new Date(c.awayUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const clock = awayDay(c) + (c.awayLabel ?? new Date(c.awayUntil!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     if (brief) return `THE USER IS STILL AWAY until ${clock} (in ${left}). Do not wait for them, and skip anything that needs them.`;
     return (
       `THE USER IS AWAY until ${clock} (in ${left}), and may come back sooner. Do NOT wait for them and do not call checklist_wait. ` +
@@ -638,7 +651,7 @@ export class ChecklistStore {
     const c = this.lists.get(listId);
     if (!c || c.closed) return;
     c.closed = true;
-    c.awayUntil = c.awayLabel = c.awayMs = undefined;
+    c.awayUntil = c.awayLabel = c.awayMs = c.awayMidnight = undefined;
     this.emit({ checklist: c, kind: 'closed' });
   }
 
@@ -1201,6 +1214,65 @@ export function answerText(q: Question, a: Answer): string {
   const labels = a.picks.map((p) => q.options.find((o) => o.id === p)?.label ?? p);
   if (a.other) labels.push(`Something else: ${quote(a.other)}`);
   return labels.join(' + ') || '(no choice)';
+}
+
+/**
+ * The answer the draft would share: what is picked, and the "something else" text while that is ticked (untick it and
+ * the text is hidden, so it isn't shared). Undefined if there is nothing to share yet. The panel's Share answer agrees.
+ */
+export function draftAnswer(q: Question): { picks: string[]; other: string } | undefined {
+  const d = q.draft;
+  const picks = d.picks.filter((p) => p !== 'other');
+  const other = d.picks.includes('other') ? d.other.trim() : '';
+  return picks.length || other ? { picks, other } : undefined;
+}
+
+/**
+ * Minutes after midnight for a time as the panel writes it: "6:00 AM", "6:00 a.m.", "18:00" or "18.00". Undefined for
+ * anything else (other languages' AM/PM words, for one), rather than a guess.
+ */
+export function minutesIntoDay(label: string): number | undefined {
+  const m = /^(\d{1,2})[:.](\d{2})(?:\s*([ap])\.?m\.?)?$/i.exec(label.trim());
+  if (!m) return undefined;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  if (m[3]) {
+    if (h < 1 || h > 12) return undefined;
+    h = (h % 12) + (m[3].toLowerCase() === 'p' ? 12 : 0);
+  }
+  return h < 24 && min < 60 ? h * 60 + min : undefined;
+}
+
+/**
+ * The user's midnight before `end`, when their screen showed `end` as `time` ("6:00 AM"). Undefined if the time can't
+ * be read. If this computer's clock shows the same time at `end`, it is in the user's time zone, and its own calendar
+ * gives the midnight (right on a night the clocks change too). Otherwise (VS Code Remote, another time zone) it is
+ * worked out from the time: `end` less 6 h 0 min, which can be an hour out on such a night there.
+ */
+export function userMidnightBefore(end: number, time: string): number | undefined {
+  const into = minutesIntoDay(time);
+  if (into === undefined) return undefined;
+  const d = new Date(end);
+  const here = d.getHours() * 60 + d.getMinutes();
+  if ([0, 1, 1439].includes((here - into + 1440) % 1440)) return d.setHours(0, 0, 0, 0); // within a minute: the same zone
+  return end - into * 60_000 - (end % 60_000); // the time has no seconds
+}
+
+/** "tomorrow " while the away ends after the user's next midnight and that midnight hasn't come yet, else "". */
+export function awayDay(c: Checklist, now = Date.now()): string {
+  return c.awayMidnight && now < c.awayMidnight ? 'tomorrow ' : '';
+}
+
+/** What is still waiting on the user, for the question before a checklist is closed. Empty if nothing is. */
+export function stillOpen(c: Checklist): string {
+  const n = (count: number, what: string, rest: string) => (count ? `${count} ${what}${count === 1 ? ' is' : 's are'} ${rest}. ` : '');
+  const waiting = c.questions.filter((q) => !q.answer && !q.retired);
+  const picked = waiting.filter((q) => draftAnswer(q)).length; // answered in the panel, but Claude can't see it yet
+  return (
+    n(c.tasks.filter((t) => !t.shared).length, 'task', 'still not shared') +
+    n(picked, 'answer', 'still not shared') +
+    n(waiting.length - picked, 'question', 'not answered yet')
+  );
 }
 
 /** True if the group's tasks must be done in order: an ordered group, or a phase of the roadmap. */
