@@ -1,5 +1,6 @@
 What to try in this build. First ask Claude: "Make me a checklist with 4 tasks (mark one urgent),
-a question with 3 options, and a task that needs a screenshot."
+a question with 3 options, a task that needs a screenshot, and a group of 3 steps that must be done in order."
+(The example checklist has no numbered steps, and a bug that only shows on them can't be seen without them.)
 
 Keyboard (put the mouse away):
   1. Tab past a task's checkbox to its text and press Enter, then Space: it opens and shuts.
@@ -17,18 +18,20 @@ Screen reader (if you have one: Narrator, VoiceOver or Orca):
      and whether Claude has read it.
 
 Look:
-  9. Pick a High Contrast Light theme (Ctrl+K Ctrl+T, or Cmd+K Cmd+T on a Mac): tags and marks
+  9. The 3 steps show as Step 1, 2 and 3 of 3, one under another, with a thin line from one checkbox
+     to the next. No text overlaps.
+ 10. Pick a High Contrast Light theme (Ctrl+K Ctrl+T, or Cmd+K Cmd+T on a Mac): tags and marks
      are dark and easy to read.
- 10. While Claude waits for you, the "Claude is waiting" banner has only an outline:
+ 11. While Claude waits for you, the "Claude is waiting" banner has only an outline:
      the next task is the one tinted thing.
 
 Away mode:
- 11. Click the moon icon, pick 30 min and press Yes. Claude doesn't wait for you: it does the safe work,
+ 12. Click the moon icon, pick 30 min and press Yes. Claude doesn't wait for you: it does the safe work,
      adds what it skipped to the checklist, then stops with a summary.
- 12. Press I'm back. Nothing is sent to Claude. Use Send now or write to it to carry on.
- 13. Click the moon again, type a time 1 minute from now under "Or at" and press Set. Wait 2 minutes, then press Yes:
+ 13. Press I'm back. Nothing is sent to Claude. Use Send now or write to it to carry on.
+ 14. Click the moon again, type a time 1 minute from now under "Or at" and press Set. Wait 2 minutes, then press Yes:
      the panel says the time has passed and asks again.
 
 Closing:
- 14. Pick an answer but don't share it, then close the checklist with the X:
+ 15. Pick an answer but don't share it, then close the checklist with the X:
      the warning says "1 answer is still not shared".
