@@ -17,7 +17,8 @@
 import type { Elements, RenderElement } from 'claude-code'
 
 import type { App } from './app'
-import { groupsOf, isSequence, sequenceOf, type Checklist, type Img, type Question, type Task } from './lib/model'
+import { AWAY_CHOICES, EXTEND_MS, awayFor, leftText } from './away'
+import { awayDay, groupsOf, isSequence, MAX_AWAY_MS, sequenceOf, type Checklist, type Img, type Question, type Task } from './lib/model'
 
 export type Actions = {
   /** Saves `c` and redraws. */
@@ -30,12 +31,16 @@ export type Actions = {
   /** Opens this task's card (the others fold to one line). */
   open: (taskId: string) => Promise<void>
   toggleShared: () => Promise<void>
+  /** Shows or hides the ☾ Away time choices. */
+  toggleAwayPicker: () => Promise<void>
 }
 
 export type View = {
   /** The task whose card is open, if the user picked one. */
   openId: string
   showShared: boolean
+  /** Whether the ☾ Away time choices are showing. */
+  awayPicker: boolean
   /** Cells across the pane, for the progress bar. */
   width: number
 }
@@ -554,23 +559,69 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Text dimColor>{'─'.repeat(Math.max(0, barWidth - cells(doneCount) - cells(notDone)))}</Text>
         </Text>
       </Box>
-      <Text dimColor>{need ? `${need[0]!.toUpperCase()}${need.slice(1)} waiting on you` : 'Nothing waiting on you'}</Text>
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text dimColor>{need ? `${need[0]!.toUpperCase()}${need.slice(1)} waiting on you` : 'Nothing waiting on you'}</Text>
+        {!away && (
+          <Button key="away" label="☾ Away" plain dimColor={!view.awayPicker} hotkey="a" onPress={() => act.toggleAwayPicker()} />
+        )}
+      </Box>
+
+      {/* ☾ Away: pick how long, and Claude stops waiting for you until then. */}
+      {!away && view.awayPicker && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="warning" paddingX={1}>
+          <Text>
+            <Text bold>Going away?</Text>
+            <Text dimColor> Claude won't wait for you. It does what it safely can and leaves the rest here.</Text>
+          </Text>
+          <Box flexDirection="row" gap={2} marginTop={1}>
+            <Text color={COLOR.muted}>Away for</Text>
+            {AWAY_CHOICES.map(o => (
+              <Button
+                key={`away-${o.ms}`}
+                label={o.label}
+                variant="secondary"
+                onPress={async () => {
+                  const a = awayFor(o.ms)
+                  if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('Could not set the time.')
+                  await act.toggleAwayPicker()
+                  await save()
+                }}
+              />
+            ))}
+            <Button key="away-cancel" label="Cancel" plain dimColor onPress={() => act.toggleAwayPicker()} />
+          </Box>
+          <Text dimColor>Or type /checklist away 18:30 for a time of your own.</Text>
+        </Box>
+      )}
 
       {away && (
-        <Box flexDirection="row" gap={1} marginTop={1}>
-          {badge('AWAY', 'warning')}
+        <Box flexDirection="column" marginTop={1}>
           <Text>
-            until {c.awayLabel ?? 'later'} <Text dimColor>· Claude won't wait for you</Text>
+            {badge('☾ AWAY', 'warning')}
+            <Text bold>{` until ${awayDay(c)}${c.awayLabel ?? 'later'}`}</Text>
+            <Text dimColor>{`  ${leftText((c.awayUntil ?? Date.now()) - Date.now())} left · Claude won't wait for you`}</Text>
           </Text>
-          <Button
-            key="back"
-            label="I'm back"
-            plain
-            onPress={async () => {
-              app.store.endAway(c.id)
-              await save()
-            }}
-          />
+          <Box flexDirection="row" gap={2} paddingLeft={9}>
+            <Button
+              key="away-more"
+              label="+30 min"
+              variant="secondary"
+              onPress={async () => {
+                const a = awayFor(Math.min((c.awayUntil ?? Date.now()) - Date.now() + EXTEND_MS, MAX_AWAY_MS))
+                if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('You can be away for up to 24 hours.')
+                await save()
+              }}
+            />
+            <Button
+              key="back"
+              label="I'm back"
+              variant="primary"
+              onPress={async () => {
+                app.store.endAway(c.id)
+                await save()
+              }}
+            />
+          </Box>
         </Box>
       )}
 
@@ -646,6 +697,10 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Text>
             {pill('v')}
             <Text dimColor> paste</Text>
+          </Text>
+          <Text>
+            {pill('a')}
+            <Text dimColor> away</Text>
           </Text>
           {asking.length > 0 && (
             <Text>

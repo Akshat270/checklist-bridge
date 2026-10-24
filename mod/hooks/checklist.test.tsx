@@ -255,3 +255,30 @@ test('Paste screenshot saves the image on the clipboard to the task', async ($, 
   expect((await $.tool.check({ tool: 'Read', input: { file_path: `${ROOT}/mod/images/other.png` } })).decision).toBe('ask')
   expect((await $.tool.check({ tool: 'Read', input: { file_path: '/etc/passwd' } })).decision).toBe('ask')
 })
+
+test('☾ Away in the pane: pick a time, add 30 minutes, come back', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await ui.find({ key: 'away-3600000' })).toBeUndefined()
+  await ui.press({ key: 'away' })
+  expect(await ui.find({ type: 'Text', text: /Going away\?/ })).toBeDefined()
+  await ui.press({ key: 'away-cancel' })
+  expect(await ui.find({ key: 'away-3600000' })).toBeUndefined()
+
+  await ui.press({ key: 'away' })
+  await ui.press({ key: 'away-3600000' })
+  expect(await ui.find({ key: 'away' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /1 h left · Claude won't wait for you/ })).toBeDefined()
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/THE USER IS AWAY until .* \(in 1 hour\)/)
+
+  await ui.press({ key: 'away-more' })
+  expect(await ui.find({ type: 'Text', text: /1 h 30 min left/ })).toBeDefined()
+
+  await ui.press({ key: 'back' })
+  expect(await ui.find({ key: 'away' })).toBeDefined()
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).not.toMatch(/AWAY/)
+  await ui.unmount()
+})

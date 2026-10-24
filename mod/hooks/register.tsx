@@ -22,6 +22,7 @@ const rev = atom({ plugin: 'checklist-bridge', key: 'rev' } as const, 0)
 // What the pane shows: the task whose card is open ('' for the next task), and the shared section.
 const openTask = atom({ plugin: 'checklist-bridge', key: 'openTask' } as const, '')
 const showShared = atom({ plugin: 'checklist-bridge', key: 'showShared' } as const, false)
+const awayPicker = atom({ plugin: 'checklist-bridge', key: 'awayPicker' } as const, false)
 const PREFIX = 'mcp__checklist-bridge__'
 const TOOL_NAMES = new Set(MOD_TOOLS.map(t => PREFIX + t.name))
 const INSTALL_EXTENSION = 'https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge'
@@ -72,6 +73,21 @@ export const register: Register = on => {
         await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
       toolsRegistered = true
     }
+
+    // While the user is away, redraw every half minute so the time left counts down, and end the away when
+    // its time is up (Claude already stops treating them as away then; this clears the pane and saves it).
+    $.clock.every(30_000, async () => {
+      const a = app
+      if (!a?.isOn) return
+      const c = a.current(await $.session.id())
+      if (!c?.awayUntil) return
+      if (c.awayUntil <= Date.now()) {
+        a.store.endAway(c.id)
+        a.touch(c)
+        for (const [p, t] of a.flush()) await $.fs.write(p, t)
+      }
+      await update($, rev, n => n + 1)
+    })
     return next(e)
   })
 
@@ -160,7 +176,7 @@ export const register: Register = on => {
       const away = parseAway(rest.join(' '))
       if (!away) out = 'Say how long, like /checklist away 2h, 45m or 18:30 (up to 24 hours).'
       else if (!c) out = 'This chat has no checklist yet.'
-      else if (!a.store.setAway(c.id, away.ms, away.label)) out = 'Say how long, like /checklist away 2h, 45m or 18:30 (up to 24 hours).'
+      else if (!a.store.setAway(c.id, away.ms, away.label, away.midnightIn)) out = 'Say how long, like /checklist away 2h, 45m or 18:30 (up to 24 hours).'
       else {
         a.touch(c)
         out = `Claude knows you are away until ${away.label}. It will do what it can without you and leave the rest on the checklist.`
@@ -206,7 +222,12 @@ export const register: Register = on => {
     if (!a) return <els.Text dimColor>Loading…</els.Text>
     const sid = await $.session.id()
     const p = platform ?? 'linux'
-    const view = { openId: await read($, openTask), showShared: await read($, showShared), width: e.props.bodyColumns }
+    const view = {
+      openId: await read($, openTask),
+      showShared: await read($, showShared),
+      awayPicker: await read($, awayPicker),
+      width: e.props.bodyColumns,
+    }
     return drawPane(els, a, sid, view, {
       changed: async c => {
         a.touch(c)
@@ -243,6 +264,9 @@ export const register: Register = on => {
       },
       toggleShared: async () => {
         await update($, showShared, v => !v)
+      },
+      toggleAwayPicker: async () => {
+        await update($, awayPicker, v => !v)
       },
     })
   })
