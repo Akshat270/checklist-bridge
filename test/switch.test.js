@@ -34,8 +34,8 @@ function sandbox() {
   };
 }
 
-function win(sb) {
-  const W = fork(path.join(__dirname, 'harness', 'fakewin.js'), ['proj', '/work/proj', ROOT, sb.storage, '1'], { env: sb.env });
+function win(sb, folder = '/work/proj') {
+  const W = fork(path.join(__dirname, 'harness', 'fakewin.js'), [path.basename(folder), folder, ROOT, sb.storage, '1'], { env: sb.env });
   W.msgs = []; W.on('message', (m) => W.msgs.push(m));
   W.exited = new Promise((r) => W.on('exit', r));
   W.ready = new Promise((r) => W.on('message', (m) => m.ready && r()));
@@ -179,6 +179,99 @@ function seed(sb) {
     fs.writeFileSync(path.join(sb6.shared(), `${mid}.json`), JSON.stringify(s.forSession('mod-chat')));
     W = win(sb6); await W.ready; await sleep(2500);
     check(fs.existsSync(path.join(sb6.shared(), `${mid}.json`)) && !sb6.registered(), 'with auto-connect off, the mod keeps its checklists and Claude Code is not connected');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- switched in this window's own terminal: the window never loses focus, so it follows the mode file
+  {
+    const sb8 = sandbox();
+    const id8 = seed(sb8);
+    W = win(sb8); await W.ready; await sleep(2500);
+    fs.writeFileSync(path.join(sb8.cb, 'mode.json'), H.modeText('mod'));
+    await sleep(3500);
+    check(!sb8.registered() && fs.existsSync(path.join(sb8.shared(), `${id8}.json`)), 'switched to the mod without leaving VS Code: the window still hands its checklists over');
+    fs.writeFileSync(path.join(sb8.cb, 'mode.json'), H.modeText('extension'));
+    await sleep(3500);
+    check(sb8.registered() && fs.existsSync(path.join(sb8.shared(), `${id8}.json.moved`)), 'and takes them back after /checklist use-extension, without a focus change');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- the mod's work is never overwritten, closing there closes here, and nothing comes back twice
+  {
+    const sb9 = sandbox();
+    const id9 = seed(sb9);
+    const shared = path.join(sb9.shared(), `${id9}.json`);
+    const inMod = (change) => {
+      const c = H.parseList(fs.readFileSync(shared, 'utf8'));
+      change(c);
+      c.updatedAt = Date.now();
+      fs.writeFileSync(shared, JSON.stringify(c));
+      fs.writeFileSync(`${shared}.bak`, JSON.stringify(c));
+    };
+    const stored = () => JSON.parse(fs.readFileSync(path.join(sb9.storage, 'checklists', `${id9}.json`), 'utf8'));
+    W = win(sb9); await W.ready; await sleep(2500);
+    W.send({ cmd: 'closeTab', title: 'Launch' }); await sleep(300); // the user closed its tab
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    const states = () => W.msgs.filter((m) => m.state && m.title === 'Launch').length;
+    const st = states();
+    for (let i = 0; i < 3; i++) W.send({ cmd: 'focus' });
+    await sleep(800);
+    check(states() === st, 'while the mod is on, focusing the window does not redraw its tabs again');
+
+    inMod((c) => (c.tasks[1].shared = { at: Date.now(), done: true, note: 'done in the mod', images: [] }));
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    check(H.parseList(fs.readFileSync(shared, 'utf8')).tasks[1].shared?.note === 'done in the mod', 'running "Use the Claude Code mod" again does not write VS Code\'s older copy over the mod\'s');
+    check(notes(W).some((n) => /already runs inside Claude Code/.test(n)), 'and says the mod is already in use');
+
+    // Windows has the file open, so it can't be marked as moved: it is taken in once, not again over later edits.
+    fs.mkdirSync(path.join(`${shared}.moved`, 'busy'), { recursive: true });
+    const opened = W.msgs.filter((m) => m.panelOpened === 'Launch').length;
+    fs.writeFileSync(path.join(sb9.cb, 'mode.json'), H.modeText('extension'));
+    await sleep(3500);
+    const lastState = W.msgs.filter((m) => m.state && m.title === 'Launch').at(-1)?.state;
+    check(fs.existsSync(shared) && lastState?.list?.tasks?.[1]?.shared?.note === 'done in the mod', 'back in VS Code: what was done in the mod is there');
+    check(W.msgs.filter((m) => m.panelOpened === 'Launch').length === opened + 1, 'its tab opens, as the mod changed it');
+    await user(W, 'Launch', { type: 'unshare', taskId: 't2' });
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'changed in VS Code' });
+    W.send({ cmd: 'focus' }); await sleep(1500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    check(stored().tasks[1].shared?.note === 'changed in VS Code', 'a file that could not be marked as moved is not taken in again over later edits');
+
+    // Closed in the mod: closed in VS Code too.
+    fs.rmSync(`${shared}.moved`, { recursive: true, force: true });
+    W = win(sb9); await W.ready; await sleep(2500);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    inMod((c) => (c.closed = true));
+    fs.writeFileSync(path.join(sb9.cb, 'mode.json'), H.modeText('extension'));
+    await sleep(3500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    check(stored().closed === true, 'a checklist closed in the mod is closed in VS Code too');
+  }
+
+  // ---- a checklist that could not be handed over stays usable in VS Code
+  {
+    const sb10 = sandbox();
+    const id10 = seed(sb10);
+    W = win(sb10); await W.ready; await sleep(2500);
+    fs.mkdirSync(path.join(sb10.shared(), `${id10}.json.bak`, 'x'), { recursive: true }); // can't be written
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    check(W.msgs.some((m) => m.warn && /could not move "Launch".*you can still use it here/.test(m.warn)), 'the user is told it stays in VS Code');
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'still works' });
+    check(!notes(W).some((n) => /read-only/.test(n)) && !W.msgs.some((m) => m.state?.locked), 'and it is not read-only');
+    W.send({ cmd: 'quit' }); await W.exited;
+    const kept = JSON.parse(fs.readFileSync(path.join(sb10.storage, 'checklists', `${id10}.json`), 'utf8'));
+    check(kept.tasks[1].shared?.note === 'still works', 'what the user does there is saved');
+  }
+
+  // ---- after switching to the mod and back, a window for another folder reconnects without asking
+  {
+    const sb11 = sandbox();
+    W = win(sb11); await W.ready; await sleep(2500);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    fs.writeFileSync(path.join(sb11.cb, 'mode.json'), H.modeText('extension'));
+    W = win(sb11, '/work/other'); await W.ready; await sleep(2500);
+    check(sb11.registered() && !notes(W).some((n) => /no longer connected/.test(n)), 'another folder\'s window, after /checklist use-extension: connects without asking');
     W.send({ cmd: 'quit' }); await W.exited;
   }
 

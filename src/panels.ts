@@ -15,7 +15,7 @@ export interface PanelHooks {
   routes(c: Checklist): Routes;
   sendNow(c: Checklist): Promise<void>;
   /** Why checklists can't be changed here right now (they are with the Claude Code mod), if they can't. */
-  locked?(): string | undefined;
+  locked?(c: Checklist | undefined): string | undefined;
 }
 
 /** Messages that only show or copy, and still work while the checklists are locked. */
@@ -59,7 +59,7 @@ export class Panels {
       if (c.awayMidnight) list.awayMidnightLeft = c.awayMidnight - Date.now();
     }
     // While the checklists are with the Claude Code mod, the panel shows read-only and says why.
-    return { type: 'state', list, routes: this.hooks.routes(c), locked: this.hooks.locked?.() };
+    return { type: 'state', list, routes: this.hooks.routes(c), locked: this.hooks.locked?.(c) };
   }
 
   /** Re-send state to every visible panel (e.g. when how to reach a chat changes). */
@@ -170,6 +170,7 @@ export class Panels {
   }
 
   private flushing = new Map<string, () => void>();
+  private flushes = new Map<string, Promise<void>>();
   private lockNoticeAt = 0;
   /**
    * Asks a checklist's panel to send what was typed or picked there and not saved yet, and waits for it (at most `ms`),
@@ -178,22 +179,27 @@ export class Panels {
   flush(id: string, ms = 500): Promise<void> {
     const p = this.open.get(id);
     if (!p || !this.ready.has(id)) return Promise.resolve();
-    return new Promise((resolve) => {
-      this.flushing.get(id)?.(); // an earlier wait for this panel ends too
+    // One at a time per panel: a second wait starts when the first has its answer, so neither returns early.
+    const earlier = this.flushes.get(id);
+    if (earlier) return earlier.then(() => this.flush(id, ms));
+    const run = new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer);
-        if (this.flushing.get(id) === done) this.flushing.delete(id);
+        this.flushing.delete(id);
+        this.flushes.delete(id);
         resolve();
       };
       const timer = setTimeout(done, ms);
       this.flushing.set(id, done);
       p.webview.postMessage({ type: 'flush' });
     });
+    this.flushes.set(id, run);
+    return run;
   }
 
   private async onMessage(id: string, m: any) {
     const s = this.store;
-    const why = READ_ONLY.has(m?.type) ? undefined : this.hooks.locked?.();
+    const why = READ_ONLY.has(m?.type) ? undefined : this.hooks.locked?.(s.get(id));
     if (why) {
       // The panel shows read-only while locked, so this is a change already on its way when the lock came.
       // Put the panel back as it was, and say why nothing changed (once, not for every keystroke's draft).

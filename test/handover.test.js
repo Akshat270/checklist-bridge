@@ -53,7 +53,8 @@ check(mod.forSession('s1')?.id === c.id, 'the mod has the checklist');
 const r = text(mod.handleTool('s1', {}, 'checklist_read', { include_earlier_images: true }));
 check(/screenshot 1\/1: \/cb\/mod\/images\/\w+\.png \(open it with your Read tool\)/.test(r), 'the mod tells Claude where a screenshot is');
 check(!/VS Code|checklist_wait/.test(r), 'mod results don\'t mention VS Code or checklist_wait');
-check(mod.addImagePath(c.id, 't2', '"/home/u/Desktop/shot 1.JPG"') && mod.get(c.id).tasks[1].draft.images[0].mime === 'image/jpeg', 'a screenshot path can be added in the mod');
+check(mod.addImagePath(c.id, 't2', '/home/u/Desktop/shot 1.JPG') && mod.get(c.id).tasks[1].draft.images[0].mime === 'image/jpeg', 'a screenshot path can be added in the mod');
+check(mod.addImagePath(c.id, 't2', "/home/u/it's.png") && mod.get(c.id).tasks[1].draft.images[1].path === "/home/u/it's.png", 'the path is kept as given (absolutePath cleans what was typed)');
 check(!mod.addImagePath(c.id, 't2', '/home/u/notes.txt'), 'a path that is not an image is refused');
 
 check(H.toShared({ ...c, hidden: true }, () => undefined).hidden === true, 'a checklist whose tab the user closed stays that way after the round trip');
@@ -83,6 +84,40 @@ check(/in the user's VS Code/.test(SERVER_INSTRUCTIONS) && TOOLS.some((t) => t.n
 const asked = text(mod.handleTool('s2', {}, 'checklist_ask', { questions: [{ question: 'Name?', options: [{ label: 'A' }, { label: 'B' }] }] }));
 check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod: asking says to end the turn, not to wait');
 
+/* ---------- the store, as both sides use it */
+{
+  const s = new ChecklistStore();
+  s.handleTool('x', {}, 'checklist_add_tasks', { title: 'Mine', tasks: [{ text: 'A' }] });
+  const copy = JSON.parse(JSON.stringify(s.forSession('x')));
+  copy.updatedAt = 12345;
+  check(s.replace(copy).updatedAt === 12345, 'taking in a copy keeps its version (updatedAt), the one both sides compare');
+
+  // A chat that took over an older checklist uses it, not its own newer one that was closed.
+  const t = new ChecklistStore();
+  t.handleTool('old', {}, 'checklist_add_tasks', { title: 'Older', tasks: [{ text: 'A' }] });
+  const older = t.forSession('old');
+  older.createdAt -= 1000;
+  t.handleTool('me', {}, 'checklist_add_tasks', { title: 'Mine', tasks: [{ text: 'B' }] });
+  t.close(t.forSession('me').id);
+  older.sessionId = 'me';
+  check(t.forSession('me')?.title === 'Older' && /Older/.test(text(t.handleTool('me', {}, 'checklist_read', {}))), 'a chat\'s open checklist comes before its newer closed one');
+  older.closed = true;
+  check(t.forSession('me')?.title === 'Mine', 'with none open, its latest closed one (so Claude can be told)');
+
+  // Locked while the mod has them, except the checklists that could not be handed over.
+  const u = new ChecklistStore();
+  u.handleTool('a', {}, 'checklist_add_tasks', { title: 'Handed', tasks: [{ text: 'A' }] });
+  u.handleTool('b', {}, 'checklist_add_tasks', { title: 'Kept', tasks: [{ text: 'B' }] });
+  u.lockedNote = 'read-only here';
+  u.keptHere = new Set([u.forSession('b').id]);
+  check(text(u.handleTool('a', {}, 'checklist_add_tasks', { tasks: [{ text: 'C' }] })) === 'read-only here', 'a handed-over checklist is read-only');
+  check(/Added 1 task/.test(text(u.handleTool('b', {}, 'checklist_add_tasks', { tasks: [{ text: 'C' }] }))), 'one that could not be handed over still works');
+  check(text(u.handleTool('new', {}, 'checklist_add_tasks', { tasks: [{ text: 'C' }] })) === 'read-only here', 'and no new checklist starts here');
+  for (const sid of ['a', 'b']) u.setAway(u.forSession(sid).id, 1000, 'soon');
+  u.expireAway(Date.now() + 5000);
+  check(!!u.forSession('a').awayUntil && !u.forSession('b').awayUntil, 'the away timer ends only the aways of checklists still here');
+}
+
 /* ---------- tidying the shared folders */
 {
   const { tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
@@ -103,10 +138,13 @@ check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod
   put(path.join(imgs, 'unused-old.png'), 'PNG', OLD);
   put(path.join(imgs, 'unused-new.png'), 'PNG', 0);
   put(path.join(dir, 'b2.json.moved'), '{}', OLD);
-  put(path.join(dir, 'c3.json.moved'), '{}', 0);
+  const movedShot = path.join(imgs, 'moved.png');
+  put(movedShot, 'PNG', OLD);
+  put(path.join(dir, 'c3.json.moved'), JSON.stringify({ ...list, id: 'c3', tasks: [{ ...list.tasks[0], shared: { ...list.tasks[0].shared, images: [{ id: 'm', mime: 'image/png', w: 0, h: 0, path: movedShot }] } }] }), 0);
   const n = tidyShared(root);
   const has = (p) => fs.existsSync(p);
   check(n === 2 && !has(path.join(imgs, 'unused-old.png')) && !has(path.join(dir, 'b2.json.moved')), 'tidy: deletes old .moved files and old screenshots no checklist uses');
+  check(has(movedShot), 'tidy: keeps a screenshot that a .moved file still kept uses');
   check(has(used) && has(path.join(imgs, 'unused-new.png')) && has(path.join(dir, 'c3.json.moved')) && has(path.join(dir, 'a1.json')), 'tidy: keeps screenshots in use, recent files and the checklists');
   fs.rmSync(root, { recursive: true, force: true });
 }

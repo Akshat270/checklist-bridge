@@ -6,7 +6,9 @@
 - In the mod, press **☾ Away** to tell Claude you're away for 30 min, 1 h, 2 h or 4 h. The checklist counts down the time left, with **+30 min** and **I'm back**.
 - In the mod, press **Paste screenshot** to add the screenshot on your clipboard to a task. Claude can open the screenshots you share without asking each time.
 - You can switch between the VS Code extension and the mod at any time, and your open checklists come with you. In VS Code, run *Checklist Bridge: Use the Claude Code mod instead*; in Claude Code, type `/checklist use-extension` to come back.
-- While your checklists are in the mod, their tabs in VS Code say so at the top, with a **Switch back to VS Code** button. A window with no folder open keeps its checklists in VS Code.
+- While your checklists are in the mod, their tabs in VS Code say so at the top, with a **Switch back to VS Code** button. A window with no folder open keeps its checklists in VS Code, and so does a checklist that could not be moved.
+- Switching works when Claude runs in VS Code's own terminal too: VS Code follows `/checklist use-extension` and `/checklist use-mod` right away, without clicking away and back. A checklist you worked on in the mod opens in VS Code when it comes back.
+- The mod's checklist fits narrow panes: ids, labels and buttons stay whole, and long task names wrap under themselves. **Shared with Claude** is green.
 
 ## 0.7.2
 - **Easier to use with a keyboard.** Every row opens with Enter or Space, answered questions too. Task ids and screenshots can be reached with Tab, and a screenshot shown full size closes with Escape. With one choice to pick, the arrow keys move between the choices. When Claude updates the checklist, the focus stays where it was.

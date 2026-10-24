@@ -90,6 +90,9 @@ export class App {
    * anything changed.
    */
   sync(present: string[], files: Loaded[]): boolean {
+    // Switched to VS Code: it has taken the checklists, so a change that failed to save here is dropped,
+    // never written later over what the user does there.
+    if (!this.isOn) this.dirty.clear()
     let changed = false
     const onDisk = new Set(present)
     for (const f of files) {
@@ -99,8 +102,9 @@ export class App {
       const mine = this.store.get(c.id)
       if (mine && this.known.get(c.id) === c.updatedAt) continue // unchanged on disk: keep ours, with any typing
       if (mine && this.dirty.has(c.id) && mine.updatedAt > c.updatedAt) continue // ours is newer and still to be saved
-      this.store.replace(c)
-      this.known.set(c.id, c.updatedAt)
+      const version = c.updatedAt
+      this.store.replace(c) // keeps the file's updatedAt: the version both sides compare
+      this.known.set(c.id, version)
       this.dirty.delete(c.id)
       changed = true
     }
@@ -145,6 +149,15 @@ export class App {
     return this.store.addImagePath(listId, itemId, absolutePath(typed, this.home, this.folder))
   }
 
+  /**
+   * The chat's checklist as text, without its times (updatedAt, and lastReadAt, which every read sets):
+   * two snapshots differ only if something in it changed.
+   */
+  snapshot(sid: string): string {
+    const c = this.store.forSession(sid)
+    return c ? JSON.stringify({ ...c, updatedAt: 0, lastReadAt: 0 }) : ''
+  }
+
   /** Marks a checklist as changed; the next save writes it. */
   touch(c: Checklist | undefined) {
     if (!c) return
@@ -154,6 +167,7 @@ export class App {
 
   /** The saves to make: every changed checklist. Each stays changed until saved() says it was written. */
   pending(): Pending[] {
+    if (!this.isOn) return [] // VS Code has the checklists now
     const out: Pending[] = []
     for (const id of this.dirty) {
       const c = this.store.get(id)

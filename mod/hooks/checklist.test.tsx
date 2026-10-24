@@ -1,6 +1,7 @@
 // Run with `claude plugin test mod`. The hooks `on` registers here stand for Claude Code beneath the mod:
 // an in-memory file system, the environment, the session id, and records of what the mod showed and sent.
 import { expect, test } from 'claude-code/testing'
+import { palette } from './theme'
 
 const ROOT = '/home/u/.checklist-bridge'
 const CWD = '/work/My App'
@@ -10,7 +11,7 @@ function world(on: any, files: Record<string, string> = {}) {
   const chat = { sid: 'chat-1' }
   // How many of the next writes fail (a file locked for a moment).
   // When each file last changed (a test can set one in the past), and how many times each was read.
-  const disk = { failWrites: 0, mtimes: {} as Record<string, number>, reads: {} as Record<string, number> }
+  const disk = { failWrites: 0, writes: 0, mtimes: {} as Record<string, number>, reads: {} as Record<string, number> }
   // What the clipboard holds for "Paste screenshot": 'image', 'text' or 'no-tool' (wl-paste/xclip missing).
   const clipboard = { holds: 'image' as 'image' | 'text' | 'no-tool', runs: [] as string[][] }
   const seen = { status: [] as (string | undefined)[], toasts: [] as string[], prompts: [] as string[], opened: 0, tools: [] as string[], copied: [] as string[] }
@@ -26,6 +27,7 @@ function world(on: any, files: Record<string, string> = {}) {
       return { deny: 'EBUSY: the file is locked' }
     }
     files[e.path] = e.text
+    disk.writes++
     disk.mtimes[e.path] = Date.now()
     return { value: undefined }
   })
@@ -463,4 +465,45 @@ test('settled checklist files are not read again, and a backup only when its fil
   disk.mtimes[old] = Date.now() + 1
   await $.tool.call({ tool: `${T}checklist_read` } as any)
   expect(disk.reads[`${old}.bak`]).toBe(1)
+})
+
+test('the shared section is headed in green, so its focused button is green too', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }, { text: 'Two' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 't1-share-done' })
+  const head = await ui.find({ type: 'Text', text: /^SHARED WITH CLAUDE$/ })
+  expect(head?.props.color).toBe(palette('dark').green)
+  await ui.unmount()
+})
+
+test('a call that changes nothing writes nothing', async ($, on) => {
+  const { disk } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  await $.tool.call({ tool: `${T}checklist_read` } as any) // marks what it read; nothing to mark after that
+  const writes = disk.writes
+  await $.tool.call({ tool: `${T}checklist_read` } as any)
+  const afterRead = disk.writes
+  await $.tool.call({ tool: `${T}checklist_edit`, task_id: 't9', text: 'nope' } as any)
+  expect([afterRead, disk.writes]).toEqual([writes, writes])
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any)
+  expect(disk.writes).toBeGreaterThan(writes)
+})
+
+test('a change that could not be saved is dropped once VS Code has the checklists', async ($, on) => {
+  const { files, disk } = world(on)
+  on('session.end', (_: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  disk.failWrites = 1
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any))).toMatch(/could not save/)
+  // VS Code takes the checklists back: the mode changes and the files are gone.
+  files[`${ROOT}/mode.json`] = JSON.stringify({ use: 'extension', at: Date.now() })
+  for (const f of Object.keys(files)) if (/\/mod\/my-app-/.test(f)) delete files[f]
+  const writes = disk.writes
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'chat-1' } as any)
+  expect(disk.writes).toBe(writes)
+  expect(Object.keys(files).some(f => /\/mod\/my-app-/.test(f))).toBe(false)
 })

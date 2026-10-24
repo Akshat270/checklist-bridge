@@ -99,6 +99,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
       {` ${label} `}
     </Text>
   )
+  /**
+   * Keeps its own width in a row. In a narrow pane only the words wrap (titles, details); marks, ids, labels,
+   * badges and buttons stay whole instead of each wrapping in its own column.
+   */
+  const keep = (child: RenderElement | string) => <Box flexShrink={0}>{child}</Box>
   /** A grey pill: counts. */
   const pill = (label: string | number) => (
     <Text backgroundColor={P.pillBg} color={P.pillFg}>
@@ -152,18 +157,24 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     )
     return (
       <Box flexDirection="row" marginTop={1}>
-        {toggle ? (
-          <Button key={toggle.key} label={label} plain onPress={() => toggle.onPress()}>
-            {head}
-          </Button>
-        ) : (
-          head
+        {keep(
+          toggle ? (
+            <Button key={toggle.key} label={label} plain onPress={() => toggle.onPress()}>
+              {head}
+            </Button>
+          ) : (
+            head
+          ),
         )}
-        <Text>
-          {' '}
-          {pill(count)}
+        {keep(
+          <Text>
+            {' '}
+            {pill(count)}
+          </Text>,
+        )}
+        <Text wrap="truncate-end">
           <Text color={P.dim}>{extra}</Text>
-          <Text color={P.rule}>{` ${'─'.repeat(Math.max(2, width - used))}`}</Text>
+          {width - used >= 2 ? <Text color={P.rule}>{` ${'─'.repeat(width - used)}`}</Text> : ''}
         </Text>
       </Box>
     )
@@ -171,8 +182,10 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   /** A one-line framed text field: its label, the entry, and the field's own ⏎ action at the edge. */
   const field = (label: string, input: RenderElement) => (
     <Box flexDirection="row" borderStyle="round" borderColor={P.fieldBorder} paddingX={1} gap={2}>
-      <Text color={P.muted}>{label}</Text>
-      <Box flexGrow={1}>{input}</Box>
+      {keep(<Text color={P.muted}>{label}</Text>)}
+      <Box flexGrow={1} flexShrink={1}>
+        {input}
+      </Box>
     </Box>
   )
 
@@ -247,12 +260,12 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   const shots = (owner: Task | Question, imgs: Img[]) =>
     imgs.map((img, i) => (
       <Box flexDirection="row" gap={2}>
-        <Text>
+        <Text wrap="truncate-middle">
           <Text color={P.cyan}>▣ </Text>
           <Text>{`Screenshot ${i + 1}`}</Text>
           <Text color={P.muted}>{`  ${shotName(c.id, img)}`}</Text>
         </Text>
-        {quiet(`${owner.id}-rm-${img.id}`, 'remove', () => edit(() => void app.store.removeImage(c.id, owner.id, img.id)))}
+        {keep(quiet(`${owner.id}-rm-${img.id}`, 'remove', () => edit(() => void app.store.removeImage(c.id, owner.id, img.id))))}
       </Box>
     ))
 
@@ -273,11 +286,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         )}
       {shots(owner, imgs)}
       {withShots && imgs.length < 8 && (
-        <Box flexDirection="row" gap={2}>
-          <Text color={P.muted}>Screenshot</Text>
-          {filled({ key: `${owner.id}-paste`, label: 'Paste from clipboard', bg: P.btnBg, fg: P.text, hotkey: 'v', onPress: () => act.paste(c, owner.id) })}
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+          {keep(<Text color={P.muted}>Screenshot</Text>)}
+          {keep(filled({ key: `${owner.id}-paste`, label: 'Paste from clipboard', bg: P.btnBg, fg: P.text, hotkey: 'v', onPress: () => act.paste(c, owner.id) }))}
           {Input && (
-            <Box flexGrow={1}>
+            <Box flexGrow={1} minWidth={20}>
               <Input
                 key={`${owner.id}-shot`}
                 placeholder="or type a file path"
@@ -304,13 +317,13 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         paddingX={1}
         marginTop={1}
       >
-        <Box flexDirection="row" justifyContent="space-between">
+        <Box flexDirection="row" justifyContent="space-between" gap={2}>
           <Text>
             {isNext ? badge('NEXT', urgent ? P.red : P.cyan) : badge('OPEN', P.pillBg)}
             {step ? <Text color={P.dim}>{`  step ${step.n} of ${step.of}`}</Text> : ''}
             {tagBadges(t.tags)}
           </Text>
-          <Box flexDirection="row" gap={2}>
+          <Box flexDirection="row" gap={2} flexShrink={0}>
             {quiet(`${t.id}-collapse`, 'collapse', () => act.open(NONE_OPEN))}
             <Text color={P.muted}>{`[${t.id}]`}</Text>
           </Box>
@@ -327,13 +340,15 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
               <Text color={P.muted}>$ </Text>
               <Text color={P.green}>{t.command}</Text>
             </Text>
-            <Button key={`${t.id}-copy`} label="copy" plain hotkey="c" onPress={e => act.copy(t.command!, e.surface)}>
-              <Text color={P.dim}>copy</Text>
-            </Button>
+            {keep(
+              <Button key={`${t.id}-copy`} label="copy" plain hotkey="c" onPress={e => act.copy(t.command!, e.surface)}>
+                <Text color={P.dim}>copy</Text>
+              </Button>,
+            )}
           </Box>
         )}
         {extras(t, t.draft.note, v => app.store.setDraft(c.id, t.id, { note: v }), t.draft.images, true)}
-        <Box flexDirection="row" gap={2} marginTop={1}>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           {filled({
             key: `${t.id}-share-done`,
             label: '✓ Done, share with Claude',
@@ -369,19 +384,27 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     const started = !!(t.draft.note || t.draft.images.length)
     return (
       <Box flexDirection="row">
-        <Text color={urgent ? P.red : isNext ? P.cyan : P.muted}>{urgent ? ' ! ' : isNext ? ' ▸ ' : ' • '}</Text>
-        {idCell(t.id)}
-        {step ? <Text color={P.cyan}>{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
-        <Button key={`${t.id}-open`} label={step ? stepText(t.text) : t.text} plain onPress={() => act.open(t.id)}>
-          <Text color={P.text} bold={isNext}>
-            {step ? stepText(t.text) : t.text}
-          </Text>
-        </Button>
-        <Text>
-          {started ? <Text color={P.cyan}> · draft</Text> : ''}
-          {tagBadges(t.tags)}
-          {isNext && view.openId === NONE_OPEN ? <Text color={P.cyan}>  next</Text> : ''}
-        </Text>
+        {keep(
+          <Text>
+            <Text color={urgent ? P.red : isNext ? P.cyan : P.muted}>{urgent ? ' ! ' : isNext ? ' ▸ ' : ' • '}</Text>
+            {idCell(t.id)}
+            {step ? <Text color={P.cyan}>{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
+          </Text>,
+        )}
+        <Box flexShrink={1}>
+          <Button key={`${t.id}-open`} label={step ? stepText(t.text) : t.text} plain onPress={() => act.open(t.id)}>
+            <Text color={P.text} bold={isNext}>
+              {step ? stepText(t.text) : t.text}
+            </Text>
+          </Button>
+        </Box>
+        {keep(
+          <Text>
+            {started ? <Text color={P.cyan}> · draft</Text> : ''}
+            {tagBadges(t.tags)}
+            {isNext && view.openId === NONE_OPEN ? <Text color={P.cyan}>  next</Text> : ''}
+          </Text>,
+        )}
       </Box>
     )
   }
@@ -403,10 +426,12 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Text bold color={P.title}>
             {q.question}
           </Text>
-          <Text>
-            {q.tags.length ? <Text>{tagBadges(q.tags)}</Text> : ''}
-            <Text color={P.muted}>{`  [${q.id}]`}</Text>
-          </Text>
+          {keep(
+            <Text>
+              {q.tags.length ? <Text>{tagBadges(q.tags)}</Text> : ''}
+              <Text color={P.muted}>{`  [${q.id}]`}</Text>
+            </Text>,
+          )}
         </Box>
         {q.why ? <Text color={P.dim}>{q.why}</Text> : ''}
         <Box flexDirection="column" marginTop={1}>
@@ -415,28 +440,28 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             const mark = q.multi ? (on ? '■' : '□') : on ? '●' : '○'
             return (
               <Box flexDirection="row">
-                <Button
-                  key={`${q.id}-opt-${o.id}`}
-                  label={o.label}
-                  plain
-                  hotkey={first && i < 9 ? String(i + 1) : undefined}
-                  onPress={() =>
-                    edit(() => {
-                      // The picks as they are now, after reading the latest from disk.
-                      const now = app.store.get(c.id)?.questions.find(x => x.id === q.id)?.draft.picks ?? []
-                      const has = now.includes(o.id)
-                      app.store.setAnswerDraft(c.id, q.id, { picks: q.multi ? (has ? now.filter(p => p !== o.id) : [...now, o.id]) : [o.id] })
-                    })
-                  }
-                >
-                  <Text color={on ? P.cyan : P.text} bold={on}>
-                    {`${mark} ${o.label.padEnd(labelWidth)}`}
-                  </Text>
-                </Button>
-                <Text>
-                  {o.summary || o.details ? <Text color={P.dim}>{o.summary ?? o.details}</Text> : ''}
-                  {o === recommended ? <Text color={P.green}>{'   ★ recommended'}</Text> : ''}
-                </Text>
+                {keep(
+                  <Button
+                    key={`${q.id}-opt-${o.id}`}
+                    label={o.label}
+                    plain
+                    hotkey={first && i < 9 ? String(i + 1) : undefined}
+                    onPress={() =>
+                      edit(() => {
+                        // The picks as they are now, after reading the latest from disk.
+                        const now = app.store.get(c.id)?.questions.find(x => x.id === q.id)?.draft.picks ?? []
+                        const has = now.includes(o.id)
+                        app.store.setAnswerDraft(c.id, q.id, { picks: q.multi ? (has ? now.filter(p => p !== o.id) : [...now, o.id]) : [o.id] })
+                      })
+                    }
+                  >
+                    <Text color={on ? P.cyan : P.text} bold={on}>
+                      {`${mark} ${o.label.padEnd(labelWidth)}`}
+                    </Text>
+                  </Button>,
+                )}
+                {o.summary || o.details ? <Text color={P.dim}>{o.summary ?? o.details}</Text> : ''}
+                {o === recommended ? keep(<Text color={P.green}>{'   ★ recommended'}</Text>) : ''}
               </Box>
             )
           })}
@@ -741,7 +766,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
 
       {finished > 0 && (
         <Box flexDirection="column">
-          {section('SHARED WITH CLAUDE', finished, P.text, `   ${readCount} read${notDone ? ` · ${notDone} not done` : ''}`, {
+          {section('SHARED WITH CLAUDE', finished, P.green, `   ${readCount} read${notDone ? ` · ${notDone} not done` : ''}`, {
             key: 'shared-toggle',
             open: view.showShared,
             onPress: () => act.toggleShared(),

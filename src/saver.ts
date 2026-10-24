@@ -9,9 +9,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const LOCKED = new Set(['EPERM', 'EBUSY', 'EACCES']);
+/** The errors Windows gives for a file another program has open. */
+export const LOCKED = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 let tmpSeq = 0;
 
 /**

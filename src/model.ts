@@ -403,6 +403,13 @@ export class ChecklistStore {
    * text instead, so a chat still connected to the extension can't edit copies the mod now owns.
    */
   lockedNote: string | undefined;
+  /** Checklists that stay usable while locked: they could not be handed to the mod, so only we have them. */
+  keptHere = new Set<string>();
+
+  /** Why this checklist can't be changed here right now (lockedNote), or undefined if it can. */
+  lockedFor(c: Checklist | undefined): string | undefined {
+    return c && !c.closed && this.keptHere.has(c.id) ? undefined : this.lockedNote;
+  }
 
   constructor(initial: Checklist[] = []) {
     for (const c of initial) this.lists.set(c.id, normalize(c));
@@ -417,11 +424,14 @@ export class ChecklistStore {
     return n;
   }
 
-  /** Take in a newer copy of a checklist (one the Claude Code mod hands back), replacing ours if we have it. */
+  /**
+   * Take in a newer copy of a checklist (one the Claude Code mod hands back, or its file), replacing ours if we
+   * have it. It keeps its own updatedAt: that is the version both sides compare.
+   */
   replace(c: Checklist): Checklist {
     const n = normalize(c);
     this.lists.set(n.id, n);
-    this.emit({ checklist: n, kind: 'updated' });
+    this.emit({ checklist: n, kind: 'updated' }, n.updatedAt);
     return n;
   }
 
@@ -433,8 +443,8 @@ export class ChecklistStore {
   onChange(fn: (e: ChangeEvent) => void) {
     this.listeners.push(fn);
   }
-  private emit(e: ChangeEvent) {
-    e.checklist.updatedAt = Date.now();
+  private emit(e: ChangeEvent, at = Date.now()) {
+    e.checklist.updatedAt = at;
     for (const l of this.listeners) l(e);
   }
 
@@ -444,10 +454,14 @@ export class ChecklistStore {
   get(id: string) {
     return this.lists.get(id);
   }
-  /** Latest checklist for a chat, including a closed one (so Claude can be told it was closed). */
+  /**
+   * The chat's checklist: its open one, or else its latest closed one (so Claude can be told it was closed).
+   * A chat that took over an older checklist (the mod's /checklist continue) gets that one, not its newer closed one.
+   */
   forSession(sessionId: string): Checklist | undefined {
     let found: Checklist | undefined;
-    for (const c of this.lists.values()) if (c.sessionId === sessionId && (!found || c.createdAt > found.createdAt)) found = c;
+    for (const c of this.lists.values())
+      if (c.sessionId === sessionId && (!found || (!c.closed && found.closed) || (!c.closed === !found.closed && c.createdAt > found.createdAt))) found = c;
     return found;
   }
 
@@ -498,10 +512,9 @@ export class ChecklistStore {
     this.emit({ checklist: x.c, kind: 'updated' });
   }
 
-  /** The mod's screenshots: a path to an image file the user named. False if it isn't one. */
-  addImagePath(listId: string, id: string, file: string): boolean {
+  /** The mod's screenshots: a path to an image file, as given (absolutePath cleans what the user typed). False if it isn't one. */
+  addImagePath(listId: string, id: string, p: string): boolean {
     const x = this.item(listId, id);
-    const p = file.trim().replace(/^["']|["']$/g, '');
     const ext = /\.(png|jpe?g|gif|webp)$/i.exec(p)?.[1].toLowerCase();
     if (!x || (x.t ? x.t.shared : x.q!.answer) || !ext || p.length > 1000) return false;
     const draft = x.t ? x.t.draft : x.q!.draft;
@@ -618,7 +631,8 @@ export class ChecklistStore {
 
   /** Ends every away that has run out (updates the panel; tells no one). */
   expireAway(now = Date.now()) {
-    for (const c of [...this.lists.values()]) if (c.awayUntil && c.awayUntil <= now) this.endAway(c.id);
+    // Not a locked one: the mod has it, and ends its away itself.
+    for (const c of [...this.lists.values()]) if (c.awayUntil && c.awayUntil <= now && !this.lockedFor(c)) this.endAway(c.id);
   }
 
   /**
@@ -693,8 +707,8 @@ export class ChecklistStore {
 
   /** Anything still waiting on the user (so waiting makes sense). */
   hasPending(sessionId: string): boolean {
-    if (this.lockedNote) return false;
     const c = this.forSession(sessionId);
+    if (this.lockedFor(c)) return false;
     return !!c && !c.closed && (c.tasks.some((t) => !t.shared) || c.questions.some((q) => !q.answer && !q.retired));
   }
 
@@ -744,7 +758,8 @@ export class ChecklistStore {
   /* ---------- tools (Claude) ---------- */
 
   handleTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
-    if (this.lockedNote) return ok(this.lockedNote);
+    const locked = this.lockedFor(this.forSession(sessionId));
+    if (locked) return ok(locked);
     try {
       const res = this.runTool(sessionId, meta, name, args);
       // Every result tells Claude the user is away, not just the ones that read the checklist. (A read puts it first.)

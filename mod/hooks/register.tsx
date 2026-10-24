@@ -126,8 +126,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // Anything not saved yet is written before the session ends.
+  // Anything not saved yet is written before the session ends, unless the user switched to VS Code meanwhile.
   on('session.end', async ($, e, next) => {
+    await disk?.load()
     await disk?.save()
     return next(e)
   })
@@ -154,8 +155,11 @@ export const register: Register = (on, options) => {
     const { tool, tool_use_id: _, ...args } = e as { tool: string; tool_use_id: string } & Record<string, unknown>
     const sid = await $.session.id()
     const had = a.current(sid)
+    // Saved only if the call changed something: a read with nothing new, or a refused call, writes nothing
+    // (other chats and VS Code would read the file again for nothing).
+    const was = a.snapshot(sid)
     const res = a.store.handleTool(sid, { cwd: a.folder, client: 'claude' }, tool.slice(PREFIX.length), args)
-    a.touch(a.store.forSession(sid))
+    if (a.snapshot(sid) !== was) a.touch(a.store.forSession(sid))
     const saved = await disk.save()
     await update($, rev, n => n + 1)
     $.ui.status(a.status(sid))

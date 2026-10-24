@@ -5,7 +5,7 @@ import * as path from 'path';
 import { fromShared, imagesDir, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
 import { ImageFiles } from './images';
 import type { Checklist, Img } from './model';
-import { writeFileSafe } from './saver';
+import { LOCKED, sleepSync, writeFileSafe } from './saver';
 
 export function readUse(root: string): Use | undefined {
   try {
@@ -29,16 +29,22 @@ export interface ImageSource {
 /**
  * Writes the checklists into the mod's folder for this project, each screenshot copied to an image file
  * the mod can point Claude at. Saved like Saver saves (temp file, then rename). One checklist that can't
- * be written doesn't stop the others: it is named in `failed`.
+ * be written doesn't stop the others: it is in `failed`. A checklist whose file in the mod's folder is newer
+ * than ours (the mod has changed it since an earlier handover) is left as the mod has it.
  */
-export function exportLists(root: string, folder: string, lists: Checklist[], images: ImageSource): { written: number; failed: string[] } {
+export function exportLists(root: string, folder: string, lists: Checklist[], images: ImageSource): { written: number; failed: Checklist[] } {
   const dir = sharedDir(root, folder);
   fs.mkdirSync(dir, { recursive: true });
   const out = new ImageFiles(imagesDir(root)); // the same file names as the extension's own
-  const failed: string[] = [];
+  const failed: Checklist[] = [];
   let written = 0;
   for (const c of lists) {
     try {
+      const there = readList(dir, c.id);
+      if (there && there.updatedAt > c.updatedAt) {
+        written++; // already with the mod, and newer
+        continue;
+      }
       const copy = toShared(c, (img) => {
         const target = out.file(c.id, img);
         try {
@@ -53,15 +59,27 @@ export function exportLists(root: string, folder: string, lists: Checklist[], im
       writeFileSafe(path.join(dir, `${c.id}.json`), text);
       written++;
     } catch {
-      failed.push(c.title);
+      failed.push(c);
     }
   }
   return { written, failed };
 }
 
+/** A checklist in the mod's folder, from its file or else its backup. */
+function readList(dir: string, id: string): Checklist | undefined {
+  const read = (f: string) => {
+    try {
+      return fs.readFileSync(path.join(dir, f), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  return parseList(read(`${id}.json`)) ?? parseList(read(`${id}.json.bak`));
+}
+
 /**
- * The checklists the mod has for this project, ready for the extension (screenshots read back in), and
- * the ids of every file read, closed checklists too, for markMoved.
+ * The checklists the mod has for this project, ready for the extension (screenshots read back in), closed
+ * ones too (closing one in the mod must close it here), and the ids of every file, for markMoved.
  */
 export function importLists(root: string, folder: string): { lists: Checklist[]; ids: string[] } {
   const dir = sharedDir(root, folder);
@@ -71,13 +89,6 @@ export function importLists(root: string, folder: string): { lists: Checklist[];
   } catch {
     return { lists: [], ids: [] };
   }
-  const read = (f: string) => {
-    try {
-      return fs.readFileSync(path.join(dir, f), 'utf8');
-    } catch {
-      return undefined;
-    }
-  };
   const readImage = (p: string) => {
     try {
       return fs.readFileSync(p).toString('base64');
@@ -88,33 +99,47 @@ export function importLists(root: string, folder: string): { lists: Checklist[];
   const lists: Checklist[] = [];
   const ids = listIds(names);
   for (const id of ids) {
-    const c = parseList(read(`${id}.json`)) ?? parseList(read(`${id}.json.bak`));
-    if (c && !c.closed) lists.push(fromShared(c, readImage));
+    const c = readList(dir, id);
+    if (c) lists.push(fromShared(c, readImage));
   }
   return { lists, ids };
 }
 
-/** After taking checklists in: rename their files so they aren't taken in again. */
-export function markMoved(root: string, folder: string, ids: string[]) {
+/**
+ * After taking checklists in: rename their files so they aren't taken in again, retrying while Windows has
+ * one open (the mod reading it). Returns the ids whose file is still there.
+ */
+export function markMoved(root: string, folder: string, ids: string[]): string[] {
   const dir = sharedDir(root, folder);
+  const left: string[] = [];
   for (const id of ids)
     for (const f of [`${id}.json`, `${id}.json.bak`]) {
-      try {
-        fs.rmSync(path.join(dir, `${f}.moved`), { force: true }); // Windows can't rename over a file
-        fs.renameSync(path.join(dir, f), path.join(dir, `${f}.moved`));
-      } catch {
-        /* already gone */
+      const from = path.join(dir, f);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          fs.rmSync(`${from}.moved`, { force: true }); // Windows can't rename over a file
+          fs.renameSync(from, `${from}.moved`);
+          break;
+        } catch (e: any) {
+          if (e?.code === 'ENOENT') break; // already gone (a checklist with only one of the two)
+          if (!LOCKED.has(e?.code) || attempt >= 5) {
+            if (!left.includes(id)) left.push(id);
+            break;
+          }
+          sleepSync(50);
+        }
       }
     }
+  return left;
 }
 
 /** How long `.moved` files and screenshot copies no checklist uses are kept, in case they are wanted back. */
 export const KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Deletes what the shared folders no longer need: `.moved` files, and screenshots in `mod/images` that no
- * checklist of the mod's names, once they are older than KEEP_MS. Screenshots elsewhere (paths the user
- * typed) are never touched. Returns how many files it deleted.
+ * Deletes what the shared folders no longer need, once it is older than KEEP_MS: `.moved` files, and
+ * screenshots in `mod/images` that no checklist file there names (the `.moved` ones still kept included).
+ * Screenshots elsewhere (paths the user typed) are never touched. Returns how many files it deleted.
  */
 export function tidyShared(root: string, now = Date.now()): number {
   const modDir = path.dirname(imagesDir(root));
@@ -150,11 +175,12 @@ export function tidyShared(root: string, now = Date.now()): number {
     if (path.resolve(dir) === path.resolve(imgs)) continue;
     for (const f of list(dir)) {
       const p = path.join(dir, f);
-      if (f.endsWith('.moved')) {
-        if (old(p)) n += gone(p);
+      if (f.endsWith('.moved') && old(p)) {
+        n += gone(p);
         continue;
       }
-      if (!/\.json(\.bak)?$/.test(f)) continue;
+      // A .moved file kept for now still counts: its screenshots stay with it.
+      if (!/\.json(\.bak)?(\.moved)?$/.test(f)) continue;
       let text: string | undefined;
       try {
         text = fs.readFileSync(p, 'utf8');
