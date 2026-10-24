@@ -339,10 +339,20 @@ export const MOD_INSTRUCTIONS =
  * user's own words too (titles, notes), so each pattern matches only a phrase of ours.
  */
 export function forMod(text: string): string {
+  return withoutWait(
+    text
+      .replace(/checklist in VS Code\./g, 'checklist.')
+      .replace(/" in VS Code\./g, '".')
+      .replace(/it no longer shows in VS Code;/g, 'it no longer shows;')
+  );
+}
+
+/**
+ * The extension's text without checklist_wait, for a chat that doesn't have it: the mod's, also while it passes
+ * Claude's calls on to VS Code. The user's update reaches such a chat as a message.
+ */
+export function withoutWait(text: string): string {
   return text
-    .replace(/checklist in VS Code\./g, 'checklist.')
-    .replace(/" in VS Code\./g, '".')
-    .replace(/it no longer shows in VS Code;/g, 'it no longer shows;')
     .replace(/ \(or checklist_wait\)/g, '')
     .replace(/; if only the answer is left, call checklist_wait\./g, '. If only the answer is left, end your turn: the answer will reach you as a message.')
     .replace(/ and do not call checklist_wait/g, '');

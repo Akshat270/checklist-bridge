@@ -11,11 +11,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import { App, homeFrom, rootFrom, type Loaded } from './app'
+import { App, homeFrom, rootFrom, windowsFor, type Loaded } from './app'
 import { parseAway } from './away'
 import { noImage, pasteResult, pasteCommand, platformFrom, type Platform } from './clipboard'
 import { imagesDir, join, modeFile, modeText, parseList, parseMode } from './lib/handover'
-import { MOD_INSTRUCTIONS, MOD_TOOLS } from './lib/model'
+import { MOD_INSTRUCTIONS, MOD_TOOLS, withoutWait, type ToolResult } from './lib/model'
 import { drawPane } from './pane'
 import { palette } from './theme'
 
@@ -29,7 +29,13 @@ const awayPicker = atom({ plugin: 'checklist-bridge', key: 'awayPicker' } as con
 const PREFIX = 'mcp__checklist-bridge__'
 const TOOL_NAMES = new Set(MOD_TOOLS.map(t => PREFIX + t.name))
 const INSTALL_EXTENSION = 'https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge'
-const OFF_FOR_CLAUDE = 'The user switched Checklist Bridge to the VS Code extension. Put the steps or the question in your reply instead.'
+const OFF_FOR_CLAUDE =
+  'The user switched Checklist Bridge to the VS Code extension, and no VS Code window with it is open. ' +
+  'Put the steps or the question in your reply instead.'
+/** Claude's instructions while the chat's checklist tools reach the checklist in VS Code. */
+const IN_VS_CODE =
+  '\n\nThe user has switched Checklist Bridge to its VS Code extension. These checklist tools now reach the checklist in ' +
+  'VS Code: the user works on it there, and what they send reaches you as a message.'
 const OFF_FOR_USER = 'Your checklists are in the VS Code extension now. To use them here again, type /checklist use-mod.'
 const NOT_SAVED = 'Checklist Bridge could not save the checklist just now. It tries again with the next change.'
 
@@ -47,6 +53,13 @@ let app: App | undefined
 /** Reading and writing this folder's checklists (made in session.start, used by every hook). */
 let disk: { load: () => Promise<boolean>; save: () => Promise<boolean> } | undefined
 let toolsRegistered = false
+/**
+ * Calls to the VS Code window, as the extension's connector makes them (src/connector.ts): Claude's calls in a
+ * chat that had the mod's tools before the user switched to VS Code (a chat can't gain the extension's own
+ * tools once it has started). Undefined when no window answered; 'lost' when one may have got it and didn't
+ * answer, so the call may or may not have run.
+ */
+let vscode: { post: (route: '/call' | '/poll', body: object, safeToRetry: boolean) => Promise<any> } | undefined
 let platform: Platform | undefined
 
 export const register: Register = (on, options) => {
@@ -61,6 +74,7 @@ export const register: Register = (on, options) => {
     }
     const a = new App(rootFrom(paths), homeFrom(paths), e.cwd, undefined)
     app = a
+    toolsRegistered = false
     disk = {
       // The mode and the folder as they are now: only files that changed since they were last read are read,
       // and a backup only when its file is missing or damaged. Returns whether any checklist changed.
@@ -92,6 +106,39 @@ export const register: Register = (on, options) => {
     }
     await disk.load()
 
+    // The window that answered last is tried first, as the connector stays with its window.
+    let lastWindow = ''
+    vscode = {
+      post: async (route, body, safeToRetry) => {
+        const dir = join(a.root, 'windows')
+        const names = (await $.fs.exists(dir)) ? (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json')).map(f => f.name) : []
+        const texts: (string | undefined)[] = []
+        for (const n of names) texts.push(await $.fs.read(join(dir, n)).catch(() => undefined))
+        const wins = windowsFor(texts, a.folder).sort((x, y) => Number(y.windowId === lastWindow) - Number(x.windowId === lastWindow))
+        for (const w of wins) {
+          let r: { status: number; text: string }
+          try {
+            r = await $.http.fetch(`http://127.0.0.1:${w.port}${route}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${w.token}` },
+              body: JSON.stringify(body),
+            })
+          } catch {
+            if (!safeToRetry) return 'lost' // it may have got the call: trying another window could do it twice
+            continue // closed (its file outlived it), or reloaded on another port
+          }
+          if (r.status !== 200) continue // refused before running: an old token, or another program on that port
+          lastWindow = w.windowId
+          try {
+            return JSON.parse(r.text)
+          } catch {
+            return undefined
+          }
+        }
+        return undefined
+      },
+    }
+
     // Which clipboard tool "Paste screenshot" uses. Windows says so in OS; elsewhere ask uname.
     const os = await $.env.get('OS')
     const uname = os === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s']).catch(() => undefined)
@@ -108,6 +155,22 @@ export const register: Register = (on, options) => {
         await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
       toolsRegistered = true
     }
+
+    // While this chat's calls go to VS Code: its Send now reaches Claude here as a message. The window holds
+    // each poll until it has something (at most 25 s), as it does for the connector.
+    let polling = false
+    let quietUntil = 0
+    $.clock.every(1_000, async () => {
+      if (polling || a.isOn || !toolsRegistered || Date.now() < quietUntil) return
+      polling = true
+      try {
+        const r = await vscode!.post('/poll', { sessionId: await $.session.id(), process: { ancestors: [], channel: true } }, true)
+        if (!r || r === 'lost') quietUntil = Date.now() + 5_000 // no window: look again in a few seconds
+        for (const text of Array.isArray(r?.events) ? r.events : []) if (typeof text === 'string') void $.prompt.submit({ text })
+      } finally {
+        polling = false
+      }
+    })
 
     // Every few seconds: follow a switch made in VS Code, take in what other chats or VS Code changed, count
     // down an away, and end it when its time is up (Claude already stops treating the user as away then; this
@@ -146,8 +209,10 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     if (!app) return r
     app.use = parseMode(await $.fs.read(modeFile(app.root)).catch(() => undefined))
-    if (!app.isOn) return r
-    return { sections: [...r.sections, { id: 'checklist-bridge:instructions', text: MOD_INSTRUCTIONS, scope: 'session' as const }] }
+    // Switched to VS Code: a chat with the mod's tools keeps them (they reach VS Code); a new one has none.
+    if (!toolsRegistered) return r
+    const text = MOD_INSTRUCTIONS + (app.isOn ? '' : IN_VS_CODE)
+    return { sections: [...r.sections, { id: 'checklist-bridge:instructions', text, scope: 'session' as const }] }
   })
 
   on('tool.call', async ($, e, next) => {
@@ -159,9 +224,22 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     await disk.load()
-    if (!a.isOn) return { result: OFF_FOR_CLAUDE }
     const { tool, tool_use_id: _, ...args } = e as { tool: string; tool_use_id: string } & Record<string, unknown>
     const sid = await $.session.id()
+    if (!a.isOn) {
+      // Switched to VS Code: the checklist is there now, so the call goes to its window.
+      const name = tool.slice(PREFIX.length)
+      const body = { sessionId: sid, cwd: a.folder, client: 'claude', tool: name, args, process: { ancestors: [], channel: true } }
+      const r: ToolResult | 'lost' | undefined = await vscode!.post('/call', body, name === 'checklist_read')
+      if (r === 'lost')
+        return {
+          result: `VS Code did not answer in time, so this ${name} call may or may not have gone through. Call checklist_read to see the checklist before trying again.`,
+          isError: true,
+        }
+      if (!r || !Array.isArray(r.content)) return { result: OFF_FOR_CLAUDE }
+      const content = r.content.map(c => (c.type === 'text' ? { ...c, text: withoutWait(c.text) } : c))
+      return { result: content, ...(r.isError ? { isError: true } : {}) }
+    }
     const had = a.current(sid)
     // Saved only if the call changed something: a read with nothing new, or a refused call, writes nothing
     // (other chats and VS Code would read the file again for nothing).
@@ -220,7 +298,7 @@ export const register: Register = (on, options) => {
         'Switched to the VS Code extension.',
         'Open this folder in VS Code. Checklist Bridge brings these checklists over and connects Claude again.',
         `No extension yet? Install it from ${INSTALL_EXTENSION}`,
-        'Start a new Claude chat afterwards so it uses the extension.',
+        'Claude in this chat keeps using the checklist there once VS Code is open.',
       ].join('\n')
     } else if (sub === 'away') {
       const away = parseAway(rest.join(' '))

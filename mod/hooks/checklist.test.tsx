@@ -46,6 +46,16 @@ function world(on: any, files: Record<string, string> = {}) {
     return { value: { exitCode: 0, stdout: clipboard.holds === 'image' ? 'ok\n' : 'none\n', stderr: '' } }
   })
   on('session.id', () => ({ value: chat.sid }))
+  // VS Code windows on this machine: each port answers with `net.answer` (none: nothing listens there).
+  const net = { posts: [] as { url: string; auth?: string; body: any }[], answer: {} as Record<number, (route: string, body: any) => { status: number; text: string }> }
+  on('http.fetch', (_: any, e: any) => {
+    const m = /^http:\/\/127\.0\.0\.1:(\d+)(\/\w+)$/.exec(e.url)
+    const answer = m && net.answer[Number(m[1])]
+    if (!answer) return { deny: 'ECONNREFUSED' }
+    const body = JSON.parse(e.init?.body ?? '{}')
+    net.posts.push({ url: e.url, auth: e.init?.headers?.Authorization, body })
+    return { value: { ...answer(m![2]!, body), ok: true, headers: {} } }
+  })
   on('tool.check', () => ({ decision: 'ask' }))
   on('ui.copy', (_: any, e: any) => {
     seen.copied.push(e.text)
@@ -74,7 +84,7 @@ function world(on: any, files: Record<string, string> = {}) {
     return { text: e.text }
   })
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }))
-  return { files, seen, chat, clipboard, disk }
+  return { files, seen, chat, clipboard, disk, net }
 }
 
 const PANE = {
@@ -371,7 +381,8 @@ test('after switching to VS Code elsewhere, this chat writes nothing', async ($,
   expect(textOf(await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any))).toMatch(/switched Checklist Bridge to the VS Code extension/)
   expect(files[listFile(files)]).toBe(before)
   const r = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] } as any)
-  expect(r.sections.some(x => x.id === 'checklist-bridge:instructions')).toBe(false)
+  // This chat keeps its tools, which now reach VS Code (none is open here), and Claude is told so.
+  expect(r.sections.find(x => x.id === 'checklist-bridge:instructions')?.text).toMatch(/now reach the checklist in VS Code/)
   await ui.unmount()
 })
 
@@ -548,4 +559,55 @@ test('switching to the mod in VS Code while a chat is open gives Claude the tool
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: 'From VS Code' })).toBeDefined()
   await ui.unmount()
+})
+
+/** A VS Code window file, as the extension writes it. */
+const windowFile = (files: Record<string, string>, id: string, port: number, folders: string[], focusedAt = 1) =>
+  (files[`${ROOT}/windows/${id}.json`] = JSON.stringify({ windowId: id, port, token: `tok-${id}`, pid: 1, folders, focusedAt, name: id }))
+
+test('after /checklist use-extension, Claude\'s calls in this chat reach the checklist in VS Code', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  const { files, net, seen } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  await $.command.run({ command: 'checklist', args: 'use-extension' } as any)
+
+  // Two windows: another project's (used last), and this folder's, whose old file names a closed port first.
+  windowFile(files, 'other', 5001, ['/work/Other'], 9)
+  windowFile(files, 'stale', 5002, [CWD], 5)
+  windowFile(files, 'mine', 5003, ['/work'], 2)
+  net.answer[5001] = () => ({ status: 200, text: JSON.stringify({ content: [{ type: 'text', text: 'wrong window' }] }) })
+  net.answer[5003] = (route, body) =>
+    route === '/poll'
+      ? { status: 200, text: JSON.stringify({ events: body.sessionId === 'chat-1' ? ['The user shared t1 from VS Code.'] : [] }) }
+      : { status: 200, text: JSON.stringify({ content: [{ type: 'text', text: 'Checklist "Things to do": t1 done. Answers arrive via checklist_read; if only the answer is left, call checklist_wait.' }] }) }
+  // 'stale' has the folder itself, but nothing answers on its port, so 'mine' is used.
+  const r = textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))
+  expect(r).toMatch(/^Checklist "Things to do": t1 done/)
+  expect(r).not.toContain('checklist_wait')
+  const call = net.posts.find(p => p.url.endsWith('/call'))!
+  expect(call.url).toBe('http://127.0.0.1:5003/call')
+  expect(call.auth).toBe('Bearer tok-mine')
+  expect(call.body).toMatchObject({ sessionId: 'chat-1', tool: 'checklist_read', cwd: CWD, process: { channel: true } })
+
+  // Send now in VS Code reaches Claude here.
+  await clock.advance(1_000)
+  expect(seen.prompts).toContain('The user shared t1 from VS Code.')
+})
+
+test('a change Claude makes through VS Code is not sent to a second window when the first does not answer', async ($, on) => {
+  const { files, net } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  await $.command.run({ command: 'checklist', args: 'use-extension' } as any)
+  // No window at all: Claude is told to put it in its reply.
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any))).toMatch(/no VS Code window with it is open/)
+  windowFile(files, 'a', 6001, [CWD], 2)
+  windowFile(files, 'b', 6002, [CWD], 1)
+  net.answer[6002] = () => ({ status: 200, text: JSON.stringify({ content: [{ type: 'text', text: 'Added 1 task' }] }) })
+  // 'a' gets nothing (closed port): adding is not safe to repeat elsewhere, so 'b' is not tried.
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any))).toMatch(/may or may not have gone through/)
+  expect(net.posts.length).toBe(0)
+  // A read is safe to repeat: it moves on to 'b'.
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toBe('Added 1 task')
 })

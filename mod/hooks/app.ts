@@ -37,6 +37,32 @@ const SETTLED_MS = 5000
 /** Images are what Claude may open without asking (see isSharedShot). */
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 
+/** A VS Code window as it announces itself in `~/.checklist-bridge/windows/` (src/registry.ts). */
+export type Win = { windowId: string; port: number; token: string; folders: string[]; focusedAt: number; name: string }
+
+/**
+ * The VS Code windows to try for a chat in `cwd`, best first: the window with the chat's folder open (the
+ * deepest such folder, then the one used last), then the others, the one used last first. A window file can
+ * outlive its window, so the caller tries the next when one doesn't answer.
+ */
+export function windowsFor(texts: (string | undefined)[], cwd: string): Win[] {
+  const norm = (p: string) => p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const here = norm(cwd)
+  const depth = (w: Win) =>
+    Math.max(-1, ...w.folders.map(f => norm(f)).filter(f => here === f || here.startsWith(`${f}/`)).map(f => f.length))
+  const wins: Win[] = []
+  for (const t of texts) {
+    try {
+      const w = JSON.parse(t ?? '')
+      if (w && Number.isInteger(w.port) && typeof w.token === 'string')
+        wins.push({ windowId: String(w.windowId), port: w.port, token: w.token, folders: Array.isArray(w.folders) ? w.folders.map(String) : [], focusedAt: Number(w.focusedAt) || 0, name: String(w.name ?? '') })
+    } catch {
+      // half-written or not a window file
+    }
+  }
+  return wins.sort((a, b) => depth(b) - depth(a) || b.focusedAt - a.focusedAt)
+}
+
 /** What one save writes, in order, and the version it saves. */
 export type Pending = { id: string; at: number; writes: [string, string][] }
 
