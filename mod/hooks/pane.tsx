@@ -40,6 +40,23 @@ export type View = {
   width: number
 }
 
+/**
+ * The pane's own colours, in one place (named ANSI colours, lazygit style). They are picked for a dark
+ * terminal; everything else uses the theme's colour names so it follows the user's theme.
+ */
+const COLOR = {
+  next: 'cyan', // the NEXT badge, and the marker of the next task in the list
+  title: 'white', // the open task's title, and field labels
+  muted: 'gray', // instructions ("Run this:"), the list's │ divider
+  number: 'cyan', // step numbers in lists
+  command: 'green', // a command to run
+  done: 'green', // the primary "Done, share" button
+  notDone: 'red', // "Couldn't do it"
+} as const
+
+/** openId for "no task card open": every task folds to one line. */
+export const NONE_OPEN = '-'
+
 const RANK: Record<string, number> = { urgent: 0, important: 1 }
 const rank = (t: Task) => Math.min(...t.tags.map(x => RANK[x] ?? 2), 2)
 /** Tags that get a coloured badge; any other tag is drawn as plain dim text. */
@@ -67,14 +84,14 @@ function ordered(c: Checklist) {
 }
 
 export function drawPane(els: Elements[keyof Elements], app: App, sid: string, view: View, act: Actions): RenderElement {
-  const { Box, Text, Button, Code } = els
+  const { Box, Text, Button } = els
   // The phone app has no text fields: there the pane shows the list with its buttons only.
   const Input = 'Input' in els ? els.Input : undefined
   const barWidth = Math.max(10, Math.min(view.width - 30, 24))
 
   /** A word on a coloured background: tags, NEXT, AWAY. */
-  const badge = (label: string, color: string) => (
-    <Text backgroundColor={color} color="inverseText" bold>
+  const badge = (label: string, color: string, ink = 'inverseText') => (
+    <Text backgroundColor={color} color={ink} bold>
       {` ${label} `}
     </Text>
   )
@@ -112,7 +129,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   /** A labelled text field: the label above, the entry area in a light frame (its ⏎ action sits at the frame's right edge). */
   const field = (label: string, input: RenderElement) => (
     <Box flexDirection="column">
-      <Text dimColor>{label}</Text>
+      <Text color={COLOR.title}>{label}</Text>
       <Box borderStyle="round" borderColor="subtle" paddingX={1}>
         {input}
       </Box>
@@ -150,15 +167,25 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   const asking = questions.filter(q => !q.answer)
   const answered = questions.filter(q => q.answer)
   const current = open[0]
-  const openTask = open.find(t => t.id === view.openId) ?? current
+  const openTask = view.openId === NONE_OPEN ? undefined : (open.find(t => t.id === view.openId) ?? current)
   const unsent = app.store.updateSummary(c, 'line').ids.length
 
   // The grid every list row follows:  mark (3) · id (padded to the longest id) · " │ " · text.
   // Ids lead, so the text of every row starts in the same column whatever its id or step number.
   const idWidth = Math.max(2, ...all.map(t => t.id.length), ...questions.map(q => q.id.length))
-  const idCell = (id: string) => <Text dimColor>{`${id.padEnd(idWidth)} │ `}</Text>
+  const idCell = (id: string) => (
+    <Text>
+      <Text dimColor>{id.padEnd(idWidth)}</Text>
+      <Text color={COLOR.muted}>{' │ '}</Text>
+    </Text>
+  )
   /** The same columns with no mark and no id: where a row's second line starts. */
-  const indent = <Text dimColor>{`${' '.repeat(3 + idWidth)} │ `}</Text>
+  const indent = (
+    <Text>
+      {' '.repeat(3 + idWidth)}
+      <Text color={COLOR.muted}>{' │ '}</Text>
+    </Text>
+  )
   /** A fixed-width cell, so the cells after it start in the same column on every row. */
   const fixed = (width: number, child: RenderElement) => (
     <Box width={width} flexShrink={0}>
@@ -235,13 +262,18 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         {/* Badges, then a blank line, then the title with its description under it in grey. */}
         <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
           <Text>
-            {t === current ? badge('NEXT', urgent ? 'error' : 'suggestion') : badge('OPEN', 'subtle')}
+            {t === current ? badge('NEXT', COLOR.next, 'black') : badge('OPEN', 'subtle')}
             {step && <Text dimColor>{`  step ${step.n} of ${step.of}`}</Text>}
             {tagBadges(t.tags)}
           </Text>
-          <Text dimColor>{t.id}</Text>
+          <Box flexDirection="row" gap={2}>
+            <Button key={`${t.id}-collapse`} label="Collapse" plain dimColor onPress={() => act.open(NONE_OPEN)} />
+            <Text dimColor>{`[${t.id}]`}</Text>
+          </Box>
         </Box>
-        <Text bold>{step ? stepText(t.text) : t.text}</Text>
+        <Text bold color={COLOR.title}>
+          {step ? stepText(t.text) : t.text}
+        </Text>
         {t.detail && (
           <Box marginTop={1}>
             <Text color="inactive">{t.detail}</Text>
@@ -249,8 +281,10 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         )}
         {t.command && (
           <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>Run this:</Text>
-            <Code source={t.command} language="shell" />
+            <Text color={COLOR.muted}>Run this:</Text>
+            <Box paddingLeft={2}>
+              <Text mono color={COLOR.command}>{`$ ${t.command}`}</Text>
+            </Box>
           </Box>
         )}
         {extras(t, t.draft.note, v => app.store.setDraft(c.id, t.id, { note: v }), t.draft.images, true)}
@@ -258,8 +292,8 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         <Box flexDirection="row" gap={2} marginTop={1} marginBottom={0}>
           <Button
             key={`${t.id}-share-done`}
-            label="✓ Done, share with Claude"
-            variant="primary"
+            label="Done, share with Claude"
+            plain
             hotkey="d"
             autoFocus
             onPress={async () => {
@@ -267,18 +301,24 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
               app.store.share(c.id, t.id)
               await save()
             }}
-          />
+          >
+            <Text backgroundColor={COLOR.done} color="black" bold>
+              {' ✓ Done, share with Claude '}
+            </Text>
+          </Button>
           <Button
             key={`${t.id}-share-notdone`}
             label="Couldn't do it"
-            variant="secondary"
+            plain
             hotkey="n"
             onPress={async () => {
               app.store.setDraft(c.id, t.id, { done: false })
               app.store.share(c.id, t.id)
               await save()
             }}
-          />
+          >
+            <Text color={COLOR.notDone}>✗ Couldn't do it</Text>
+          </Button>
         </Box>
       </Box>
     )
@@ -288,16 +328,19 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     const urgent = rank(t) === 0
     const started = !!(t.draft.note || t.draft.images.length)
     return (
-      <Button key={`${t.id}-open`} plain onPress={() => act.open(t.id)}>
-        <Text color={urgent ? 'error' : undefined} dimColor={!urgent}>
-          {urgent ? ' ! ' : ' • '}
+      <Box flexDirection="row">
+        <Text color={urgent ? 'error' : t === current ? COLOR.next : undefined} dimColor={!urgent && t !== current}>
+          {urgent ? ' ! ' : t === current ? ' ▸ ' : ' • '}
         </Text>
         {idCell(t.id)}
-        {step ? <Text color="suggestion">{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
-        <Text>{step ? stepText(t.text) : t.text}</Text>
-        {started ? <Text color="suggestion"> · draft</Text> : ''}
-        {tagBadges(t.tags)}
-      </Button>
+        {step ? <Text color={COLOR.number}>{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
+        {/* Only the text is the button: the pointer inverts a button, and this keeps that to the text. */}
+        <Button key={`${t.id}-open`} label={step ? stepText(t.text) : t.text} plain onPress={() => act.open(t.id)} />
+        <Text>
+          {started ? <Text color="suggestion"> · draft</Text> : ''}
+          {tagBadges(t.tags)}
+        </Text>
+      </Box>
     )
   }
 
@@ -309,7 +352,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
       <Box flexDirection="column" borderStyle="round" borderColor={urgent ? 'error' : 'warning'} paddingX={1} marginTop={1}>
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
           <Text bold>{q.question}</Text>
-          <Text dimColor>{q.id}</Text>
+          <Text dimColor>{`[${q.id}]`}</Text>
         </Box>
         {q.tags.length > 0 && <Text>{tagBadges(q.tags, false)}</Text>}
         {q.why && (
@@ -323,23 +366,29 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             const on = picks.includes(o.id)
             const mark = q.multi ? (on ? '■' : '□') : on ? '●' : '○'
             return (
-              <Button
-                key={`${q.id}-opt-${o.id}`}
-                plain
-                hotkey={first && i < 9 ? String(i + 1) : undefined}
-                onPress={async () => {
-                  const next = q.multi ? (on ? picks.filter(p => p !== o.id) : [...picks, o.id]) : [o.id]
-                  app.store.setAnswerDraft(c.id, q.id, { picks: next })
-                  await save()
-                }}
-              >
-                <Text color={on ? 'suggestion' : undefined} dimColor={!on}>{`${mark} `}</Text>
-                <Text bold={on} color={on ? 'suggestion' : undefined}>
-                  {o.label}
+              <Box flexDirection="row">
+                {/* Only the choice is the button (the pointer inverts a button); its summary sits beside it. */}
+                <Button
+                  key={`${q.id}-opt-${o.id}`}
+                  label={o.label}
+                  plain
+                  hotkey={first && i < 9 ? String(i + 1) : undefined}
+                  onPress={async () => {
+                    const next = q.multi ? (on ? picks.filter(p => p !== o.id) : [...picks, o.id]) : [o.id]
+                    app.store.setAnswerDraft(c.id, q.id, { picks: next })
+                    await save()
+                  }}
+                >
+                  <Text color={on ? COLOR.next : undefined} dimColor={!on}>{`${mark} `}</Text>
+                  <Text bold={on} color={on ? COLOR.next : undefined}>
+                    {o.label}
+                  </Text>
+                </Button>
+                <Text>
+                  {o.summary || o.details ? <Text dimColor>{`  ${o.summary ?? o.details}`}</Text> : ''}
+                  {o === recommended ? <Text color="success"> ★ recommended</Text> : ''}
                 </Text>
-                {o.summary || o.details ? <Text dimColor>{`  ${o.summary ?? o.details}`}</Text> : ''}
-                {o === recommended ? <Text color="success"> ★ recommended</Text> : ''}
-              </Button>
+              </Box>
             )
           })}
         </Box>

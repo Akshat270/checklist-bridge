@@ -94,6 +94,10 @@ test('Claude adds tasks, the user shares one, Send now hands it to Claude', asyn
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Collapse folds the open card: every task is one line until one is opened again.
+  await ui.press({ key: 't1-collapse' })
+  expect(await ui.find({ key: 't1-share-done' })).toBeUndefined()
+  expect(await ui.find({ key: 't1-open' })).toBeDefined()
   await ui.press({ key: 't2-open' })
   expect(await ui.find({ key: 't2-share-done' })).toBeDefined()
   expect(await ui.find({ key: 't1-share-done' })).toBeUndefined()
