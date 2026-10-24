@@ -25,8 +25,12 @@ import { awayDay, groupsOf, isSequence, MAX_AWAY_MS, sequenceOf, type Checklist,
 import type { Palette } from './theme'
 
 export type Actions = {
-  /** Saves `c` and redraws. */
-  changed: (c: Checklist) => Promise<void>
+  /**
+   * Makes a change to the checklist `listId`: register.tsx reads the latest from disk first, runs `change`,
+   * then saves and redraws. `change` uses ids, not the objects drawn here, which may be out of date by then.
+   * A string it returns is shown as a message, and nothing is saved.
+   */
+  edit: (listId: string, change: () => string | void) => Promise<void>
   toast: (text: string) => void
   /** Send now. */
   send: (c: Checklist) => Promise<void>
@@ -203,7 +207,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
 
   /* ------------------------------------------------------------------ the checklist */
 
-  const save = () => act.changed(c)
+  const edit = (change: () => string | void) => act.edit(c.id, change)
   const groups = ordered(c)
   const all = groups.flatMap(g => g.tasks)
   const open = all.filter(t => !t.shared)
@@ -248,10 +252,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Text>{`Screenshot ${i + 1}`}</Text>
           <Text color={P.muted}>{`  ${shotName(c.id, img)}`}</Text>
         </Text>
-        {quiet(`${owner.id}-rm-${img.id}`, 'remove', async () => {
-          app.store.removeImage(c.id, owner.id, img.id)
-          await save()
-        })}
+        {quiet(`${owner.id}-rm-${img.id}`, 'remove', () => edit(() => void app.store.removeImage(c.id, owner.id, img.id)))}
       </Box>
     ))
 
@@ -267,10 +268,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             value={note}
             submitLabel="save"
             onInput={setNote}
-            onSubmit={async v => {
-              setNote(v)
-              await save()
-            }}
+            onSubmit={v => edit(() => setNote(v))}
           />,
         )}
       {shots(owner, imgs)}
@@ -284,10 +282,8 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 key={`${owner.id}-shot`}
                 placeholder="or type a file path"
                 submitLabel="add"
-                onSubmit={async v => {
-                  if (!v.trim()) return
-                  if (!app.store.addImagePath(c.id, owner.id, v)) return act.toast('That is not a .png, .jpg, .gif or .webp file.')
-                  await save()
+                onSubmit={v => {
+                  if (v.trim()) void edit(() => (app.addShot(c.id, owner.id, v) ? undefined : 'That is not a .png, .jpg, .gif or .webp file.'))
                 }}
               />
             </Box>
@@ -344,11 +340,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             bg: P.green,
             hotkey: 'd',
             autoFocus: true,
-            onPress: async () => {
-              app.store.setDraft(c.id, t.id, { done: true })
-              app.store.share(c.id, t.id)
-              await save()
-            },
+            onPress: () =>
+              edit(() => {
+                app.store.setDraft(c.id, t.id, { done: true })
+                app.store.share(c.id, t.id)
+              }),
           })}
           {filled({
             key: `${t.id}-share-notdone`,
@@ -356,11 +352,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             bg: P.notDoneBg,
             fg: P.red,
             hotkey: 'n',
-            onPress: async () => {
-              app.store.setDraft(c.id, t.id, { done: false })
-              app.store.share(c.id, t.id)
-              await save()
-            },
+            onPress: () =>
+              edit(() => {
+                app.store.setDraft(c.id, t.id, { done: false })
+                app.store.share(c.id, t.id)
+              }),
           })}
         </Box>
       </Box>
@@ -424,11 +420,14 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                   label={o.label}
                   plain
                   hotkey={first && i < 9 ? String(i + 1) : undefined}
-                  onPress={async () => {
-                    const next = q.multi ? (on ? picks.filter(p => p !== o.id) : [...picks, o.id]) : [o.id]
-                    app.store.setAnswerDraft(c.id, q.id, { picks: next })
-                    await save()
-                  }}
+                  onPress={() =>
+                    edit(() => {
+                      // The picks as they are now, after reading the latest from disk.
+                      const now = app.store.get(c.id)?.questions.find(x => x.id === q.id)?.draft.picks ?? []
+                      const has = now.includes(o.id)
+                      app.store.setAnswerDraft(c.id, q.id, { picks: q.multi ? (has ? now.filter(p => p !== o.id) : [...now, o.id]) : [o.id] })
+                    })
+                  }
                 >
                   <Text color={on ? P.cyan : P.text} bold={on}>
                     {`${mark} ${o.label.padEnd(labelWidth)}`}
@@ -460,10 +459,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 value={q.draft.other}
                 submitLabel="save"
                 onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
-                onSubmit={async v => {
-                  app.store.setAnswerDraft(c.id, q.id, { other: v })
-                  await save()
-                }}
+                onSubmit={v => edit(() => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
               />,
             )}
           </Box>
@@ -474,10 +470,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             key: `${q.id}-answer`,
             label: `✓ Answer ${q.id}`,
             bg: P.amber,
-            onPress: async () => {
-              if (!app.store.shareAnswer(c.id, q.id)) return act.toast(`Pick an option for ${q.id} first.`)
-              await save()
-            },
+            onPress: () => edit(() => (app.store.shareAnswer(c.id, q.id) ? undefined : `Pick an option for ${q.id} first.`)),
           })}
         </Box>
       </Box>
@@ -532,10 +525,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           pushed: !!q.pushedAt,
           note: a.note,
           shots: a.images.length,
-          button: quiet(`${q.id}-change`, 'Change answer', async () => {
-            app.store.unshareAnswer(c.id, q.id)
-            await save()
-          }),
+          button: quiet(`${q.id}-change`, 'Change answer', () => edit(() => void app.store.unshareAnswer(c.id, q.id))),
         })
       })}
       {shared.map(t => {
@@ -557,10 +547,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           pushed: !!t.pushedAt,
           note: s.note,
           shots: s.images.length,
-          button: quiet(`${t.id}-unshare`, 'Take back', async () => {
-            app.store.unshare(c.id, t.id)
-            await save()
-          }),
+          button: quiet(`${t.id}-unshare`, 'Take back', () => edit(() => void app.store.unshare(c.id, t.id))),
         })
       })}
     </Box>
@@ -617,10 +604,11 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             bg: P.awayTrack,
             fg: P.amber,
             onPress: async () => {
-              const a = awayFor(o.ms)
-              if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('Could not set the time.')
               await act.toggleAwayPicker()
-              await save()
+              await edit(() => {
+                const a = awayFor(o.ms)
+                if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return 'Could not set the time.'
+              })
             },
           }),
         )}
@@ -653,21 +641,19 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           label: '+30 min',
           bg: P.awayTrack,
           fg: P.amber,
-          onPress: async () => {
-            const a = awayFor(Math.min(leftMs + EXTEND_MS, MAX_AWAY_MS))
-            if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('You can be away for up to 24 hours.')
-            await save()
-          },
+          onPress: () =>
+            edit(() => {
+              const until = app.store.get(c.id)?.awayUntil ?? Date.now()
+              const a = awayFor(Math.min(Math.max(0, until - Date.now()) + EXTEND_MS, MAX_AWAY_MS))
+              if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return 'You can be away for up to 24 hours.'
+            }),
         })}
         {filled({
           key: 'back',
           label: "I'm back",
           bg: P.amber,
           hotkey: 'b',
-          onPress: async () => {
-            app.store.endAway(c.id)
-            await save()
-          },
+          onPress: () => edit(() => void app.store.endAway(c.id)),
         })}
       </Box>
     </Box>

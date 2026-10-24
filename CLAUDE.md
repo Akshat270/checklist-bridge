@@ -43,7 +43,8 @@ Claude Code chat ── mod/ (a Claude Code mod: hooks module, no connector, no 
 - The connector holds no state. Every tool call goes to the chat's VS Code window, which owns the checklist.
 - Checklists are saved under the workspace storage (or global storage for folderless windows) in `checklists/<id>.json`; screenshots are separate files in `checklists/images/`.
 - Send now reaches Claude by one of: a waiting `checklist_wait` call, a Claude Code channel push, typing into Claude's terminal, or the clipboard. In the mod it is `$.prompt.submit`, so the mod has no `checklist_wait`.
-- **Extension or mod, one at a time.** `~/.checklist-bridge/mode.json` (`handover.ts`) says which is on. The mod keeps its checklists in `~/.checklist-bridge/mod/<folder key>/<id>.json`; the extension hands its checklists over there and takes them back (`switcher.ts`), following the mode file at start and on focus.
+- **Extension or mod, one at a time.** `~/.checklist-bridge/mode.json` (`handover.ts`) says which is on. The mod keeps its checklists in `~/.checklist-bridge/mod/<folder key>/<id>.json`; the extension hands its checklists over there and takes them back (`switcher.ts`), following the mode file at start and on focus. While the mod has them, the extension's copies are read-only (`store.lockedNote`, the panels' `locked` hook).
+- **In the mod, the files are the truth.** Other chats in the folder and VS Code change them too, so every change (tool call, pane press, command, the away timer) runs `disk.load()` (mode and checklists), then the change, then `disk.save()`. Pane presses go through `act.edit(listId, change)`; never change the store from a press without it. A failed write stays unsaved and is retried (`App.pending` / `saved`).
 
 ## Rules that matter
 

@@ -14,7 +14,12 @@ export interface Routes { waiting: boolean; channel: boolean; terminal: boolean 
 export interface PanelHooks {
   routes(c: Checklist): Routes;
   sendNow(c: Checklist): Promise<void>;
+  /** Why checklists can't be changed here right now (they are with the Claude Code mod), if they can't. */
+  locked?(): string | undefined;
 }
+
+/** Messages that only show or copy, and still work while the checklists are locked. */
+const READ_ONLY = new Set(['flushed', 'ready', 'copy', 'hide']);
 
 export const VIEW_TYPE = 'checklistBridge.checklist';
 
@@ -184,6 +189,17 @@ export class Panels {
 
   private async onMessage(id: string, m: any) {
     const s = this.store;
+    const why = READ_ONLY.has(m?.type) ? undefined : this.hooks.locked?.();
+    if (why) {
+      // Put the panel back as it was, and say why nothing changed.
+      const c = s.get(id);
+      const p = this.open.get(id);
+      if (c && p) p.webview.postMessage(this.state(c, p.webview));
+      vscode.window
+        .showInformationMessage(why, 'Switch back to VS Code')
+        .then((pick) => pick && vscode.commands.executeCommand('checklistBridge.useExtension'));
+      return;
+    }
     switch (m?.type) {
       case 'flushed': // everything held back was sent before this, and messages arrive in order: it is saved
         this.flushing.get(id)?.();

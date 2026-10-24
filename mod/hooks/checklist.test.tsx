@@ -8,6 +8,8 @@ const T = 'mcp__checklist-bridge__'
 
 function world(on: any, files: Record<string, string> = {}) {
   const chat = { sid: 'chat-1' }
+  // How many of the next writes fail (a file locked for a moment).
+  const disk = { failWrites: 0 }
   // What the clipboard holds for "Paste screenshot": 'image', 'text' or 'no-tool' (wl-paste/xclip missing).
   const clipboard = { holds: 'image' as 'image' | 'text' | 'no-tool', runs: [] as string[][] }
   const seen = { status: [] as (string | undefined)[], toasts: [] as string[], prompts: [] as string[], opened: 0, tools: [] as string[], copied: [] as string[] }
@@ -15,6 +17,10 @@ function world(on: any, files: Record<string, string> = {}) {
   on('fs.exists', (_: any, e: any) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(e.path + '/')) }))
   on('fs.read', (_: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }))
   on('fs.write', (_: any, e: any) => {
+    if (disk.failWrites > 0) {
+      disk.failWrites--
+      return { deny: 'EBUSY: the file is locked' }
+    }
     files[e.path] = e.text
     return { value: undefined }
   })
@@ -59,7 +65,7 @@ function world(on: any, files: Record<string, string> = {}) {
     return { text: e.text }
   })
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }))
-  return { files, seen, chat, clipboard }
+  return { files, seen, chat, clipboard, disk }
 }
 
 const PANE = {
@@ -310,4 +316,100 @@ test('the light colours draw the same pane', { options: { colors: 'light' } }, a
     expect(await ui.find({ type: 'Text', text: /URGENT/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+/** The one checklist file in the shared folder, and a way to change it as another chat or VS Code would. */
+const listFile = (files: Record<string, string>) => Object.keys(files).find(f => /\/mod\/my-app-[0-9a-f]{8}\/[^/]+\.json$/.test(f))!
+const elsewhere = (files: Record<string, string>, change: (c: any) => void) => {
+  const f = listFile(files)
+  const c = JSON.parse(files[f]!)
+  change(c)
+  c.updatedAt += 1000
+  files[f] = files[`${f}.bak`] = JSON.stringify(c)
+}
+
+test('a change made elsewhere is not overwritten by this chat\'s older copy', async ($, on) => {
+  const { files } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  // VS Code (or another chat) shares t1 in the file meanwhile.
+  elsewhere(files, c => (c.tasks[0].shared = { at: Date.now(), done: true, note: 'done in VS Code', images: [] }))
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any)
+  const saved = JSON.parse(files[listFile(files)]!)
+  expect(saved.tasks.map((t: any) => t.id)).toEqual(['t1', 't2'])
+  expect(saved.tasks[0].shared?.note).toBe('done in VS Code')
+
+  // The pane, too, works on the latest copy.
+  elsewhere(files, c => (c.tasks[1].text = 'Two, renamed elsewhere'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 't2-share-done' })
+  await ui.unmount()
+  const after = JSON.parse(files[listFile(files)]!)
+  expect(after.tasks[1].text).toBe('Two, renamed elsewhere')
+  expect(after.tasks[1].shared?.done).toBe(true)
+})
+
+test('after switching to VS Code elsewhere, this chat writes nothing', async ($, on) => {
+  const { files, seen } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  files[`${ROOT}/mode.json`] = JSON.stringify({ use: 'extension', at: Date.now() })
+  const before = files[listFile(files)]
+  await ui.press({ key: 't1-share-done' })
+  expect(seen.toasts.at(-1)).toMatch(/in the VS Code extension now/)
+  expect(files[listFile(files)]).toBe(before)
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any))).toMatch(/switched Checklist Bridge to the VS Code extension/)
+  expect(files[listFile(files)]).toBe(before)
+  const r = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] } as any)
+  expect(r.sections.some(x => x.id === 'checklist-bridge:instructions')).toBe(false)
+  await ui.unmount()
+})
+
+test('a write that fails is tried again, and Claude is not asked to repeat the change', async ($, on) => {
+  const { files, disk } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  disk.failWrites = 1
+  const r = await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  expect((r as any).deny).toBeUndefined()
+  expect(textOf(r)).toMatch(/Added 1 task \(t1\)/)
+  expect(textOf(r)).toMatch(/could not save the checklist just now/)
+  expect(Object.keys(files).some(f => f.endsWith('.json') && !f.endsWith('mode.json'))).toBe(false)
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Two' }] } as any)
+  expect(JSON.parse(files[listFile(files)]!).tasks.map((t: any) => t.text)).toEqual(['One', 'Two'])
+})
+
+test('a checklist another chat took over with /checklist continue stays with that chat', async ($, on) => {
+  const { files } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Old work', tasks: [{ text: 'One' }] } as any)
+  // Another chat ran /checklist continue on it.
+  elsewhere(files, c => (c.sessionId = 'chat-2'))
+  const r = textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))
+  expect(r).not.toMatch(/Old work/)
+  expect(JSON.parse(files[listFile(files)]!).sessionId).toBe('chat-2')
+})
+
+test('a checklist whose first save stopped after its backup still loads', async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Kept', tasks: [{ text: 'One' }] } as any)
+  delete files[listFile(files)]
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/Checklist "Kept"/)
+})
+
+test('a typed screenshot path is stored as a full path', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 't1-shot', text: '~/Desktop/shot.png' })
+  await ui.input({ key: 't1-shot', text: 'shots/b.png' })
+  await ui.press({ key: 't1-share-done' })
+  await ui.unmount()
+  const r = textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))
+  expect(r).toContain('/home/u/Desktop/shot.png (open it with your Read tool)')
+  expect(r).toContain(`${CWD}/shots/b.png (open it with your Read tool)`)
 })

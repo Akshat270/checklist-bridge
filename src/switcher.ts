@@ -3,9 +3,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fromShared, imagesDir, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
+import { ImageFiles } from './images';
 import type { Checklist, Img } from './model';
-
-const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+import { writeFileSafe } from './saver';
 
 export function readUse(root: string): Use | undefined {
   try {
@@ -17,32 +17,46 @@ export function readUse(root: string): Use | undefined {
 
 export function writeUse(root: string, use: Use) {
   fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(modeFile(root), modeText(use));
+  writeFileSafe(modeFile(root), modeText(use));
+}
+
+/** Where the extension keeps a checklist's screenshots: its image files (ImageFiles). */
+export interface ImageSource {
+  /** A stored screenshot's file. */
+  file(listId: string, img: Img): string;
 }
 
 /**
- * Writes the checklists into the mod's folder for this project, each screenshot as an image file.
- * `imageData` gives a screenshot's base64 data. Returns how many were written.
+ * Writes the checklists into the mod's folder for this project, each screenshot copied to an image file
+ * the mod can point Claude at. Saved like Saver saves (temp file, then rename). One checklist that can't
+ * be written doesn't stop the others: it is named in `failed`.
  */
-export function exportLists(root: string, folder: string, lists: Checklist[], imageData: (listId: string, img: Img) => string | undefined): number {
+export function exportLists(root: string, folder: string, lists: Checklist[], images: ImageSource): { written: number; failed: string[] } {
   const dir = sharedDir(root, folder);
-  const imgDir = imagesDir(root);
   fs.mkdirSync(dir, { recursive: true });
-  fs.mkdirSync(imgDir, { recursive: true });
+  const out = new ImageFiles(imagesDir(root)); // the same file names as the extension's own
+  const failed: string[] = [];
+  let written = 0;
   for (const c of lists) {
-    const copy = toShared(c, (img) => {
-      const data = img.data ?? imageData(c.id, img);
-      if (!data) return undefined;
-      const safe = (s: string) => s.replace(/[^\w-]/g, '_');
-      const file = path.join(imgDir, `${safe(c.id)}-${safe(img.id)}.${EXT[img.mime] ?? 'png'}`);
-      fs.writeFileSync(file, Buffer.from(data, 'base64'));
-      return file;
-    });
-    const text = JSON.stringify(copy);
-    fs.writeFileSync(path.join(dir, `${c.id}.json.bak`), text);
-    fs.writeFileSync(path.join(dir, `${c.id}.json`), text);
+    try {
+      const copy = toShared(c, (img) => {
+        const target = out.file(c.id, img);
+        try {
+          writeFileSafe(target, img.data ? Buffer.from(img.data, 'base64') : fs.readFileSync(images.file(c.id, img)));
+          return target;
+        } catch {
+          return undefined; // its file is gone: the screenshot is left out
+        }
+      });
+      const text = JSON.stringify(copy);
+      writeFileSafe(path.join(dir, `${c.id}.json.bak`), text);
+      writeFileSafe(path.join(dir, `${c.id}.json`), text);
+      written++;
+    } catch {
+      failed.push(c.title);
+    }
   }
-  return lists.length;
+  return { written, failed };
 }
 
 /**

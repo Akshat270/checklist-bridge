@@ -160,7 +160,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
   };
 
   /* ---------- UI ---------- */
-  const panels = new Panels(store, ctx.extensionUri, { routes, sendNow }, images);
+  const panels = new Panels(
+    store,
+    ctx.extensionUri,
+    { routes, sendNow, locked: () => (store.lockedNote ? 'Your checklists are in the Claude Code mod now, so this one is read-only here.' : undefined) },
+    images
+  );
   panelsRef = panels;
   // VS Code reopens checklist tabs that were open when the window closed or reloaded.
   ctx.subscriptions.push(
@@ -701,24 +706,37 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const project = folders[0];
   const MOD_INSTALL = '/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge';
   // This window gave its checklists to the mod. Folderless windows get a new id each start, so they share one key.
-  const handedKey = `handedToMod:${windowId.startsWith('empty-') ? 'empty' : windowId}`;
-  const handedAtKey = `handedAt:${windowId}`; // each handed-over checklist's updatedAt, to tell if the mod changed it
-  const setModMode = (on: boolean) => vscode.commands.executeCommand('setContext', 'checklistBridge.modMode', on);
+  const windowKey = windowId.startsWith('empty-') ? 'empty' : windowId;
+  const handedKey = `handedToMod:${windowKey}`;
+  const handedAtKey = `handedAt:${windowKey}`; // each handed-over checklist's updatedAt, to tell if the mod changed it
+  // While the mod has the checklists, this window changes none of them: chats still connected to it get
+  // this instead, and its panels say so (see panels.ts). Otherwise their changes would be lost on the way back.
+  const lock = (on: boolean) => {
+    store.lockedNote = on
+      ? 'The user switched Checklist Bridge to its Claude Code mod, so this checklist is read-only here. ' +
+        'Put the steps or the question in your reply instead; in a new chat Claude uses the mod\'s checklist.'
+      : undefined;
+    vscode.commands.executeCommand('setContext', 'checklistBridge.modMode', on);
+    panels.refreshAll();
+  };
   const handOver = async () => {
     let n = 0;
     const handedAt: Record<string, number> = {};
     if (project) {
-      try {
-        const lists = store.all().filter((c) => !c.closed && !c.sessionId.startsWith('demo-'));
-        n = exportLists(ROOT, project, lists, (id, img) => images.load(id, img));
-        for (const c of lists) handedAt[c.id] = c.updatedAt;
-      } catch (e) {
-        log(`Could not hand the checklists to the Claude Code mod: ${e}`);
+      const lists = store.all().filter((c) => !c.closed && !c.sessionId.startsWith('demo-'));
+      // What was typed in a panel a moment ago goes along too (the panel holds typing back briefly).
+      await Promise.all(lists.map((c) => panels.flush(c.id)));
+      const r = exportLists(ROOT, project, lists, images);
+      n = r.written;
+      for (const c of lists) handedAt[c.id] = c.updatedAt;
+      if (r.failed.length) {
+        log(`Could not hand these checklists to the Claude Code mod: ${r.failed.join(', ')}`);
+        vscode.window.showWarningMessage(`Checklist Bridge could not move ${r.failed.length === 1 ? `"${r.failed[0]}"` : `${r.failed.length} checklists`} to the Claude Code mod. They stay here in VS Code.`);
       }
     }
     await ctx.globalState.update(handedKey, true);
     await ctx.globalState.update(handedAtKey, handedAt);
-    setModMode(true);
+    lock(true);
     if (registeredInConfig(connectorPath)) {
       const claude = await findClaude(process.env, undefined, claudePath(), bundledIn());
       if (claude) await withLock(connectLock, () => disconnect(claude));
@@ -733,7 +751,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       const { lists, ids } = importLists(ROOT, project);
       const handedAt = ctx.globalState.get<Record<string, number>>(handedAtKey) ?? {};
       for (const c of lists) {
-        // Not changed in the mod since we handed it over: keep ours, which may have changed here since.
+        // Not changed in the mod since we handed it over: ours is the same (it was read-only here), so keep it.
         if (store.get(c.id) && handedAt[c.id] !== undefined && c.updatedAt <= handedAt[c.id]) continue;
         owners.claim(c.id);
         store.replace(c);
@@ -742,7 +760,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
       markMoved(ROOT, project, ids);
       reopenTabs(lists.map((c) => store.get(c.id)!));
     }
-    setModMode(false);
+    lock(false);
     await ctx.globalState.update(handedAtKey, undefined);
     if (ctx.globalState.get(handedKey) || n) {
       await ctx.globalState.update(handedKey, false);
@@ -758,7 +776,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     try {
       const use = readUse(ROOT);
       if (use === 'mod') {
-        if (ctx.globalState.get(handedKey)) return void setModMode(true);
+        if (ctx.globalState.get(handedKey)) return void lock(true);
         const n = await handOver();
         // Not awaited: while it waits for the user, this window must still follow the next switch.
         vscode.window

@@ -1,36 +1,49 @@
 // The mod's checklists: the shared ChecklistStore (lib/model.ts) plus what the hooks need around it.
 // No `$` here: a mod's engine calls are made in the hooks themselves (register.tsx). This file says
-// what to save and what to show; the hooks do the saving and showing.
+// what to load, save and show; the hooks do the reading, writing and showing.
 //
-// Checklists are saved one JSON file each in the shared folder for this project (lib/handover.ts).
-// A mod can't rename or delete files, so a save writes `<id>.json.bak` and then `<id>.json`; if the
-// second write is cut short, loading falls back to the backup.
-import { join, listIds, parseList, sharedDir, type Use } from './lib/handover'
+// The files are the truth, not this copy. Other chats in the same folder, and the VS Code extension when
+// the user switches, change them too, so before every change the hooks read the folder again (sync) and
+// after it they write what changed (pending, saved). A copy is kept over the file only while it has a
+// change of its own that isn't saved yet.
+//
+// One JSON file per checklist, in the shared folder for this project (lib/handover.ts). A mod can't rename
+// or delete files, so a save writes `<id>.json.bak` and then `<id>.json`; if the second write is cut short,
+// loading falls back to the backup.
+import { absolutePath, join, listIds, parseList, sharedDir, type Use } from './lib/handover'
 import { ChecklistStore, type Checklist } from './lib/model'
 
-/** `~/.checklist-bridge`, the same folder the extension uses. On Windows, USERPROFILE is what Node's os.homedir() uses. */
-export const rootFrom = (env: { own?: string; userProfile?: string; home?: string }) =>
-  env.own || join(env.userProfile || env.home || '.', '.checklist-bridge')
+export type Paths = { own?: string; userProfile?: string; home?: string }
+
+/** The user's home folder. On Windows, USERPROFILE is what Node's os.homedir() uses. */
+export const homeFrom = (env: Paths) => env.userProfile || env.home || '.'
+/** `~/.checklist-bridge`, the same folder the extension uses. */
+export const rootFrom = (env: Paths) => env.own || join(homeFrom(env), '.checklist-bridge')
 
 /** The files to read for a folder listing, each with its backup. */
 export const filesToLoad = (dir: string, names: string[]) =>
-  listIds(names).map(id => ({ main: join(dir, `${id}.json`), bak: join(dir, `${id}.json.bak`) }))
+  listIds(names).map(id => ({ id, main: join(dir, `${id}.json`), bak: join(dir, `${id}.json.bak`) }))
+
+/** One checklist file as read: its text and its backup's. */
+export type Loaded = { id: string; main?: string; bak?: string }
+
+/** What one save writes, in order, and the version it saves. */
+export type Pending = { id: string; at: number; writes: [string, string][] }
 
 export class App {
-  readonly store: ChecklistStore
+  readonly store = new ChecklistStore()
   readonly dir: string
+  /** Changed here, not saved yet. */
   private dirty = new Set<string>()
+  /** The version (updatedAt) of each checklist as last read from or written to its file. */
+  private known = new Map<string, number>()
 
   constructor(
     readonly root: string,
+    readonly home: string,
     readonly folder: string,
     public use: Use | undefined,
-    loaded: (string | undefined)[][],
   ) {
-    // Through the constructor, not adopt(): adopt counts as a change and would make every checklist look
-    // updated just now (in /checklist list, and to the extension when it takes them back).
-    const lists = loaded.map(([main, bak]) => parseList(main) ?? parseList(bak)).filter((c): c is Checklist => !!c)
-    this.store = new ChecklistStore(lists)
     this.store.host = 'mod'
     this.dir = sharedDir(root, folder)
   }
@@ -38,6 +51,35 @@ export class App {
   /** On unless the user switched to the VS Code extension. */
   get isOn() {
     return this.use !== 'extension'
+  }
+
+  /**
+   * Takes in the folder as it is on disk. A checklist whose file changed since we last read or wrote it is
+   * replaced by the file's version, unless ours has a newer change not saved yet. One whose file is gone
+   * (taken back by VS Code) is dropped. Returns whether anything changed.
+   */
+  sync(files: Loaded[]): boolean {
+    let changed = false
+    const onDisk = new Set<string>()
+    for (const f of files) {
+      const c = parseList(f.main) ?? parseList(f.bak)
+      if (!c) continue
+      onDisk.add(c.id)
+      const mine = this.store.get(c.id)
+      if (mine && this.known.get(c.id) === c.updatedAt) continue // unchanged on disk: keep ours, with any typing
+      if (mine && this.dirty.has(c.id) && mine.updatedAt > c.updatedAt) continue // ours is newer and still to be saved
+      this.store.replace(c)
+      this.known.set(c.id, c.updatedAt)
+      this.dirty.delete(c.id)
+      changed = true
+    }
+    for (const c of this.store.all())
+      if (!onDisk.has(c.id) && this.known.has(c.id) && !this.dirty.has(c.id)) {
+        this.store.forget(c.id)
+        this.known.delete(c.id)
+        changed = true
+      }
+    return changed
   }
 
   current(sid: string): Checklist | undefined {
@@ -64,24 +106,39 @@ export class App {
     return imgs.some(i => i.path === file)
   }
 
-  /** Marks a checklist as changed; the next flush() saves it. */
+  /** A screenshot path the user typed, made absolute so Claude and VS Code can open it from anywhere. */
+  addShot(listId: string, itemId: string, typed: string): boolean {
+    return this.store.addImagePath(listId, itemId, absolutePath(typed, this.home, this.folder))
+  }
+
+  /** Marks a checklist as changed; the next save writes it. */
   touch(c: Checklist | undefined) {
     if (!c) return
-    c.updatedAt = Date.now()
+    c.updatedAt = Math.max(Date.now(), c.updatedAt + 1) // always newer than the file it came from
     this.dirty.add(c.id)
   }
 
-  /** The writes that save every changed checklist, in order: [path, text]. */
-  flush(): [string, string][] {
-    const out: [string, string][] = []
+  /** The saves to make: every changed checklist. Each stays changed until saved() says it was written. */
+  pending(): Pending[] {
+    const out: Pending[] = []
     for (const id of this.dirty) {
       const c = this.store.get(id)
       if (!c) continue
       const text = JSON.stringify(c)
-      out.push([join(this.dir, `${id}.json.bak`), text], [join(this.dir, `${id}.json`), text])
+      out.push({ id, at: c.updatedAt, writes: [[join(this.dir, `${id}.json.bak`), text], [join(this.dir, `${id}.json`), text]] })
     }
-    this.dirty.clear()
     return out
+  }
+
+  /** A save was written. If the checklist changed again meanwhile, it stays to be saved. */
+  saved(p: Pending) {
+    this.known.set(p.id, p.at)
+    if (this.store.get(p.id)?.updatedAt === p.at) this.dirty.delete(p.id)
+  }
+
+  /** Whether some change is still not saved (a write failed). */
+  get unsaved() {
+    return this.dirty.size > 0
   }
 
   /** The line under the prompt while something waits on the user or for Send now. */
@@ -90,7 +147,7 @@ export class App {
     if (!c) return undefined
     const left = c.tasks.filter(t => !t.shared).length + c.questions.filter(q => !q.answer && !q.retired).length
     const fresh = this.store.updateSummary(c, 'line').ids.length
-    const parts = [left && `${left} on your checklist`, fresh && `${fresh} shared, not sent`].filter(Boolean)
+    const parts = [left && `${left} on your checklist`, fresh && `${fresh} shared, not sent`, this.unsaved && 'not saved yet'].filter(Boolean)
     return parts.length ? `${parts.join(', ')} (/checklist)` : undefined
   }
 

@@ -5,7 +5,9 @@
 // Only one of the two is on at a time. `<root>/mode.json` says which. The mod keeps its checklists in
 // `<root>/mod/<folder key>/<id>.json`, one folder per project, and that is also where the extension
 // hands its checklists over: when switching to the mod it writes them there, and when switching back
-// it takes them in and renames the files to `<id>.json.moved`.
+// it takes them in and renames the files to `<id>.json.moved`. While the mod has them, the extension's own
+// copies are read-only, and the mod reads the folder again before every change, so neither side's older
+// copy can be saved over the other's newer one.
 //
 // The mod can only write text files, so in the shared folder a screenshot is a path to an image file.
 import { normalize, type Checklist, type Img } from './model';
@@ -33,13 +35,13 @@ function fnv(s: string): string {
 
 /**
  * The shared folder's name for a project folder: readable, and the same from VS Code and from Claude.
- * Windows paths are compared without case and with either slash.
+ * Paths are compared with either slash and without case: Windows and macOS disks ignore case, and the
+ * two sides may spell the same folder differently (VS Code's path, the terminal's `cd`).
  */
 export function folderKey(folder: string): string {
-  let p = folder.trim().replace(/\\/g, '/');
+  let p = folder.trim().replace(/\\/g, '/').toLowerCase();
   if (p.length > 1) p = p.replace(/\/+$/, '');
-  if (/^[A-Za-z]:/.test(p) || p.startsWith('//')) p = p.toLowerCase();
-  const name = (p.split('/').filter(Boolean).pop() ?? '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[.-]+|-+$/g, '').slice(0, 40);
+  const name = (p.split('/').filter(Boolean).pop() ?? '').replace(/[^a-z0-9._-]+/g, '-').replace(/^[.-]+|-+$/g, '').slice(0, 40);
   return `${name || 'folder'}-${fnv(p)}`;
 }
 
@@ -51,9 +53,24 @@ export const modeFile = (root: string) => join(root, 'mode.json');
 export const sharedDir = (root: string, folder: string) => join(root, 'mod', folderKey(folder));
 export const imagesDir = (root: string) => join(root, 'mod', 'images');
 
-/** The checklist ids in a shared folder listing: `<id>.json` files, not the `.bak` or `.moved` ones. */
+/**
+ * The checklist ids in a shared folder listing: every `<id>.json`, and every `<id>.json.bak` without one
+ * (a first save cut short after the backup). Not the `.moved` ones.
+ */
 export function listIds(names: string[]): string[] {
-  return names.filter((n) => /^[A-Za-z0-9-]+\.json$/.test(n)).map((n) => n.slice(0, -5));
+  const ids = names.map((n) => /^([A-Za-z0-9-]+)\.json(?:\.bak)?$/.exec(n)?.[1]).filter((id): id is string => !!id);
+  return [...new Set(ids)];
+}
+
+/**
+ * A screenshot path as the user typed it, made absolute: `~/…` is under `home`, a relative path is
+ * under `cwd`. Quotes around it (from a drag and drop) are dropped.
+ */
+export function absolutePath(typed: string, home: string, cwd: string): string {
+  const p = typed.trim().replace(/^["']|["']$/g, '');
+  if (/^~(?=$|[\\/])/.test(p)) return join(home, p.slice(1));
+  if (/^([\\/]|[A-Za-z]:[\\/])/.test(p)) return p;
+  return join(cwd, p.replace(/^\.[\\/]/, ''));
 }
 
 /** Reads a checklist file, or undefined if it isn't one. */

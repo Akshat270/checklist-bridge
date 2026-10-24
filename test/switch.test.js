@@ -115,19 +115,21 @@ function seed(sb) {
     W.send({ cmd: 'quit' }); await W.exited;
   }
 
-  // ---- what the user does in VS Code after switching is kept, if the mod didn't change that checklist
+  // ---- after handing over, the checklists are read-only in VS Code, so nothing done here can be lost
   {
     const sb4 = sandbox();
     const id4 = seed(sb4);
     W = win(sb4); await W.ready; await sleep(2500);
     await cmd(W, 'checklistBridge.useMod'); await sleep(500);
     await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'shared in VS Code' });
+    check(notes(W).some((n) => /in the Claude Code mod now, so this one is read-only here/.test(n)), 'an edit in VS Code after handing over is refused, and the user is told why');
     fs.writeFileSync(path.join(sb4.cb, 'mode.json'), H.modeText('extension'));
     W.send({ cmd: 'focus' }); await sleep(2500);
     check(sb4.registered(), 'switched back while the window was open');
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'shared after coming back' });
     W.send({ cmd: 'quit' }); await W.exited;
     const kept = JSON.parse(fs.readFileSync(path.join(sb4.storage, 'checklists', `${id4}.json`), 'utf8'));
-    check(kept.tasks[1].shared?.note === 'shared in VS Code', 'switching back does not undo what was done in VS Code meanwhile');
+    check(kept.tasks[1].shared?.note === 'shared after coming back', 'once back, the checklist can be edited in VS Code again');
   }
 
   // ---- switching back while VS Code is closed: no "the connection was removed" question

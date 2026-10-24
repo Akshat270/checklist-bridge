@@ -398,6 +398,12 @@ export class ChecklistStore {
   /** Who runs this store. The mod gets results worded for it (see forMod). */
   host: 'extension' | 'mod' = 'extension';
 
+  /**
+   * Set while the checklists are with the Claude Code mod: Claude's tool calls change nothing and get this
+   * text instead, so a chat still connected to the extension can't edit copies the mod now owns.
+   */
+  lockedNote: string | undefined;
+
   constructor(initial: Checklist[] = []) {
     for (const c of initial) this.lists.set(c.id, normalize(c));
   }
@@ -417,6 +423,11 @@ export class ChecklistStore {
     this.lists.set(n.id, n);
     this.emit({ checklist: n, kind: 'updated' });
     return n;
+  }
+
+  /** Drop a checklist that is no longer ours (the mod: its file left this folder). Not a change: nothing is told. */
+  forget(listId: string) {
+    this.lists.delete(listId);
   }
 
   onChange(fn: (e: ChangeEvent) => void) {
@@ -682,6 +693,7 @@ export class ChecklistStore {
 
   /** Anything still waiting on the user (so waiting makes sense). */
   hasPending(sessionId: string): boolean {
+    if (this.lockedNote) return false;
     const c = this.forSession(sessionId);
     return !!c && !c.closed && (c.tasks.some((t) => !t.shared) || c.questions.some((q) => !q.answer && !q.retired));
   }
@@ -732,6 +744,7 @@ export class ChecklistStore {
   /* ---------- tools (Claude) ---------- */
 
   handleTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
+    if (this.lockedNote) return ok(this.lockedNote);
     try {
       const res = this.runTool(sessionId, meta, name, args);
       // Every result tells Claude the user is away, not just the ones that read the checklist. (A read puts it first.)

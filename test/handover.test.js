@@ -21,7 +21,12 @@ check(H.folderKey('/home/a/proj') !== H.folderKey('/home/b/proj'), 'two folders 
 check(/^my-app-[0-9a-f]{8}$/.test(H.folderKey('C:\\Work\\My App')), 'the key starts with the folder name: ' + H.folderKey('C:\\Work\\My App'));
 check(/^folder-[0-9a-f]{8}$/.test(H.folderKey('/')) && !/[\\/:]/.test(H.folderKey('D:\\')), 'a root folder still gets a safe key');
 check(H.join('/home/u/.checklist-bridge/', 'mod', 'x') === '/home/u/.checklist-bridge/mod/x' && H.join('C:\\Users\\u\\.cb', 'mode.json') === 'C:\\Users\\u\\.cb/mode.json', 'join');
-check(JSON.stringify(H.listIds(['a1.json', 'a1.json.bak', 'b2.json.moved', 'x.txt', '../evil.json'])) === '["a1"]', 'only <id>.json files are checklists');
+check(JSON.stringify(H.listIds(['a1.json', 'a1.json.bak', 'b2.json.moved', 'b2.json.bak.moved', 'x.txt', '../evil.json'])) === '["a1"]', 'checklists are <id>.json files, each once; .moved and other files are not');
+check(JSON.stringify(H.listIds(['c3.json.bak'])) === '["c3"]', 'a checklist whose first save stopped after its backup is still found');
+check(H.folderKey('/Users/me/Projects/MyApp') === H.folderKey('/users/me/projects/myapp'), 'macOS: the same folder spelled with other capitals gets the same key');
+check(H.absolutePath('~/Desktop/a.png', '/home/u', '/work/p') === '/home/u/Desktop/a.png', 'a ~ screenshot path is under the home folder');
+check(H.absolutePath('shots/a.png', '/home/u', '/work/p') === '/work/p/shots/a.png' && H.absolutePath('./a.png', '/home/u', '/work/p') === '/work/p/a.png', 'a relative path is under the project folder');
+check(H.absolutePath('"/tmp/my shot.png"', '/h', '/w') === '/tmp/my shot.png' && H.absolutePath('C:\\Users\\u\\a.png', '/h', '/w') === 'C:\\Users\\u\\a.png', 'an absolute path stays as it is, without the quotes');
 
 /* ---------- hand over and back */
 const ext = new ChecklistStore();
@@ -59,6 +64,16 @@ check(!/VS Code/.test(said.replace('"Try it in VS Code"', '')), 'but drops ours'
 const back = H.fromShared(mod.get(c.id), (p) => files[p]);
 check(back.tasks[0].shared.images[0].data === 'aGVsbG8=', 'screenshots come back with their data');
 check(back.tasks[1].draft.images.length === 0, 'a screenshot whose file is gone is left out');
+
+/* ---------- read-only while the mod has the checklists */
+const locked = new ChecklistStore();
+locked.handleTool('s9', { cwd: '/w' }, 'checklist_add_tasks', { tasks: [{ text: 'One' }] });
+locked.lockedNote = 'read-only here';
+const lr = locked.handleTool('s9', {}, 'checklist_add_tasks', { tasks: [{ text: 'Two' }] });
+check(text(lr) === 'read-only here' && locked.forSession('s9').tasks.length === 1, 'a locked store tells Claude why and changes nothing');
+check(!locked.hasPending('s9'), 'and has nothing for checklist_wait to wait for');
+locked.lockedNote = undefined;
+check(locked.forSession('s9').tasks.length === 1 && !text(locked.handleTool('s9', {}, 'checklist_read', {})).includes('read-only'), 'unlocked, it works again');
 
 /* ---------- the mod's wording */
 check(!MOD_TOOLS.some((t) => t.name === 'checklist_wait') && MOD_TOOLS.length === TOOLS.length - 1, 'the mod has every tool but checklist_wait');
