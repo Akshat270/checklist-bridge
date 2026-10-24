@@ -144,6 +144,20 @@ export class App {
     return imgs.some(i => i.path === file)
   }
 
+  /**
+   * Makes an earlier checklist this chat's own: one VS Code handed over (it names its chats differently, so
+   * none matches), or another chat's. Returns why not, if it can't.
+   */
+  takeOver(listId: string, sid: string): string | undefined {
+    const c = this.current(sid)
+    if (c) return `This chat already has the checklist "${c.title}".`
+    const pick = this.store.get(listId)
+    if (!pick || pick.closed) return 'That checklist was moved or closed.'
+    pick.sessionId = sid // the chat it came from no longer has it: its next checklist call reads this from disk
+    this.touch(pick)
+    return undefined
+  }
+
   /** A screenshot path the user typed, made absolute so Claude and VS Code can open it from anywhere. */
   addShot(listId: string, itemId: string, typed: string): boolean {
     return this.store.addImagePath(listId, itemId, absolutePath(typed, this.home, this.folder))

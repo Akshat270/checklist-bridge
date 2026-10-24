@@ -109,10 +109,18 @@ export const register: Register = (on, options) => {
       toolsRegistered = true
     }
 
-    // Every half minute: take in what other chats or VS Code changed, count down an away, and end it when
-    // its time is up (Claude already stops treating the user as away then; this clears the pane and saves).
-    $.clock.every(30_000, async () => {
-      const changed = await disk!.load()
+    // Every few seconds: follow a switch made in VS Code, take in what other chats or VS Code changed, count
+    // down an away, and end it when its time is up (Claude already stops treating the user as away then; this
+    // clears the pane and saves). Files that didn't change are not read again, so this stays cheap.
+    $.clock.every(3_000, async () => {
+      const wasOn = a.isOn
+      const changed = (await disk!.load()) || a.isOn !== wasOn
+      if (a.isOn && !toolsRegistered) {
+        // Switched to the mod from VS Code while this chat was open: Claude gets its checklist tools now.
+        for (const t of MOD_TOOLS)
+          await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
+        toolsRegistered = true
+      }
       const c = a.isOn ? a.current(await $.session.id()) : undefined
       if (c?.awayUntil && c.awayUntil <= Date.now() && a.store.endAway(c.id)) {
         a.touch(c)
@@ -200,8 +208,8 @@ export const register: Register = (on, options) => {
       }
       void $.ui.open({ id: PANE, title: 'Checklist' })
       out =
-        'Checklist Bridge now runs here in Claude Code. If the VS Code extension is still connected, open VS Code and run ' +
-        '"Checklist Bridge: Use the Claude Code mod instead" so Claude only sees one checklist.'
+        'Checklist Bridge now runs here in Claude Code. If VS Code is open, it moves its checklists here in a few seconds: ' +
+        'press "Continue here" on the one you want in the checklist pane.'
     } else if (!a.isOn) {
       out = OFF_FOR_USER
     } else if (sub === 'use-extension') {
@@ -239,13 +247,10 @@ export const register: Register = (on, options) => {
             .map((o, i) => `${i + 1}. ${o.title}: ${o.tasks.filter(t => !t.shared).length} tasks waiting (${new Date(o.updatedAt).toLocaleString()})`)
             .join('\n') + '\n\nRun /checklist continue N to make one this chat\'s checklist.'
       else if (!pick) out = 'Run /checklist list, then /checklist continue with the number of the one you want.'
-      else if (c) out = `This chat already has the checklist "${c.title}".`
       else {
-        // The chat it came from no longer has it: its next checklist call reads this from disk.
-        pick.sessionId = sid
-        a.touch(pick)
-        void $.ui.open({ id: PANE, title: 'Checklist' })
-        out = `"${pick.title}" is this chat's checklist now. Claude sees it the next time it reads the checklist.`
+        const refused = a.takeOver(pick.id, sid)
+        if (!refused) void $.ui.open({ id: PANE, title: 'Checklist' })
+        out = refused ?? `"${pick.title}" is this chat's checklist now. Claude sees it the next time it reads the checklist.`
       }
     } else if (sub === '' || sub === 'open') {
       const { isPlaced } = await $.ui.open({ id: PANE, title: 'Checklist' })
@@ -322,6 +327,16 @@ export const register: Register = (on, options) => {
       },
       open: async taskId => {
         await update($, openTask, () => taskId)
+      },
+      continueHere: async listId => {
+        await d.load()
+        if (!a.isOn) return void $.ui.toast(OFF_FOR_USER)
+        const refused = a.takeOver(listId, sid)
+        if (refused) {
+          await update($, rev, n => n + 1)
+          return void $.ui.toast(refused)
+        }
+        await done()
       },
       toggleShared: async () => {
         await update($, showShared, v => !v)

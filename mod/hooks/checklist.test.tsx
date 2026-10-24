@@ -1,6 +1,8 @@
 // Run with `claude plugin test mod`. The hooks `on` registers here stand for Claude Code beneath the mod:
 // an in-memory file system, the environment, the session id, and records of what the mod showed and sent.
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
+import { sharedDir } from './lib/handover'
+import { ChecklistStore } from './lib/model'
 import { palette } from './theme'
 
 const ROOT = '/home/u/.checklist-bridge'
@@ -506,4 +508,44 @@ test('a change that could not be saved is dropped once VS Code has the checklist
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'chat-1' } as any)
   expect(disk.writes).toBe(writes)
   expect(Object.keys(files).some(f => /\/mod\/my-app-/.test(f))).toBe(false)
+})
+
+/** A checklist as VS Code hands it over: named after its chat process, so no mod chat's id matches it. */
+function fromVSCode(files: Record<string, string>, title: string) {
+  const s = new ChecklistStore()
+  s.handleTool('4242-/work/My App', { cwd: CWD }, 'checklist_add_tasks', { title, tasks: [{ text: 'Set the key' }] })
+  const c = s.forSession('4242-/work/My App')!
+  files[`${sharedDir(ROOT, CWD)}/${c.id}.json`] = JSON.stringify(c)
+  return c.id
+}
+
+test('a checklist VS Code handed over is picked up from the empty pane with Continue here', async ($, on) => {
+  const files: Record<string, string> = { [`${ROOT}/mode.json`]: JSON.stringify({ use: 'mod', at: 1 }) }
+  world(on, files)
+  const id = fromVSCode(files, 'From VS Code')
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /No checklist in this chat yet/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'From VS Code' })).toBeDefined()
+  await ui.press({ key: `continue-${id}` })
+  expect(await ui.find({ type: 'Text', text: /No checklist in this chat yet/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Set the key' })).toBeDefined()
+  await ui.unmount()
+  expect(JSON.parse(files[`${sharedDir(ROOT, CWD)}/${id}.json`]!).sessionId).toBe('chat-1')
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/Checklist "From VS Code"/)
+})
+
+test('switching to the mod in VS Code while a chat is open gives Claude the tools within seconds', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  const files: Record<string, string> = { [`${ROOT}/mode.json`]: JSON.stringify({ use: 'extension', at: 1 }) }
+  const { seen } = world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect(seen.tools).toEqual([])
+  files[`${ROOT}/mode.json`] = JSON.stringify({ use: 'mod', at: 2 })
+  fromVSCode(files, 'From VS Code')
+  await clock.advance(3_000)
+  expect(seen.tools).toContain(`checklist_add_tasks`)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'From VS Code' })).toBeDefined()
+  await ui.unmount()
 })

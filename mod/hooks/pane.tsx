@@ -41,6 +41,8 @@ export type Actions = {
   /** Opens this task's card (the others fold to one line). */
   open: (taskId: string) => Promise<void>
   toggleShared: () => Promise<void>
+  /** Makes an earlier checklist in this folder (one from VS Code, or another chat's) this chat's. */
+  continueHere: (listId: string) => Promise<void>
   /** Shows or hides the ☾ Away time choices. */
   toggleAwayPicker: () => Promise<void>
 }
@@ -202,21 +204,46 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     )
 
   const c = app.current(sid)
-  if (!c)
+  if (!c) {
+    // Checklists VS Code handed over, and other chats' open ones: one press makes one this chat's.
+    const earlier = app.others(sid).slice(0, 5)
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text bold color={P.title}>
           No checklist in this chat yet
         </Text>
         <Text color={P.dim}>When Claude needs you to do something by hand or make a decision, it shows up here.</Text>
-        {app.others(sid).length > 0 && (
-          <Text>
-            <Text color={P.dim}>To pick up an earlier one, type </Text>
-            <Text color={P.cyan}>/checklist list</Text>
-          </Text>
+        {earlier.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text color={P.text}>{earlier.length === 1 ? 'Pick up the checklist from this folder:' : 'Pick up a checklist from this folder:'}</Text>
+            {earlier.map((o, i) => {
+              const left = o.tasks.filter(t => !t.shared).length + o.questions.filter(q => !q.answer && !q.retired).length
+              return (
+                <Box flexDirection="row" columnGap={2} marginTop={1}>
+                  <Box flexShrink={0}>
+                    {filled({
+                      key: `continue-${o.id}`,
+                      label: 'Continue here',
+                      bg: P.cyan,
+                      hotkey: String(i + 1),
+                      autoFocus: i === 0,
+                      onPress: () => act.continueHere(o.id),
+                    })}
+                  </Box>
+                  <Text>
+                    <Text bold color={P.title}>
+                      {o.title}
+                    </Text>
+                    <Text color={P.dim}>{`  ${left} waiting on you`}</Text>
+                  </Text>
+                </Box>
+              )
+            })}
+          </Box>
         )}
       </Box>
     )
+  }
 
   /* ------------------------------------------------------------------ the checklist */
 
