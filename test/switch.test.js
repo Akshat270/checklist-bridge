@@ -123,13 +123,36 @@ function seed(sb) {
     await cmd(W, 'checklistBridge.useMod'); await sleep(500);
     await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'shared in VS Code' });
     check(notes(W).some((n) => /in the Claude Code mod now, so this one is read-only here/.test(n)), 'an edit in VS Code after handing over is refused, and the user is told why');
+    const lastState = () => W.msgs.filter((m) => m.state && m.title === 'Launch').at(-1)?.state;
+    check(/Claude Code mod/.test(lastState()?.locked || ''), 'the panel shows it is read-only, with a way to switch back');
+    const before = notes(W).length;
+    await user(W, 'Launch', { type: 'share', taskId: 't1', done: true, note: 'again' });
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'and again' });
+    check(notes(W).length === before, 'more edits while read-only do not pop up the same message again');
+    W.send({ cmd: 'command', name: 'checklistBridge.close', args: [id4] }); await sleep(300);
+    check(!W.msgs.some((m) => m.warn && /^Close /.test(m.warn)) && notes(W).some((n) => /Switch back to VS Code to close it/.test(n)), 'closing a read-only checklist is refused, not asked about');
     fs.writeFileSync(path.join(sb4.cb, 'mode.json'), H.modeText('extension'));
     W.send({ cmd: 'focus' }); await sleep(2500);
     check(sb4.registered(), 'switched back while the window was open');
+    check(!lastState()?.locked, 'and the panel can be used again');
     await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'shared after coming back' });
     W.send({ cmd: 'quit' }); await W.exited;
     const kept = JSON.parse(fs.readFileSync(path.join(sb4.storage, 'checklists', `${id4}.json`), 'utf8'));
     check(kept.tasks[1].shared?.note === 'shared after coming back', 'once back, the checklist can be edited in VS Code again');
+    check(!kept.closed, 'and the refused close did not close it');
+  }
+
+  // ---- a window with no folder open keeps its checklists: the mod works per folder, so it has nowhere to put them
+  {
+    const sb7 = sandbox();
+    sb7.env.CB_FOLDERLESS = '1';
+    seed(sb7);
+    W = win(sb7); await W.ready; await sleep(2500);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    check(notes(W).some((n) => /no folder open, so its checklists stay here/.test(n)), 'a window with no folder open says its checklists stay in VS Code');
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'still editable' });
+    check(!notes(W).some((n) => /read-only/.test(n)) && !W.msgs.some((m) => m.state?.locked), 'and they are not made read-only');
+    W.send({ cmd: 'quit' }); await W.exited;
   }
 
   // ---- switching back while VS Code is closed: no "the connection was removed" question

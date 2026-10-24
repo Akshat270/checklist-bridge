@@ -296,6 +296,14 @@ svg { display: block; flex: none; }
   animation: pulse 1.8s var(--ease) infinite; opacity: 0;
 }
 @keyframes pulse { 0% { transform: scale(.5); opacity: .7; } 100% { transform: scale(1.6); opacity: 0; } }
+/* Read-only while the checklists are with the Claude Code mod: the same quiet card as "waiting", with its way back. */
+.locked {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 14px 0 0; padding: 9px 12px;
+  border-radius: var(--r-m); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink); font-size: 13px;
+}
+.locked .btn { margin-left: auto; }
+
 
 /* ---------------- away ---------------- */
 .icon-btn { transition: background-color .15s ease, color .15s ease; }

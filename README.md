@@ -149,7 +149,7 @@ Use one or the other, not both. When you switch, your open checklists for that f
 - **From the mod to VS Code:** type `/checklist use-extension` in Claude Code, then open the folder in VS Code. The extension takes your checklists back and connects Claude again. You can also run *Checklist Bridge: Use this extension instead of the Claude Code mod* in VS Code.
 - `/checklist use-mod` switches back to the mod from Claude Code.
 
-While your checklists are in the mod, VS Code shows them read-only, so nothing done in two places at once can be lost. A checklist that moved over keeps its tasks, notes, answers and screenshots. Claude starts a new checklist in a new chat. Use `/checklist continue` in the mod to pick up an older one there.
+While your checklists are in the mod, VS Code shows them read-only, with a **Switch back to VS Code** button at the top, so nothing done in two places at once can be lost. The mod works per folder, so a VS Code window with no folder open keeps its checklists. A checklist that moved over keeps its tasks, notes, answers and screenshots. Claude starts a new checklist in a new chat. Use `/checklist continue` in the mod to pick up an older one there.
 
 ## Questions you can answer later
 

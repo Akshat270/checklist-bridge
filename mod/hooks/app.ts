@@ -20,12 +20,22 @@ export const homeFrom = (env: Paths) => env.userProfile || env.home || '.'
 /** `~/.checklist-bridge`, the same folder the extension uses. */
 export const rootFrom = (env: Paths) => env.own || join(homeFrom(env), '.checklist-bridge')
 
-/** The files to read for a folder listing, each with its backup. */
-export const filesToLoad = (dir: string, names: string[]) =>
-  listIds(names).map(id => ({ id, main: join(dir, `${id}.json`), bak: join(dir, `${id}.json.bak`) }))
+/** A file in the folder listing: its name and when it last changed. */
+export type Entry = { name: string; mtimeMs: number }
+/** A checklist file to read: its paths, its time, and when it was listed, to remember once it is read. */
+export type ToRead = { id: string; main: string; bak: string; mtime: number; at: number }
+/** One checklist file as read: its text (or, if that was missing or damaged, its backup's). */
+export type Loaded = { id: string; mtime: number; at: number; main?: string; bak?: string }
 
-/** One checklist file as read: its text and its backup's. */
-export type Loaded = { id: string; main?: string; bak?: string }
+/**
+ * A file read when it was already this old is not read again until its time changes. The margin covers disks
+ * that keep file times to the second or two (FAT, some network drives): a write right after a read could
+ * otherwise leave the time as it was.
+ */
+const SETTLED_MS = 5000
+
+/** Images are what Claude may open without asking (see isSharedShot). */
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 
 /** What one save writes, in order, and the version it saves. */
 export type Pending = { id: string; at: number; writes: [string, string][] }
@@ -37,6 +47,8 @@ export class App {
   private dirty = new Set<string>()
   /** The version (updatedAt) of each checklist as last read from or written to its file. */
   private known = new Map<string, number>()
+  /** Each checklist file's time when we last read it, and when that was: settled files are not read again. */
+  private readAt = new Map<string, { mtime: number; at: number }>()
 
   constructor(
     readonly root: string,
@@ -54,17 +66,36 @@ export class App {
   }
 
   /**
-   * Takes in the folder as it is on disk. A checklist whose file changed since we last read or wrote it is
-   * replaced by the file's version, unless ours has a newer change not saved yet. One whose file is gone
-   * (taken back by VS Code) is dropped. Returns whether anything changed.
+   * From a listing of the folder: the checklists in it, and the files of those to read because they are new
+   * or changed since we last read them. Every chat, a tool call or a press each, would otherwise read every
+   * checklist ever made in this folder.
    */
-  sync(files: Loaded[]): boolean {
+  plan(entries: Entry[], now = Date.now()): { present: string[]; read: ToRead[] } {
+    const mtime = new Map(entries.map(e => [e.name, e.mtimeMs]))
+    const present = listIds(entries.map(e => e.name))
+    const read: ToRead[] = []
+    for (const id of present) {
+      const at = mtime.get(`${id}.json`) ?? mtime.get(`${id}.json.bak`) ?? 0
+      const last = this.readAt.get(id)
+      if (at > 0 && last?.mtime === at && last.at - at > SETTLED_MS && this.store.get(id)) continue
+      read.push({ id, main: join(this.dir, `${id}.json`), bak: join(this.dir, `${id}.json.bak`), mtime: at, at: now })
+    }
+    return { present, read }
+  }
+
+  /**
+   * Takes in the folder as it is on disk: `present` the checklists in it, `files` those just read. A checklist
+   * whose file changed since we last read or wrote it is replaced by the file's version, unless ours has a
+   * newer change not saved yet. One whose file is gone (taken back by VS Code) is dropped. Returns whether
+   * anything changed.
+   */
+  sync(present: string[], files: Loaded[]): boolean {
     let changed = false
-    const onDisk = new Set<string>()
+    const onDisk = new Set(present)
     for (const f of files) {
       const c = parseList(f.main) ?? parseList(f.bak)
       if (!c) continue
-      onDisk.add(c.id)
+      this.readAt.set(f.id, { mtime: f.mtime, at: f.at })
       const mine = this.store.get(c.id)
       if (mine && this.known.get(c.id) === c.updatedAt) continue // unchanged on disk: keep ours, with any typing
       if (mine && this.dirty.has(c.id) && mine.updatedAt > c.updatedAt) continue // ours is newer and still to be saved
@@ -77,6 +108,7 @@ export class App {
       if (!onDisk.has(c.id) && this.known.has(c.id) && !this.dirty.has(c.id)) {
         this.store.forget(c.id)
         this.known.delete(c.id)
+        this.readAt.delete(c.id)
         changed = true
       }
     return changed
@@ -102,6 +134,8 @@ export class App {
   isSharedShot(sid: string, file: string): boolean {
     const c = this.current(sid)
     if (!c || !file) return false
+    // Only image files, whatever a checklist file says: it is plain JSON that something else could have edited.
+    if (!IMAGE.test(file)) return false
     const imgs = [...c.tasks.map(t => t.shared?.images ?? []), ...c.questions.map(q => q.answer?.images ?? [])].flat()
     return imgs.some(i => i.path === file)
   }

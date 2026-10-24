@@ -83,6 +83,34 @@ check(/in the user's VS Code/.test(SERVER_INSTRUCTIONS) && TOOLS.some((t) => t.n
 const asked = text(mod.handleTool('s2', {}, 'checklist_ask', { questions: [{ question: 'Name?', options: [{ label: 'A' }, { label: 'B' }] }] }));
 check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod: asking says to end the turn, not to wait');
 
+/* ---------- tidying the shared folders */
+{
+  const { tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cb-tidy-'));
+  const imgs = H.imagesDir(root), dir = H.sharedDir(root, '/w/app');
+  fs.mkdirSync(imgs, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const put = (p, text, ageMs) => {
+    fs.writeFileSync(p, text);
+    const t = (Date.now() - ageMs) / 1000;
+    fs.utimesSync(p, t, t);
+  };
+  const OLD = KEEP_MS + 60_000;
+  const used = path.join(imgs, 'used.png');
+  const list = { id: 'a1', title: 'x', sessionId: 's', tasks: [{ id: 't1', text: 'x', draft: { done: false, note: '', images: [] }, shared: { at: 1, done: true, note: '', images: [{ id: 'i', mime: 'image/png', w: 0, h: 0, path: used }] } }], questions: [], updatedAt: 1 };
+  put(path.join(dir, 'a1.json'), JSON.stringify(list), OLD);
+  put(used, 'PNG', OLD);
+  put(path.join(imgs, 'unused-old.png'), 'PNG', OLD);
+  put(path.join(imgs, 'unused-new.png'), 'PNG', 0);
+  put(path.join(dir, 'b2.json.moved'), '{}', OLD);
+  put(path.join(dir, 'c3.json.moved'), '{}', 0);
+  const n = tidyShared(root);
+  const has = (p) => fs.existsSync(p);
+  check(n === 2 && !has(path.join(imgs, 'unused-old.png')) && !has(path.join(dir, 'b2.json.moved')), 'tidy: deletes old .moved files and old screenshots no checklist uses');
+  check(has(used) && has(path.join(imgs, 'unused-new.png')) && has(path.join(dir, 'c3.json.moved')) && has(path.join(dir, 'a1.json')), 'tidy: keeps screenshots in use, recent files and the checklists');
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
 /* ---------- the mod's copies */
 for (const f of SHARED)
   check(fs.readFileSync(path.join(__ROOT, 'mod', 'hooks', 'lib', f), 'utf8').replace(/\r\n/g, '\n') === expected(f), `mod/hooks/lib/${f} matches src/${f} (run npm run build)`);

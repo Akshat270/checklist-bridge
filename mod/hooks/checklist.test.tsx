@@ -9,25 +9,30 @@ const T = 'mcp__checklist-bridge__'
 function world(on: any, files: Record<string, string> = {}) {
   const chat = { sid: 'chat-1' }
   // How many of the next writes fail (a file locked for a moment).
-  const disk = { failWrites: 0 }
+  // When each file last changed (a test can set one in the past), and how many times each was read.
+  const disk = { failWrites: 0, mtimes: {} as Record<string, number>, reads: {} as Record<string, number> }
   // What the clipboard holds for "Paste screenshot": 'image', 'text' or 'no-tool' (wl-paste/xclip missing).
   const clipboard = { holds: 'image' as 'image' | 'text' | 'no-tool', runs: [] as string[][] }
   const seen = { status: [] as (string | undefined)[], toasts: [] as string[], prompts: [] as string[], opened: 0, tools: [] as string[], copied: [] as string[] }
   on('env.get', (_: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
   on('fs.exists', (_: any, e: any) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(e.path + '/')) }))
-  on('fs.read', (_: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }))
+  on('fs.read', (_: any, e: any) => {
+    disk.reads[e.path] = (disk.reads[e.path] ?? 0) + 1
+    return e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }
+  })
   on('fs.write', (_: any, e: any) => {
     if (disk.failWrites > 0) {
       disk.failWrites--
       return { deny: 'EBUSY: the file is locked' }
     }
     files[e.path] = e.text
+    disk.mtimes[e.path] = Date.now()
     return { value: undefined }
   })
   on('fs.list', (_: any, e: any) => ({
     value: Object.keys(files)
       .filter(f => f.startsWith(e.path + '/') && !f.slice(e.path.length + 1).includes('/'))
-      .map(f => ({ name: f.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })),
+      .map(f => ({ name: f.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: disk.mtimes[f] ?? Date.now(), isLink: false })),
   }))
   on('process.run', (_: any, e: any) => {
     clipboard.runs.push([...e.argv])
@@ -412,4 +417,50 @@ test('a typed screenshot path is stored as a full path', async ($, on) => {
   const r = textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))
   expect(r).toContain('/home/u/Desktop/shot.png (open it with your Read tool)')
   expect(r).toContain(`${CWD}/shots/b.png (open it with your Read tool)`)
+})
+
+test('only image files are opened without asking, even if a checklist file names another', async ($, on) => {
+  const { files } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  // The pane takes only image paths, but the file is plain JSON that something else could edit.
+  const img = (path: string) => ({ id: path.slice(-6), mime: 'image/png', w: 0, h: 0, path })
+  elsewhere(files, c => (c.tasks[0].shared = { at: Date.now(), done: true, note: '', images: [img('/home/u/.ssh/id_rsa'), img('/home/u/shot.PNG')] }))
+  expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toContain('/home/u/.ssh/id_rsa')
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/home/u/.ssh/id_rsa' } })).decision).toBe('ask')
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/home/u/shot.PNG' } })).decision).toBe('allow')
+})
+
+test('settled checklist files are not read again, and a backup only when its file is damaged', async ($, on) => {
+  const { files, disk, chat } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Old', tasks: [{ text: 'One' }] } as any)
+  const old = listFile(files)
+  expect(disk.reads[`${old}.bak`] ?? 0).toBe(0)
+
+  // Another chat's checklist, last changed a minute ago: read once more, then left alone until it changes.
+  chat.sid = 'chat-2'
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  disk.mtimes[old] = Date.now() - 60_000
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'New', tasks: [{ text: 'Two' }] } as any)
+  const reads = disk.reads[old]
+  await $.tool.call({ tool: `${T}checklist_read` } as any)
+  await $.tool.call({ tool: `${T}checklist_read` } as any)
+  expect(disk.reads[old]).toBe(reads)
+
+  // Changed elsewhere: its time moves, so it is read again.
+  const c = JSON.parse(files[old]!)
+  c.title = 'Old, renamed'
+  c.updatedAt += 1000
+  files[old] = JSON.stringify(c)
+  disk.mtimes[old] = Date.now()
+  await $.tool.call({ tool: `${T}checklist_read` } as any)
+  expect(disk.reads[old]).toBe(reads + 1)
+  expect(disk.reads[`${old}.bak`] ?? 0).toBe(0)
+
+  // Damaged: then its backup is read.
+  files[old] = '{ cut short'
+  disk.mtimes[old] = Date.now() + 1
+  await $.tool.call({ tool: `${T}checklist_read` } as any)
+  expect(disk.reads[`${old}.bak`]).toBe(1)
 })

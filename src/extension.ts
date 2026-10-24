@@ -14,7 +14,7 @@ import { Ownership } from './ownership';
 import { userSetting } from './settings';
 import { addArgs, connect, disconnect, findClaude, findNode, needsRepair, registeredInConfig, withLock } from './claudeConnect';
 import { applySetup, claudeDir, isSetUp, refreshInstructions, removeSetup } from './claudeSetup';
-import { exportLists, hasShared, importLists, markMoved, readUse, writeUse } from './switcher';
+import { exportLists, hasShared, importLists, markMoved, readUse, tidyShared, writeUse } from './switcher';
 
 let ws: WindowServer | undefined;
 let windowId = '';
@@ -267,7 +267,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const awayTick = process.env.CHECKLIST_BRIDGE_TEST === '1' ? Number(process.env.CHECKLIST_BRIDGE_AWAY_TICK_MS) || 15_000 : 15_000;
   const awayTimer = setInterval(() => {
     try {
-      store.expireAway();
+      if (!store.lockedNote) store.expireAway(); // while the mod has the checklists, it ends their aways
     } catch (e) {
       log(`Could not end an away: ${e}`); // one bad listener must not stop the timer or crash the window
     }
@@ -454,6 +454,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('checklistBridge.close', async (arg) => {
       const c = resolve(arg);
       if (!c) return;
+      if (store.lockedNote) {
+        const pick = await vscode.window.showInformationMessage(
+          'Your checklists are in the Claude Code mod now, so this one is read-only here. Switch back to VS Code to close it.',
+          'Switch back to VS Code'
+        );
+        if (pick) vscode.commands.executeCommand('checklistBridge.useExtension');
+        return;
+      }
       await panels.flush(c.id); // an answer picked or typed a moment ago in its panel counts in what is still waiting
       const pick = await vscode.window.showWarningMessage(
         `Close "${c.title}"?`,
@@ -711,8 +719,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const handedAtKey = `handedAt:${windowKey}`; // each handed-over checklist's updatedAt, to tell if the mod changed it
   // While the mod has the checklists, this window changes none of them: chats still connected to it get
   // this instead, and its panels say so (see panels.ts). Otherwise their changes would be lost on the way back.
+  // A window with no folder open hands nothing over (the mod keeps checklists per folder), so it stays editable.
   const lock = (on: boolean) => {
-    store.lockedNote = on
+    store.lockedNote = on && project
       ? 'The user switched Checklist Bridge to its Claude Code mod, so this checklist is read-only here. ' +
         'Put the steps or the question in your reply instead; in a new chat Claude uses the mod\'s checklist.'
       : undefined;
@@ -733,6 +742,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
         log(`Could not hand these checklists to the Claude Code mod: ${r.failed.join(', ')}`);
         vscode.window.showWarningMessage(`Checklist Bridge could not move ${r.failed.length === 1 ? `"${r.failed[0]}"` : `${r.failed.length} checklists`} to the Claude Code mod. They stay here in VS Code.`);
       }
+    } else if (store.all().some((c) => !c.closed && !c.sessionId.startsWith('demo-'))) {
+      // The mod keeps checklists per folder, so a window with no folder open has nowhere to hand them. They
+      // stay here, and stay editable: nothing else has a copy.
+      vscode.window.showInformationMessage('This window has no folder open, so its checklists stay here in VS Code. Open the project folder to move them to the Claude Code mod.');
     }
     await ctx.globalState.update(handedKey, true);
     await ctx.globalState.update(handedAtKey, handedAt);
@@ -760,6 +773,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
       markMoved(ROOT, project, ids);
       reopenTabs(lists.map((c) => store.get(c.id)!));
     }
+    try {
+      const gone = tidyShared(ROOT);
+      if (gone) log(`Deleted ${gone} old file(s) the Claude Code mod no longer uses.`);
+    } catch (e) {
+      log(`Could not tidy the Claude Code mod's folder: ${e}`);
+    }
     lock(false);
     await ctx.globalState.update(handedAtKey, undefined);
     if (ctx.globalState.get(handedKey) || n) {
@@ -769,10 +788,19 @@ export async function activate(ctx: vscode.ExtensionContext) {
     if (n) vscode.window.showInformationMessage(`Your checklist${n === 1 ? ' is' : 's are'} back in VS Code from the Claude Code mod.`);
     return n;
   };
-  let following = false;
-  const followMode = async () => {
-    if (following) return;
-    following = true;
+  // One switch at a time. Closing a switch command's dialog gives the window focus, and a focus event while a
+  // switch is running or waiting must not start a second handover or take-back: it is dropped. The commands
+  // wait their turn.
+  let switching: Promise<unknown> = Promise.resolve();
+  let inLine = 0;
+  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+    inLine++;
+    const run = switching.then(work).finally(() => inLine--);
+    switching = run.catch(() => {});
+    return run;
+  };
+  const followMode = () => (inLine ? Promise.resolve() : oneAtATime(followModeNow));
+  async function followModeNow() {
     try {
       const use = readUse(ROOT);
       if (use === 'mod') {
@@ -794,10 +822,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
       }
     } catch (e) {
       log(`Could not switch between the extension and the Claude Code mod: ${e}`);
-    } finally {
-      following = false;
     }
-  };
+  }
   onFocus = () => void followMode();
   ctx.subscriptions.push(
     vscode.commands.registerCommand('checklistBridge.useMod', async () => {
@@ -812,9 +838,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
         'Switch'
       );
       if (pick !== 'Switch') return;
-      writeUse(ROOT, 'mod');
-      await ctx.globalState.update(handedKey, false);
-      const n = await handOver();
+      const n = await oneAtATime(async () => {
+        writeUse(ROOT, 'mod');
+        await ctx.globalState.update(handedKey, false);
+        return handOver();
+      });
       const p = await vscode.window.showInformationMessage(
         `Done${n ? `: ${n} checklist${n === 1 ? '' : 's'} moved` : ''}. In Claude Code, type ${MOD_INSTALL}, then start a new chat.`,
         'Copy the command'
@@ -822,9 +850,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
       if (p) await vscode.env.clipboard.writeText(MOD_INSTALL);
     }),
     vscode.commands.registerCommand('checklistBridge.useExtension', async () => {
-      writeUse(ROOT, 'extension');
-      await ctx.globalState.update(handedKey, true); // reconnect even if nothing comes back
-      await takeBack();
+      await oneAtATime(async () => {
+        writeUse(ROOT, 'extension');
+        await ctx.globalState.update(handedKey, true); // reconnect even if nothing comes back
+        await takeBack();
+      });
       vscode.window.showInformationMessage('Checklist Bridge runs in VS Code again. Start a new Claude chat to use it.');
     })
   );

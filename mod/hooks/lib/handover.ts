@@ -37,6 +37,8 @@ function fnv(s: string): string {
  * The shared folder's name for a project folder: readable, and the same from VS Code and from Claude.
  * Paths are compared with either slash and without case: Windows and macOS disks ignore case, and the
  * two sides may spell the same folder differently (VS Code's path, the terminal's `cd`).
+ * On Linux, where case matters, `/src/App` and `/src/app` share a folder: their checklists are kept apart by
+ * chat, so this only lists one project's earlier checklists under the other's /checklist list.
  */
 export function folderKey(folder: string): string {
   let p = folder.trim().replace(/\\/g, '/').toLowerCase();

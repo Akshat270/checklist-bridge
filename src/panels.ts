@@ -19,7 +19,9 @@ export interface PanelHooks {
 }
 
 /** Messages that only show or copy, and still work while the checklists are locked. */
-const READ_ONLY = new Set(['flushed', 'ready', 'copy', 'hide']);
+const READ_ONLY = new Set(['flushed', 'ready', 'copy', 'hide', 'unlock']);
+/** At most one "read-only" message this often, however many changes are turned down (typing sends several). */
+const LOCK_NOTICE_MS = 8000;
 
 export const VIEW_TYPE = 'checklistBridge.checklist';
 
@@ -56,7 +58,8 @@ export class Panels {
       // How long until the user's midnight, if the away ends after it: the panel says "tomorrow" until then, as Claude is told.
       if (c.awayMidnight) list.awayMidnightLeft = c.awayMidnight - Date.now();
     }
-    return { type: 'state', list, routes: this.hooks.routes(c) };
+    // While the checklists are with the Claude Code mod, the panel shows read-only and says why.
+    return { type: 'state', list, routes: this.hooks.routes(c), locked: this.hooks.locked?.() };
   }
 
   /** Re-send state to every visible panel (e.g. when how to reach a chat changes). */
@@ -167,6 +170,7 @@ export class Panels {
   }
 
   private flushing = new Map<string, () => void>();
+  private lockNoticeAt = 0;
   /**
    * Asks a checklist's panel to send what was typed or picked there and not saved yet, and waits for it (at most `ms`),
    * so the window counts it: the panel holds typing back for a moment before saving it. Done at once if no panel is open.
@@ -191,16 +195,23 @@ export class Panels {
     const s = this.store;
     const why = READ_ONLY.has(m?.type) ? undefined : this.hooks.locked?.();
     if (why) {
-      // Put the panel back as it was, and say why nothing changed.
+      // The panel shows read-only while locked, so this is a change already on its way when the lock came.
+      // Put the panel back as it was, and say why nothing changed (once, not for every keystroke's draft).
       const c = s.get(id);
       const p = this.open.get(id);
       if (c && p) p.webview.postMessage(this.state(c, p.webview));
-      vscode.window
-        .showInformationMessage(why, 'Switch back to VS Code')
-        .then((pick) => pick && vscode.commands.executeCommand('checklistBridge.useExtension'));
+      if (Date.now() - this.lockNoticeAt > LOCK_NOTICE_MS) {
+        this.lockNoticeAt = Date.now();
+        vscode.window
+          .showInformationMessage(why, 'Switch back to VS Code')
+          .then((pick) => pick && vscode.commands.executeCommand('checklistBridge.useExtension'));
+      }
       return;
     }
     switch (m?.type) {
+      case 'unlock':
+        vscode.commands.executeCommand('checklistBridge.useExtension');
+        break;
       case 'flushed': // everything held back was sent before this, and messages arrive in order: it is saved
         this.flushing.get(id)?.();
         break;

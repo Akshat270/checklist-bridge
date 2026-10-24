@@ -108,6 +108,73 @@ export function markMoved(root: string, folder: string, ids: string[]) {
     }
 }
 
+/** How long `.moved` files and screenshot copies no checklist uses are kept, in case they are wanted back. */
+export const KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Deletes what the shared folders no longer need: `.moved` files, and screenshots in `mod/images` that no
+ * checklist of the mod's names, once they are older than KEEP_MS. Screenshots elsewhere (paths the user
+ * typed) are never touched. Returns how many files it deleted.
+ */
+export function tidyShared(root: string, now = Date.now()): number {
+  const modDir = path.dirname(imagesDir(root));
+  const imgs = imagesDir(root);
+  const old = (p: string) => {
+    try {
+      return now - fs.statSync(p).mtimeMs > KEEP_MS;
+    } catch {
+      return false;
+    }
+  };
+  const list = (dir: string) => {
+    try {
+      return fs.readdirSync(dir);
+    } catch {
+      return [];
+    }
+  };
+  const gone = (p: string) => {
+    try {
+      fs.rmSync(p, { force: true });
+      return 1;
+    } catch {
+      return 0;
+    }
+  };
+  // Windows and macOS disks ignore case, and the two sides may spell the home folder differently.
+  const key = (p: string) => (process.platform === 'linux' ? path.resolve(p) : path.resolve(p).toLowerCase());
+  let n = 0;
+  const used = new Set<string>();
+  for (const name of list(modDir)) {
+    const dir = path.join(modDir, name);
+    if (path.resolve(dir) === path.resolve(imgs)) continue;
+    for (const f of list(dir)) {
+      const p = path.join(dir, f);
+      if (f.endsWith('.moved')) {
+        if (old(p)) n += gone(p);
+        continue;
+      }
+      if (!/\.json(\.bak)?$/.test(f)) continue;
+      let text: string | undefined;
+      try {
+        text = fs.readFileSync(p, 'utf8');
+      } catch {
+        // can't tell what it uses: keep every screenshot
+        return n;
+      }
+      const c = parseList(text);
+      if (!c) continue;
+      for (const t of c.tasks) for (const i of [...t.draft.images, ...(t.shared?.images ?? [])]) if (i.path) used.add(key(i.path));
+      for (const q of c.questions) for (const i of [...q.draft.images, ...(q.answer?.images ?? [])]) if (i.path) used.add(key(i.path));
+    }
+  }
+  for (const f of list(imgs)) {
+    const p = path.join(imgs, f);
+    if (!used.has(key(p)) && old(p)) n += gone(p);
+  }
+  return n;
+}
+
 /** Whether the mod has checklists for this project waiting to be taken in. */
 export function hasShared(root: string, folder: string): boolean {
   try {

@@ -1,11 +1,16 @@
 {
   "name": "checklist-bridge",
-  "owner": { "name": "Akshat270" },
+  "owner": {
+    "name": "Akshat270"
+  },
+  "metadata": {
+    "description": "Checklist Bridge for Claude Code: a checklist of the manual tasks and questions each chat needs from you."
+  },
   "plugins": [
     {
       "name": "checklist-bridge",
       "source": "./mod",
-      "description": "A checklist for every Claude Code chat, without VS Code."
+      "description": "A checklist for every Claude Code chat: Claude adds the manual tasks and decisions that need you, you tick them off and send them back. No VS Code needed."
     }
   ]
 }

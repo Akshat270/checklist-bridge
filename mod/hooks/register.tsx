@@ -11,10 +11,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import { App, filesToLoad, homeFrom, rootFrom, type Loaded } from './app'
+import { App, homeFrom, rootFrom, type Loaded } from './app'
 import { parseAway } from './away'
 import { noImage, pasteResult, pasteCommand, platformFrom, type Platform } from './clipboard'
-import { imagesDir, join, modeFile, modeText, parseMode } from './lib/handover'
+import { imagesDir, join, modeFile, modeText, parseList, parseMode } from './lib/handover'
 import { MOD_INSTRUCTIONS, MOD_TOOLS } from './lib/model'
 import { drawPane } from './pane'
 import { palette } from './theme'
@@ -62,16 +62,19 @@ export const register: Register = (on, options) => {
     const a = new App(rootFrom(paths), homeFrom(paths), e.cwd, undefined)
     app = a
     disk = {
-      // The mode and the folder as they are now. Returns whether any checklist changed.
+      // The mode and the folder as they are now: only files that changed since they were last read are read,
+      // and a backup only when its file is missing or damaged. Returns whether any checklist changed.
       load: async () => {
         a.use = parseMode(await $.fs.read(modeFile(a.root)).catch(() => undefined))
+        const entries = (await $.fs.exists(a.dir)) ? (await $.fs.list(a.dir)).filter(f => f.kind === 'file') : []
+        const { present, read } = a.plan(entries)
         const files: Loaded[] = []
-        if (await $.fs.exists(a.dir)) {
-          const names = (await $.fs.list(a.dir)).filter(f => f.kind === 'file').map(f => f.name)
-          for (const f of filesToLoad(a.dir, names))
-            files.push({ id: f.id, main: await $.fs.read(f.main).catch(() => undefined), bak: await $.fs.read(f.bak).catch(() => undefined) })
+        for (const f of read) {
+          const main = await $.fs.read(f.main).catch(() => undefined)
+          const bak = parseList(main) ? undefined : await $.fs.read(f.bak).catch(() => undefined)
+          files.push({ id: f.id, mtime: f.mtime, at: f.at, main, bak })
         }
-        return a.sync(files)
+        return a.sync(present, files)
       },
       // Writes every unsaved change. One that fails stays unsaved and is tried again next time.
       save: async () => {
