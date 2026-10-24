@@ -10,7 +10,7 @@ function world(on: any, files: Record<string, string> = {}) {
   const chat = { sid: 'chat-1' }
   // What the clipboard holds for "Paste screenshot": 'image', 'text' or 'no-tool' (wl-paste/xclip missing).
   const clipboard = { holds: 'image' as 'image' | 'text' | 'no-tool', runs: [] as string[][] }
-  const seen = { status: [] as (string | undefined)[], toasts: [] as string[], prompts: [] as string[], opened: 0, tools: [] as string[] }
+  const seen = { status: [] as (string | undefined)[], toasts: [] as string[], prompts: [] as string[], opened: 0, tools: [] as string[], copied: [] as string[] }
   on('env.get', (_: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
   on('fs.exists', (_: any, e: any) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(e.path + '/')) }))
   on('fs.read', (_: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }))
@@ -32,6 +32,10 @@ function world(on: any, files: Record<string, string> = {}) {
   })
   on('session.id', () => ({ value: chat.sid }))
   on('tool.check', () => ({ decision: 'ask' }))
+  on('ui.copy', (_: any, e: any) => {
+    seen.copied.push(e.text)
+    return { value: { isCopied: true } }
+  })
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', (_: any, e: any) => ({ value: { command: e.name } }))
   on('tool.register', (_: any, e: any) => {
@@ -115,7 +119,7 @@ test('Claude adds tasks, the user shares one, Send now hands it to Claude', asyn
   await ui.press({ key: 'shared-toggle' })
   expect(await ui.find({ key: 't1-unshare' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /“key is in 1Password”/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /▣ 1 screenshot/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /▣ 1/ })).toBeDefined()
   expect(seen.status.at(-1)).toBe('1 on your checklist, 1 shared, not sent (/checklist)')
   await ui.press({ key: 'send' })
   expect(seen.prompts.length).toBe(1)
@@ -146,7 +150,7 @@ test('answering a question', async ($, on) => {
   await ui.press({ key: 'q1-answer' })
   expect(await ui.find({ key: 'q1-answer' })).toBeUndefined()
   await ui.press({ key: 'shared-toggle' })
-  expect(await ui.find({ type: 'Text', text: /Which DB\? SQLite/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Which DB\?\s+SQLite/ })).toBeDefined()
   await ui.unmount()
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/ANSWER: SQLite/)
 })
@@ -271,7 +275,8 @@ test('☾ Away in the pane: pick a time, add 30 minutes, come back', async ($, o
   await ui.press({ key: 'away' })
   await ui.press({ key: 'away-3600000' })
   expect(await ui.find({ key: 'away' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /1 h left · Claude won't wait for you/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1 h left$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Claude won't wait for you/ })).toBeDefined()
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/THE USER IS AWAY until .* \(in 1 hour\)/)
 
   await ui.press({ key: 'away-more' })
@@ -281,4 +286,28 @@ test('☾ Away in the pane: pick a time, add 30 minutes, come back', async ($, o
   expect(await ui.find({ key: 'away' })).toBeDefined()
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).not.toMatch(/AWAY/)
   await ui.unmount()
+})
+
+test('copy puts a task\'s command on the clipboard', async ($, on) => {
+  const { seen } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Check the version', command: 'node --version' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /node --version/ })).toBeDefined()
+  await ui.press({ key: 't1-copy' })
+  expect(seen.copied).toEqual(['node --version'])
+  expect(seen.toasts.at(-1)).toBe('Copied.')
+  await ui.unmount()
+})
+
+test('the light colours draw the same pane', { options: { colors: 'light' } }, async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One', tags: ['urgent'] }] } as any)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ key: 't1-share-done' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /URGENT/ })).toBeDefined()
+    await ui.unmount()
+  }
 })

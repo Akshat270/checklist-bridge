@@ -132,7 +132,8 @@ Answer `y` to add the marketplace, pick a scope, then start a new chat. From a s
 - For a question, pick an option (or type *Something else*), then press **Answer**.
 - **Screenshots:** take one to the clipboard (Win+Shift+S on Windows, Cmd+Ctrl+Shift+4 on a Mac), then press **Paste screenshot** on the task. You can also type an image file's path. On Linux, pasting needs `wl-clipboard` or `xclip`.
 - What you shared folds into **Shared with Claude** at the bottom. Open it to see what Claude has read, or to take something back.
-- With the checklist focused (Ctrl+X, then Tab), keys work too: `d` done, `n` couldn't do it, `v` paste screenshot, `a` away, `1`–`9` pick an option, `s` send now.
+- With the checklist focused (Ctrl+X, then Tab), keys work too: `d` done, `n` couldn't do it, `v` paste screenshot, `c` copy the task's command, `a` away, `b` I'm back, `1`–`9` pick an option, `s` send now. The keys are listed at the bottom of the checklist.
+- **Light terminal?** Type `/config` in Claude Code and set Checklist Bridge's **Colors** to `light`.
 - **Send now** hands what you shared to Claude as a message. If Claude is busy, it gets the message as soon as it finishes.
 - **Going away?** Press **☾ Away** at the top of the checklist and pick 30 min, 1 h, 2 h or 4 h, or type `/checklist away 18:30` (also `45m`, `6:30pm`). Claude stops waiting for you: it does what it safely can and leaves the rest on the checklist. The checklist counts down the time left; press **+30 min** if you're running late, or **I'm back** to end it early. It also ends by itself.
 - `/checklist list` shows earlier checklists in this folder, and `/checklist continue 2` makes one of them this chat's checklist.

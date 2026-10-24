@@ -1,24 +1,28 @@
 // The checklist pane, drawn with Claude Code's own elements: the same checklist as the VS Code panel,
-// laid out for a terminal column. It follows DESIGN.md in terminal terms:
+// laid out for a terminal column. The design is the "Checklist Bridge mod redesign" canvas:
 //
-// - Colours come from the terminal theme's own names (suggestion, success, warning, error, subtle,
-//   inverseText), never fixed hex, so light and dark themes both read well.
-// - Every colour means one thing: suggestion (the accent) is "act here", success is shared as done,
-//   warning is not done or "decide", error is urgent. Badges are a word on a coloured background.
-// - Hierarchy is weight and dimming: bold for what needs you, dim for what is settled.
+//   Title                                       3/10 ━━━━━━━━─────   progress: green done, amber not done
+//   1 decision · 6 tasks waiting on you    [☾ Away] [➤ Send 1 update] actions live in the header
+//   ☾ AWAY card / ✓ Sent to Claude                                   only when they apply
+//   DECIDE 1 ─────────────────────────────                           section: word, count pill, rule
+//   ╭ question card ╮                                                options picked with 1–9
+//   TO DO 6 ──────────────────────────────
+//   ╭ NEXT card ╮                                                    the open task; the rest one line each:
+//    • t7 │ 1. Open the ordered group                                mark · id │ text, one grid for every row
+//   ▸ SHARED WITH CLAUDE 3   2 read · 1 not done ──
+//   ──────────────────────────────────────
+//    d done  n couldn't  v paste  c copy  1-9 pick  a away  s send   the key bar
 //
-//   Title ............................. 4/10  ━━━━━━──────   header, then Send now when there is news
-//   DECIDE  1                                                  question cards, options picked with 1–9
-//   TO DO  5                                                   the next task as a card, the rest one line each
-//   ▸ SHARED WITH CLAUDE  4                                    folded away; open it to take something back
-//    d  done   n  couldn't do it   v  paste ...                the keys, as key caps
-//
+// Colours come from theme.ts, one meaning each. Cards are framed, never filled: a terminal with few colours
+// turns a dark tint into a loud one, so fills are kept to small things (badges, buttons, the command well). A pointer inverts the button under it, so every button
+// holds only what you click (a choice, a task's text), never the summary or badges beside it.
 // No `$` here: register.tsx resolves the elements and passes in what a press should do.
-import type { Elements, RenderElement } from 'claude-code'
+import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import type { App } from './app'
 import { AWAY_CHOICES, EXTEND_MS, awayFor, leftText } from './away'
 import { awayDay, groupsOf, isSequence, MAX_AWAY_MS, sequenceOf, type Checklist, type Img, type Question, type Task } from './lib/model'
+import type { Palette } from './theme'
 
 export type Actions = {
   /** Saves `c` and redraws. */
@@ -28,6 +32,8 @@ export type Actions = {
   send: (c: Checklist) => Promise<void>
   /** Saves the image on the clipboard as a screenshot of this task or question. */
   paste: (c: Checklist, itemId: string) => Promise<void>
+  /** Puts text on the clipboard of the surface the press came from. */
+  copy: (text: string, surface: RenderSurface) => Promise<void>
   /** Opens this task's card (the others fold to one line). */
   open: (taskId: string) => Promise<void>
   toggleShared: () => Promise<void>
@@ -41,33 +47,18 @@ export type View = {
   showShared: boolean
   /** Whether the ☾ Away time choices are showing. */
   awayPicker: boolean
-  /** Cells across the pane, for the progress bar. */
+  /** Cells across the pane's body. */
   width: number
+  colors: Palette
 }
-
-/**
- * The pane's own colours, in one place (named ANSI colours, lazygit style). They are picked for a dark
- * terminal; everything else uses the theme's colour names so it follows the user's theme.
- */
-const COLOR = {
-  next: 'cyan', // the NEXT badge, and the marker of the next task in the list
-  title: 'white', // the open task's title, and field labels
-  muted: 'gray', // instructions ("Run this:"), the list's │ divider
-  number: 'cyan', // step numbers in lists
-  command: 'green', // a command to run
-  done: 'green', // the primary "Done, share" button
-  notDone: 'red', // "Couldn't do it"
-} as const
 
 /** openId for "no task card open": every task folds to one line. */
 export const NONE_OPEN = '-'
 
 const RANK: Record<string, number> = { urgent: 0, important: 1 }
 const rank = (t: Task) => Math.min(...t.tags.map(x => RANK[x] ?? 2), 2)
-/** Tags that get a coloured badge; any other tag is drawn as plain dim text. */
-const BADGE: Record<string, string> = { urgent: 'error', important: 'warning', blocked: 'permission' }
 /** Columns of a shared row's second line: the read status, then its button, then the note. */
-const STATUS_WIDTH = 18
+const STATUS_WIDTH = 16
 const ACTION_WIDTH = 16
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** A step's text without the "Step 2:" Claude sometimes writes, since the pane numbers steps itself. */
@@ -92,60 +83,104 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   const { Box, Text, Button } = els
   // The phone app has no text fields: there the pane shows the list with its buttons only.
   const Input = 'Input' in els ? els.Input : undefined
-  const barWidth = Math.max(10, Math.min(view.width - 30, 24))
+  const P = view.colors
+  const width = Math.max(30, Math.min(view.width - 2, 110))
+  const BADGE: Record<string, string> = { urgent: P.red, important: P.amber, blocked: P.violet }
+
+  /* ------------------------------------------------------------------ small parts */
 
   /** A word on a coloured background: tags, NEXT, AWAY. */
-  const badge = (label: string, color: string, ink = 'inverseText') => (
-    <Text backgroundColor={color} color={ink} bold>
+  const badge = (label: string, bg: string) => (
+    <Text backgroundColor={bg} color={P.onFill} bold>
       {` ${label} `}
     </Text>
   )
-  /** A small grey pill: counts and key caps. */
+  /** A grey pill: counts. */
   const pill = (label: string | number) => (
-    <Text backgroundColor="subtle" color="inverseText">
+    <Text backgroundColor={P.pillBg} color={P.pillFg}>
       {` ${label} `}
     </Text>
   )
-  /** Tag badges, each after a space, or with none before the first when `lead` is false. */
-  const tagBadges = (list: string[], lead = true) =>
-    list.map((x, i) => {
-      const gap = lead || i ? ' ' : ''
-      return BADGE[x] ? (
+  /** A key cap, for the key bar. */
+  const key = (k: string, what: string) => (
+    <Text>
+      <Text backgroundColor={P.keyBg} color={P.keyFg} bold>
+        {` ${k} `}
+      </Text>
+      <Text color={P.dim}>{` ${what}`}</Text>
+    </Text>
+  )
+  /** A filled button; `hotkey` presses it while the pane has the keyboard (drawn "k:" before it). */
+  const filled = (o: { key: string; label: string; bg: string; fg?: string; hotkey?: string; autoFocus?: boolean; onPress: (p: { surface: RenderSurface }) => void }) => (
+    <Button key={o.key} label={o.label} plain hotkey={o.hotkey} autoFocus={o.autoFocus ? true : undefined} onPress={e => o.onPress(e)}>
+      <Text backgroundColor={o.bg} color={o.fg ?? P.onFill} bold>
+        {` ${o.label} `}
+      </Text>
+    </Button>
+  )
+  /** A quiet text button. */
+  const quiet = (k: string, label: string, onPress: () => void, color = P.dim, hotkey?: string) => (
+    <Button key={k} label={label} plain hotkey={hotkey} onPress={() => onPress()}>
+      <Text color={color}>{label}</Text>
+    </Button>
+  )
+  const tagBadges = (list: string[]) =>
+    list.map(x =>
+      BADGE[x] ? (
         <Text>
-          {gap}
+          {' '}
           {badge(x.toUpperCase(), BADGE[x])}
         </Text>
       ) : (
-        <Text dimColor>
-          {gap}
-          {x}
+        <Text color={P.muted}>{` ${x}`}</Text>
+      ),
+    )
+  /** A section header: the word, a count pill, a rule across the rest of the pane. */
+  const section = (label: string, count: number, color: string, extra = '', toggle?: { key: string; open: boolean; onPress: () => void }) => {
+    const used = label.length + String(count).length + 4 + extra.length + (toggle ? 2 : 0)
+    const head = (
+      <Text>
+        {toggle ? <Text color={P.green} bold>{toggle.open ? '▾ ' : '▸ '}</Text> : ''}
+        <Text color={color} bold>
+          {label}
         </Text>
-      )
-    })
-  const heading = (label: string, count: number, color?: string) => (
-    <Box flexDirection="row" gap={1} marginTop={1}>
-      <Text bold color={color}>
-        {label}
       </Text>
-      {pill(count)}
+    )
+    return (
+      <Box flexDirection="row" marginTop={1}>
+        {toggle ? (
+          <Button key={toggle.key} label={label} plain onPress={() => toggle.onPress()}>
+            {head}
+          </Button>
+        ) : (
+          head
+        )}
+        <Text>
+          {' '}
+          {pill(count)}
+          <Text color={P.dim}>{extra}</Text>
+          <Text color={P.rule}>{` ${'─'.repeat(Math.max(2, width - used))}`}</Text>
+        </Text>
+      </Box>
+    )
+  }
+  /** A one-line framed text field: its label, the entry, and the field's own ⏎ action at the edge. */
+  const field = (label: string, input: RenderElement) => (
+    <Box flexDirection="row" borderStyle="round" borderColor={P.fieldBorder} paddingX={1} gap={2}>
+      <Text color={P.muted}>{label}</Text>
+      <Box flexGrow={1}>{input}</Box>
     </Box>
   )
 
-  /** A labelled text field: the label above, the entry area in a light frame (its ⏎ action sits at the frame's right edge). */
-  const field = (label: string, input: RenderElement) => (
-    <Box flexDirection="column">
-      <Text color={COLOR.title}>{label}</Text>
-      <Box borderStyle="round" borderColor="subtle" paddingX={1}>
-        {input}
-      </Box>
-    </Box>
-  )
+  /* ------------------------------------------------------------------ nothing to show */
 
   if (!app.isOn)
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Text bold>Checklists are in the VS Code extension now.</Text>
-        <Text dimColor>To use them here again, type /checklist use-mod.</Text>
+        <Text bold color={P.title}>
+          Checklists are in the VS Code extension now
+        </Text>
+        <Text color={P.dim}>To use them here again, type /checklist use-mod.</Text>
       </Box>
     )
 
@@ -153,15 +188,20 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   if (!c)
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Text bold>No checklist in this chat yet</Text>
-        <Text dimColor>When Claude needs you to do something by hand or make a decision, it shows up here.</Text>
+        <Text bold color={P.title}>
+          No checklist in this chat yet
+        </Text>
+        <Text color={P.dim}>When Claude needs you to do something by hand or make a decision, it shows up here.</Text>
         {app.others(sid).length > 0 && (
           <Text>
-            <Text dimColor>To pick up an earlier one, type </Text>/checklist list
+            <Text color={P.dim}>To pick up an earlier one, type </Text>
+            <Text color={P.cyan}>/checklist list</Text>
           </Text>
         )}
       </Box>
     )
+
+  /* ------------------------------------------------------------------ the checklist */
 
   const save = () => act.changed(c)
   const groups = ordered(c)
@@ -174,61 +214,58 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   const current = open[0]
   const openTask = view.openId === NONE_OPEN ? undefined : (open.find(t => t.id === view.openId) ?? current)
   const unsent = app.store.updateSummary(c, 'line').ids.length
+  const taskSeen = (t: Task) => !!t.seenAt && t.seenAt >= t.shared!.at
+  const answerSeen = (q: Question) => !!q.seenAt && q.seenAt >= q.answer!.at
+  // Handed over with Send now and not read yet: the "✓ Sent to Claude" line says so.
+  const waitingRead = shared.filter(t => t.pushedAt && !taskSeen(t)).length + answered.filter(q => q.pushedAt && !answerSeen(q)).length
+  const away = app.store.isAway(c)
 
-  // The grid every list row follows:  mark (3) · id (padded to the longest id) · " │ " · text.
-  // Ids lead, so the text of every row starts in the same column whatever its id or step number.
+  // The grid every list row follows: mark (3) · id (padded to the longest id) · " │ " · text.
   const idWidth = Math.max(2, ...all.map(t => t.id.length), ...questions.map(q => q.id.length))
   const idCell = (id: string) => (
     <Text>
-      <Text dimColor>{id.padEnd(idWidth)}</Text>
-      <Text color={COLOR.muted}>{' │ '}</Text>
+      <Text color={P.muted}>{id.padEnd(idWidth)}</Text>
+      <Text color={P.rule}>{' │ '}</Text>
     </Text>
   )
-  /** The same columns with no mark and no id: where a row's second line starts. */
   const indent = (
     <Text>
       {' '.repeat(3 + idWidth)}
-      <Text color={COLOR.muted}>{' │ '}</Text>
+      <Text color={P.rule}>{' │ '}</Text>
     </Text>
   )
-  /** A fixed-width cell, so the cells after it start in the same column on every row. */
-  const fixed = (width: number, child: RenderElement) => (
-    <Box width={width} flexShrink={0}>
+  const fixed = (w: number, child: RenderElement) => (
+    <Box width={w} flexShrink={0}>
       {child}
     </Box>
   )
 
   const shots = (owner: Task | Question, imgs: Img[]) =>
     imgs.map((img, i) => (
-      <Box flexDirection="row" gap={1}>
-        <Text color="success">▣</Text>
+      <Box flexDirection="row" gap={2}>
         <Text>
-          Screenshot {i + 1} <Text dimColor>{shotName(c.id, img)}</Text>
+          <Text color={P.cyan}>▣ </Text>
+          <Text>{`Screenshot ${i + 1}`}</Text>
+          <Text color={P.muted}>{`  ${shotName(c.id, img)}`}</Text>
         </Text>
-        <Button
-          key={`${owner.id}-rm-${img.id}`}
-          label="Remove"
-          plain
-          dimColor
-          onPress={async () => {
-            app.store.removeImage(c.id, owner.id, img.id)
-            await save()
-          }}
-        />
+        {quiet(`${owner.id}-rm-${img.id}`, 'remove', async () => {
+          app.store.removeImage(c.id, owner.id, img.id)
+          await save()
+        })}
       </Box>
     ))
 
-  /** The note box and screenshots under an open task or question. */
-  const extras = (owner: Task | Question, note: string, setNote: (v: string) => void, imgs: Img[], withShots: boolean) => (
-    <Box flexDirection="column" marginTop={1}>
+  /** The note field, screenshots and the paste row under an open task or question. */
+  const extras = (owner: Task | Question, note: string, setNote: (v: string) => void, imgs: Img[], withShots: boolean, space = true) => (
+    <Box flexDirection="column" marginTop={space ? 1 : 0}>
       {Input &&
         field(
-          'Note for Claude',
+          'Note',
           <Input
             key={`${owner.id}-note`}
             placeholder="optional: what you did, or a value Claude needs"
             value={note}
-            submitLabel="Save"
+            submitLabel="save"
             onInput={setNote}
             onSubmit={async v => {
               setNote(v)
@@ -238,23 +275,23 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         )}
       {shots(owner, imgs)}
       {withShots && imgs.length < 8 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>Screenshot</Text>
-          <Box flexDirection="row" gap={2}>
-            <Button key={`${owner.id}-paste`} label="Paste from clipboard" variant="secondary" hotkey="v" onPress={() => act.paste(c, owner.id)} />
-            {Input && (
+        <Box flexDirection="row" gap={2}>
+          <Text color={P.muted}>Screenshot</Text>
+          {filled({ key: `${owner.id}-paste`, label: 'Paste from clipboard', bg: P.btnBg, fg: P.text, hotkey: 'v', onPress: () => act.paste(c, owner.id) })}
+          {Input && (
+            <Box flexGrow={1}>
               <Input
                 key={`${owner.id}-shot`}
-                placeholder="or type an image file's path"
-                submitLabel="Add"
+                placeholder="or type a file path"
+                submitLabel="add"
                 onSubmit={async v => {
                   if (!v.trim()) return
                   if (!app.store.addImagePath(c.id, owner.id, v)) return act.toast('That is not a .png, .jpg, .gif or .webp file.')
                   await save()
                 }}
               />
-            )}
-          </Box>
+            </Box>
+          )}
         </Box>
       )}
     </Box>
@@ -262,68 +299,69 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
 
   const taskCard = (t: Task, step?: { n: number; of: number }) => {
     const urgent = rank(t) === 0
+    const isNext = t === current
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={urgent ? 'error' : 'suggestion'} paddingX={1} marginTop={1}>
-        {/* Badges, then a blank line, then the title with its description under it in grey. */}
-        <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={urgent ? P.urgentBorder : P.nextBorder}
+        paddingX={1}
+        marginTop={1}
+      >
+        <Box flexDirection="row" justifyContent="space-between">
           <Text>
-            {t === current ? badge('NEXT', COLOR.next, 'black') : badge('OPEN', 'subtle')}
-            {step && <Text dimColor>{`  step ${step.n} of ${step.of}`}</Text>}
+            {isNext ? badge('NEXT', urgent ? P.red : P.cyan) : badge('OPEN', P.pillBg)}
+            {step ? <Text color={P.dim}>{`  step ${step.n} of ${step.of}`}</Text> : ''}
             {tagBadges(t.tags)}
           </Text>
           <Box flexDirection="row" gap={2}>
-            <Button key={`${t.id}-collapse`} label="Collapse" plain dimColor onPress={() => act.open(NONE_OPEN)} />
-            <Text dimColor>{`[${t.id}]`}</Text>
+            {quiet(`${t.id}-collapse`, 'collapse', () => act.open(NONE_OPEN))}
+            <Text color={P.muted}>{`[${t.id}]`}</Text>
           </Box>
         </Box>
-        <Text bold color={COLOR.title}>
-          {step ? stepText(t.text) : t.text}
-        </Text>
-        {t.detail && (
-          <Box marginTop={1}>
-            <Text color="inactive">{t.detail}</Text>
-          </Box>
-        )}
+        <Box marginTop={1}>
+          <Text bold color={P.title}>
+            {step ? stepText(t.text) : t.text}
+          </Text>
+        </Box>
+        {t.detail ? <Text color={P.dim}>{t.detail}</Text> : ''}
         {t.command && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text color={COLOR.muted}>Run this:</Text>
-            <Box paddingLeft={2}>
-              <Text mono color={COLOR.command}>{`$ ${t.command}`}</Text>
-            </Box>
+          <Box flexDirection="row" justifyContent="space-between" backgroundColor={P.wellBg} paddingX={1} marginTop={1}>
+            <Text mono>
+              <Text color={P.muted}>$ </Text>
+              <Text color={P.green}>{t.command}</Text>
+            </Text>
+            <Button key={`${t.id}-copy`} label="copy" plain hotkey="c" onPress={e => act.copy(t.command!, e.surface)}>
+              <Text color={P.dim}>copy</Text>
+            </Button>
           </Box>
         )}
         {extras(t, t.draft.note, v => app.store.setDraft(c.id, t.id, { note: v }), t.draft.images, true)}
-        {/* One empty line between the fields and the actions. */}
-        <Box flexDirection="row" gap={2} marginTop={1} marginBottom={0}>
-          <Button
-            key={`${t.id}-share-done`}
-            label="Done, share with Claude"
-            plain
-            hotkey="d"
-            autoFocus
-            onPress={async () => {
+        <Box flexDirection="row" gap={2} marginTop={1}>
+          {filled({
+            key: `${t.id}-share-done`,
+            label: '✓ Done, share with Claude',
+            bg: P.green,
+            hotkey: 'd',
+            autoFocus: true,
+            onPress: async () => {
               app.store.setDraft(c.id, t.id, { done: true })
               app.store.share(c.id, t.id)
               await save()
-            }}
-          >
-            <Text backgroundColor={COLOR.done} color="black" bold>
-              {' ✓ Done, share with Claude '}
-            </Text>
-          </Button>
-          <Button
-            key={`${t.id}-share-notdone`}
-            label="Couldn't do it"
-            plain
-            hotkey="n"
-            onPress={async () => {
+            },
+          })}
+          {filled({
+            key: `${t.id}-share-notdone`,
+            label: "✗ Couldn't do it",
+            bg: P.notDoneBg,
+            fg: P.red,
+            hotkey: 'n',
+            onPress: async () => {
               app.store.setDraft(c.id, t.id, { done: false })
               app.store.share(c.id, t.id)
               await save()
-            }}
-          >
-            <Text color={COLOR.notDone}>✗ Couldn't do it</Text>
-          </Button>
+            },
+          })}
         </Box>
       </Box>
     )
@@ -331,19 +369,22 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
 
   const taskLine = (t: Task, step?: { n: number; of: number }) => {
     const urgent = rank(t) === 0
+    const isNext = t === current
     const started = !!(t.draft.note || t.draft.images.length)
     return (
       <Box flexDirection="row">
-        <Text color={urgent ? 'error' : t === current ? COLOR.next : undefined} dimColor={!urgent && t !== current}>
-          {urgent ? ' ! ' : t === current ? ' ▸ ' : ' • '}
-        </Text>
+        <Text color={urgent ? P.red : isNext ? P.cyan : P.muted}>{urgent ? ' ! ' : isNext ? ' ▸ ' : ' • '}</Text>
         {idCell(t.id)}
-        {step ? <Text color={COLOR.number}>{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
-        {/* Only the text is the button: the pointer inverts a button, and this keeps that to the text. */}
-        <Button key={`${t.id}-open`} label={step ? stepText(t.text) : t.text} plain onPress={() => act.open(t.id)} />
+        {step ? <Text color={P.cyan}>{`${String(step.n).padStart(String(step.of).length)}. `}</Text> : ''}
+        <Button key={`${t.id}-open`} label={step ? stepText(t.text) : t.text} plain onPress={() => act.open(t.id)}>
+          <Text color={P.text} bold={isNext}>
+            {step ? stepText(t.text) : t.text}
+          </Text>
+        </Button>
         <Text>
-          {started ? <Text color="suggestion"> · draft</Text> : ''}
+          {started ? <Text color={P.cyan}> · draft</Text> : ''}
           {tagBadges(t.tags)}
+          {isNext && view.openId === NONE_OPEN ? <Text color={P.cyan}>  next</Text> : ''}
         </Text>
       </Box>
     )
@@ -353,26 +394,31 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     const picks = q.draft.picks
     const urgent = q.tags.includes('urgent')
     const recommended = q.options.find(o => o.id === q.recommended)
+    const labelWidth = Math.min(28, Math.max(...q.options.map(o => o.label.length)) + 2)
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={urgent ? 'error' : 'warning'} paddingX={1} marginTop={1}>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={urgent ? P.urgentBorder : P.decideBorder}
+        paddingX={1}
+        marginTop={1}
+      >
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
-          <Text bold>{q.question}</Text>
-          <Text dimColor>{`[${q.id}]`}</Text>
+          <Text bold color={P.title}>
+            {q.question}
+          </Text>
+          <Text>
+            {q.tags.length ? <Text>{tagBadges(q.tags)}</Text> : ''}
+            <Text color={P.muted}>{`  [${q.id}]`}</Text>
+          </Text>
         </Box>
-        {q.tags.length > 0 && <Text>{tagBadges(q.tags, false)}</Text>}
-        {q.why && (
-          <Box marginTop={1}>
-            <Text color="inactive">{q.why}</Text>
-          </Box>
-        )}
+        {q.why ? <Text color={P.dim}>{q.why}</Text> : ''}
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>{q.multi ? 'Pick one or more' : 'Pick one'}</Text>
           {q.options.map((o, i) => {
             const on = picks.includes(o.id)
             const mark = q.multi ? (on ? '■' : '□') : on ? '●' : '○'
             return (
               <Box flexDirection="row">
-                {/* Only the choice is the button (the pointer inverts a button); its summary sits beside it. */}
                 <Button
                   key={`${q.id}-opt-${o.id}`}
                   label={o.label}
@@ -384,23 +430,25 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                     await save()
                   }}
                 >
-                  <Text color={on ? COLOR.next : undefined} dimColor={!on}>{`${mark} `}</Text>
-                  <Text bold={on} color={on ? COLOR.next : undefined}>
-                    {o.label}
+                  <Text color={on ? P.cyan : P.text} bold={on}>
+                    {`${mark} ${o.label.padEnd(labelWidth)}`}
                   </Text>
                 </Button>
                 <Text>
-                  {o.summary || o.details ? <Text dimColor>{`  ${o.summary ?? o.details}`}</Text> : ''}
-                  {o === recommended ? <Text color="success"> ★ recommended</Text> : ''}
+                  {o.summary || o.details ? <Text color={P.dim}>{o.summary ?? o.details}</Text> : ''}
+                  {o === recommended ? <Text color={P.green}>{'   ★ recommended'}</Text> : ''}
                 </Text>
               </Box>
             )
           })}
         </Box>
-        {recommended && q.reason && (
-          <Text dimColor>
-            <Text color="success">★</Text> {q.reason}
+        {recommended && q.reason ? (
+          <Text>
+            <Text color={P.green}>★ </Text>
+            <Text color={P.dim}>{q.reason}</Text>
           </Text>
+        ) : (
+          ''
         )}
         {Input && q.allowOther && (
           <Box flexDirection="column" marginTop={1}>
@@ -410,7 +458,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 key={`${q.id}-other`}
                 placeholder="your own answer"
                 value={q.draft.other}
-                submitLabel="Save"
+                submitLabel="save"
                 onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
                 onSubmit={async v => {
                   app.store.setAnswerDraft(c.id, q.id, { other: v })
@@ -420,52 +468,41 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             )}
           </Box>
         )}
-        {extras(q, q.draft.note, v => app.store.setAnswerDraft(c.id, q.id, { note: v }), q.draft.images, false)}
+        {extras(q, q.draft.note, v => app.store.setAnswerDraft(c.id, q.id, { note: v }), q.draft.images, false, !(Input && q.allowOther))}
         <Box marginTop={1}>
-          <Button
-            key={`${q.id}-answer`}
-            label={`✓ Answer ${q.id}`}
-            variant="primary"
-            onPress={async () => {
+          {filled({
+            key: `${q.id}-answer`,
+            label: `✓ Answer ${q.id}`,
+            bg: P.amber,
+            onPress: async () => {
               if (!app.store.shareAnswer(c.id, q.id)) return act.toast(`Pick an option for ${q.id} first.`)
               await save()
-            }}
-          />
+            },
+          })}
         </Box>
       </Box>
     )
   }
 
   const readMark = (seen: boolean, pushed: boolean) =>
-    seen ? <Text color="success">◉ read by Claude</Text> : pushed ? <Text dimColor>◌ sent</Text> : <Text dimColor>◌ not read yet</Text>
+    seen ? <Text color={P.green}>◉ read</Text> : pushed ? <Text color={P.dim}>◌ sent</Text> : <Text color={P.dim}>◌ not read yet</Text>
 
-  /** One shared task or answer: what it was on the first line, its state and a quiet button under it. */
-  const sharedRow = (o: {
-    id: string
-    mark: RenderElement
-    title: RenderElement
-    seen: boolean
-    pushed: boolean
-    note?: string
-    shots?: number
-    button: RenderElement
-  }) => (
+  /** One shared task or answer on the grid: what it was, then its status, button and note in fixed columns. */
+  const sharedRow = (o: { id: string; mark: RenderElement; title: RenderElement; seen: boolean; pushed: boolean; note?: string; shots?: number; button: RenderElement }) => (
     <Box flexDirection="column" marginBottom={1}>
-      {/* mark · id │ what it was */}
       <Box flexDirection="row">
         {o.mark}
         {idCell(o.id)}
         {o.title}
       </Box>
-      {/* under the text column: status | action | note, each in its own fixed column */}
       <Box flexDirection="row">
         {indent}
         {fixed(STATUS_WIDTH, readMark(o.seen, o.pushed))}
         {fixed(ACTION_WIDTH, o.button)}
-        <Text dimColor>
-          {o.note ? `“${o.note}”` : ''}
+        <Text>
+          {o.note ? <Text color={P.dim}>{`“${o.note}”`}</Text> : ''}
           {o.note && o.shots ? '  ' : ''}
-          {o.shots ? `▣ ${plural(o.shots, 'screenshot')}` : ''}
+          {o.shots ? <Text color={P.cyan}>{`▣ ${o.shots}`}</Text> : ''}
         </Text>
       </Box>
     </Box>
@@ -478,29 +515,27 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         const choice = [...q.options.filter(o => a.picks.includes(o.id)).map(o => o.label), ...(a.other ? [a.other] : [])].join(', ')
         return sharedRow({
           id: q.id,
-          mark: <Text color="success" bold>{' ✓ '}</Text>,
-          title: (
-            <Text>
-              <Text dimColor>{`${q.question} `}</Text>
-              <Text bold>{choice}</Text>
+          mark: (
+            <Text color={P.green} bold>
+              {' ✓ '}
             </Text>
           ),
-          seen: !!q.seenAt && q.seenAt >= a.at,
+          title: (
+            <Text>
+              <Text color={P.dim}>{`${q.question}  `}</Text>
+              <Text bold color={P.text}>
+                {choice}
+              </Text>
+            </Text>
+          ),
+          seen: answerSeen(q),
           pushed: !!q.pushedAt,
           note: a.note,
           shots: a.images.length,
-          button: (
-            <Button
-              key={`${q.id}-change`}
-              label="Change answer"
-              plain
-              dimColor
-              onPress={async () => {
-                app.store.unshareAnswer(c.id, q.id)
-                await save()
-              }}
-            />
-          ),
+          button: quiet(`${q.id}-change`, 'Change answer', async () => {
+            app.store.unshareAnswer(c.id, q.id)
+            await save()
+          }),
         })
       })}
       {shared.map(t => {
@@ -508,147 +543,191 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         return sharedRow({
           id: t.id,
           mark: (
-            <Text color={s.done ? 'success' : 'warning'} bold>
+            <Text color={s.done ? P.green : P.red} bold>
               {s.done ? ' ✓ ' : ' ✗ '}
             </Text>
           ),
           title: (
             <Text>
-              <Text dimColor>{t.text}</Text>
-              {!s.done && <Text color="warning"> · not done</Text>}
+              <Text color={P.dim}>{t.text}</Text>
+              {!s.done ? <Text color={P.amber}>  not done</Text> : ''}
             </Text>
           ),
-          seen: !!t.seenAt && t.seenAt >= s.at,
+          seen: taskSeen(t),
           pushed: !!t.pushedAt,
           note: s.note,
           shots: s.images.length,
-          button: (
-            <Button
-              key={`${t.id}-unshare`}
-              label="Take back"
-              plain
-              dimColor
-              onPress={async () => {
-                app.store.unshare(c.id, t.id)
-                await save()
-              }}
-            />
-          ),
+          button: quiet(`${t.id}-unshare`, 'Take back', async () => {
+            app.store.unshare(c.id, t.id)
+            await save()
+          }),
         })
       })}
     </Box>
   )
 
+  /* ------------------------------------------------------------------ header */
+
   const total = all.length + questions.length
   const doneCount = shared.filter(t => t.shared!.done).length + answered.length
   const notDone = shared.length - shared.filter(t => t.shared!.done).length
   const finished = shared.length + answered.length
+  const barWidth = Math.max(10, Math.min(width - c.title.length - 12, 22))
   const cells = (n: number) => (total ? Math.round((n / total) * barWidth) : 0)
-  const away = app.store.isAway(c)
-  const need = [asking.length && plural(asking.length, 'decision'), open.length && plural(open.length, 'task')].filter(Boolean).join(' and ')
+  const need = [asking.length && plural(asking.length, 'decision'), open.length && plural(open.length, 'task')].filter(Boolean).join(' · ')
+  const readCount = shared.filter(taskSeen).length + answered.filter(answerSeen).length
+
+  const header = (
+    <Box flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold color={P.title}>
+          {c.title}
+        </Text>
+        <Text>
+          <Text color={P.dim}>{`${finished}/${total} `}</Text>
+          <Text color={P.green}>{'━'.repeat(cells(doneCount))}</Text>
+          <Text color={P.amber}>{'━'.repeat(cells(notDone))}</Text>
+          <Text color={P.track}>{'─'.repeat(Math.max(0, barWidth - cells(doneCount) - cells(notDone)))}</Text>
+        </Text>
+      </Box>
+      <Box flexDirection="row" justifyContent="space-between" flexWrap="wrap" columnGap={2}>
+        <Text color={P.dim}>{need ? `${need} waiting on you` : 'Nothing waiting on you'}</Text>
+        <Box flexDirection="row" gap={2}>
+          {!away && filled({ key: 'away', label: '☾ Away', bg: view.awayPicker ? P.amber : P.btnBg, fg: view.awayPicker ? P.onFill : P.amber, hotkey: 'a', onPress: () => act.toggleAwayPicker() })}
+          {unsent > 0 && filled({ key: 'send', label: `➤ Send ${plural(unsent, 'update')}`, bg: P.cyan, hotkey: 's', onPress: () => act.send(c) })}
+        </Box>
+      </Box>
+    </Box>
+  )
+
+  const awayPicker = !away && view.awayPicker && (
+    <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={P.awayBorder} paddingX={1}>
+      <Text>
+        <Text bold color={P.title}>
+          Going away?
+        </Text>
+        <Text color={P.dim}> Claude won't wait for you. It does what it safely can and leaves the rest here.</Text>
+      </Text>
+      <Box flexDirection="row" gap={2} marginTop={1} flexWrap="wrap">
+        <Text color={P.muted}>Away for</Text>
+        {AWAY_CHOICES.map(o =>
+          filled({
+            key: `away-${o.ms}`,
+            label: o.label,
+            bg: P.awayTrack,
+            fg: P.amber,
+            onPress: async () => {
+              const a = awayFor(o.ms)
+              if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('Could not set the time.')
+              await act.toggleAwayPicker()
+              await save()
+            },
+          }),
+        )}
+        {quiet('away-cancel', 'cancel', () => act.toggleAwayPicker())}
+      </Box>
+      <Text color={P.muted}>Or type /checklist away 18:30 for a time of your own.</Text>
+    </Box>
+  )
+
+  const leftMs = Math.max(0, (c.awayUntil ?? Date.now()) - Date.now())
+  const awayTrack = Math.max(10, width - 6)
+  const awayGone = c.awayMs ? Math.round(((c.awayMs - leftMs) / c.awayMs) * awayTrack) : 0
+  const awayCard = away && (
+    <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={P.awayBorder} paddingX={1}>
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text>
+          {badge('☾ AWAY', P.amber)}
+          <Text bold color={P.title}>{`  until ${awayDay(c)}${c.awayLabel ?? 'later'}`}</Text>
+        </Text>
+        <Text bold color={P.amber}>{`${leftText(leftMs)} left`}</Text>
+      </Box>
+      <Text color={P.dim}>Claude won't wait for you. It does what it safely can and leaves the rest here.</Text>
+      <Text>
+        <Text color={P.amber}>{'━'.repeat(Math.max(0, awayTrack - awayGone))}</Text>
+        <Text color={P.awayTrack}>{'━'.repeat(Math.max(0, awayGone))}</Text>
+      </Text>
+      <Box flexDirection="row" gap={2} marginTop={1}>
+        {filled({
+          key: 'away-more',
+          label: '+30 min',
+          bg: P.awayTrack,
+          fg: P.amber,
+          onPress: async () => {
+            const a = awayFor(Math.min(leftMs + EXTEND_MS, MAX_AWAY_MS))
+            if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('You can be away for up to 24 hours.')
+            await save()
+          },
+        })}
+        {filled({
+          key: 'back',
+          label: "I'm back",
+          bg: P.amber,
+          hotkey: 'b',
+          onPress: async () => {
+            app.store.endAway(c.id)
+            await save()
+          },
+        })}
+      </Box>
+    </Box>
+  )
+
+  const sentLine = unsent === 0 && waitingRead > 0 && (
+    <Box flexDirection="row" marginTop={1} borderStyle="round" borderColor={P.sentBorder} paddingX={1}>
+      <Text>
+        <Text bold color={P.green}>
+          ✓ Sent to Claude
+        </Text>
+        <Text color={P.dim}>{`  ${plural(waitingRead, 'update')} · it reads them when it next runs`}</Text>
+      </Text>
+    </Box>
+  )
+
+  const keyBar = Input && (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color={P.rule}>{'─'.repeat(width)}</Text>
+      <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+        {openTask && key('d', 'done')}
+        {openTask && key('n', "couldn't")}
+        {openTask && key('v', 'paste')}
+        {openTask?.command && key('c', 'copy')}
+        {asking.length > 0 && key('1-9', 'pick')}
+        {away ? key('b', "I'm back") : key('a', 'away')}
+        {unsent > 0 && key('s', 'send')}
+        <Text color={P.muted}>ctrl+x tab to focus</Text>
+      </Box>
+    </Box>
+  )
+
+  /* ------------------------------------------------------------------ the pane */
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* Header: title, progress, and what needs you */}
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text bold>{c.title}</Text>
-        <Text>
-          <Text dimColor>{`${finished}/${total}  `}</Text>
-          <Text color="success">{'━'.repeat(cells(doneCount))}</Text>
-          <Text color="warning">{'━'.repeat(cells(notDone))}</Text>
-          <Text dimColor>{'─'.repeat(Math.max(0, barWidth - cells(doneCount) - cells(notDone)))}</Text>
-        </Text>
-      </Box>
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text dimColor>{need ? `${need[0]!.toUpperCase()}${need.slice(1)} waiting on you` : 'Nothing waiting on you'}</Text>
-        {!away && (
-          <Button key="away" label="☾ Away" plain dimColor={!view.awayPicker} hotkey="a" onPress={() => act.toggleAwayPicker()} />
-        )}
-      </Box>
-
-      {/* ☾ Away: pick how long, and Claude stops waiting for you until then. */}
-      {!away && view.awayPicker && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="warning" paddingX={1}>
-          <Text>
-            <Text bold>Going away?</Text>
-            <Text dimColor> Claude won't wait for you. It does what it safely can and leaves the rest here.</Text>
-          </Text>
-          <Box flexDirection="row" gap={2} marginTop={1}>
-            <Text color={COLOR.muted}>Away for</Text>
-            {AWAY_CHOICES.map(o => (
-              <Button
-                key={`away-${o.ms}`}
-                label={o.label}
-                variant="secondary"
-                onPress={async () => {
-                  const a = awayFor(o.ms)
-                  if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('Could not set the time.')
-                  await act.toggleAwayPicker()
-                  await save()
-                }}
-              />
-            ))}
-            <Button key="away-cancel" label="Cancel" plain dimColor onPress={() => act.toggleAwayPicker()} />
-          </Box>
-          <Text dimColor>Or type /checklist away 18:30 for a time of your own.</Text>
-        </Box>
-      )}
-
-      {away && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text>
-            {badge('☾ AWAY', 'warning')}
-            <Text bold>{` until ${awayDay(c)}${c.awayLabel ?? 'later'}`}</Text>
-            <Text dimColor>{`  ${leftText((c.awayUntil ?? Date.now()) - Date.now())} left · Claude won't wait for you`}</Text>
-          </Text>
-          <Box flexDirection="row" gap={2} paddingLeft={9}>
-            <Button
-              key="away-more"
-              label="+30 min"
-              variant="secondary"
-              onPress={async () => {
-                const a = awayFor(Math.min((c.awayUntil ?? Date.now()) - Date.now() + EXTEND_MS, MAX_AWAY_MS))
-                if (!a || !app.store.setAway(c.id, a.ms, a.label, a.midnightIn)) return act.toast('You can be away for up to 24 hours.')
-                await save()
-              }}
-            />
-            <Button
-              key="back"
-              label="I'm back"
-              variant="primary"
-              onPress={async () => {
-                app.store.endAway(c.id)
-                await save()
-              }}
-            />
-          </Box>
-        </Box>
-      )}
-
-      {unsent > 0 && (
-        <Box flexDirection="row" gap={2} marginTop={1}>
-          <Button key="send" label={`➤ Send ${plural(unsent, 'update')} to Claude`} variant="primary" hotkey="s" onPress={() => act.send(c)} />
-          <Text dimColor>or Claude reads them next time</Text>
-        </Box>
-      )}
+      {header}
+      {awayPicker}
+      {awayCard}
+      {sentLine}
 
       {!open.length && !asking.length && (
         <Box marginTop={1}>
-          {badge('ALL DONE', 'success')}
-          <Text> Claude has everything it asked for.</Text>
+          <Text>
+            {badge('ALL DONE', P.green)}
+            <Text color={P.text}>  Claude has everything it asked for.</Text>
+          </Text>
         </Box>
       )}
 
       {asking.length > 0 && (
         <Box flexDirection="column">
-          {heading('DECIDE', asking.length, 'warning')}
+          {section('DECIDE', asking.length, P.amber)}
           {asking.map((q, i) => questionCard(q, i === 0))}
         </Box>
       )}
 
       {open.length > 0 && (
         <Box flexDirection="column">
-          {heading('TO DO', open.length, 'suggestion')}
+          {section('TO DO', open.length, P.cyan, openTask ? '' : '   all folded · press one to open it')}
           {groups
             .filter(g => g.tasks.some(t => !t.shared))
             .map(g => {
@@ -658,8 +737,10 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 <Box flexDirection="column" marginTop={1}>
                   {g.name && (
                     <Text>
-                      <Text bold>{g.name}</Text>
-                      {how ? <Text dimColor>{`  ${how}`}</Text> : ''}
+                      <Text bold color={P.text}>
+                        {g.name}
+                      </Text>
+                      {how ? <Text color={P.muted}>{`  ${how}`}</Text> : ''}
                     </Text>
                   )}
                   {left.map(t => {
@@ -673,50 +754,17 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
       )}
 
       {finished > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Button key="shared-toggle" plain onPress={() => act.toggleShared()}>
-            <Text bold color="success">{view.showShared ? '▾ ' : '▸ '}</Text>
-            <Text bold>SHARED WITH CLAUDE </Text>
-            {pill(finished)}
-            <Text dimColor>{view.showShared ? '' : '  open to see notes or take one back'}</Text>
-          </Button>
+        <Box flexDirection="column">
+          {section('SHARED WITH CLAUDE', finished, P.text, `   ${readCount} read${notDone ? ` · ${notDone} not done` : ''}`, {
+            key: 'shared-toggle',
+            open: view.showShared,
+            onPress: () => act.toggleShared(),
+          })}
           {view.showShared && sharedRows()}
         </Box>
       )}
 
-      {Input && (open.length > 0 || asking.length > 0) && (
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
-          <Text>
-            {pill('d')}
-            <Text dimColor> done</Text>
-          </Text>
-          <Text>
-            {pill('n')}
-            <Text dimColor> couldn't</Text>
-          </Text>
-          <Text>
-            {pill('v')}
-            <Text dimColor> paste</Text>
-          </Text>
-          <Text>
-            {pill('a')}
-            <Text dimColor> away</Text>
-          </Text>
-          {asking.length > 0 && (
-            <Text>
-              {pill('1–9')}
-              <Text dimColor> pick</Text>
-            </Text>
-          )}
-          {unsent > 0 && (
-            <Text>
-              {pill('s')}
-              <Text dimColor> send</Text>
-            </Text>
-          )}
-          <Text dimColor>(Ctrl+X Tab to use keys)</Text>
-        </Box>
-      )}
+      {keyBar}
     </Box>
   )
 }

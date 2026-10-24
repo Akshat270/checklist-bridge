@@ -15,6 +15,7 @@ import { noImage, pasteResult, pasteCommand, platformFrom, type Platform } from 
 import { imagesDir, join, modeFile, modeText, parseMode, sharedDir } from './lib/handover'
 import { MOD_INSTRUCTIONS, MOD_TOOLS } from './lib/model'
 import { drawPane } from './pane'
+import { palette } from './theme'
 
 const PANE = 'checklist'
 // Goes up on every change, so the pane redraws.
@@ -41,7 +42,10 @@ let app: App | undefined
 let toolsRegistered = false
 let platform: Platform | undefined
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // /config › Colors: the pane's palette, for a dark or a light terminal theme.
+  const colors = palette(options.colors)
+
   on('session.start', async ($, e, next) => {
     const root = rootFrom({
       own: await $.env.get('CHECKLIST_BRIDGE_HOME'),
@@ -227,6 +231,7 @@ export const register: Register = on => {
       showShared: await read($, showShared),
       awayPicker: await read($, awayPicker),
       width: e.props.bodyColumns,
+      colors,
     }
     return drawPane(els, a, sid, view, {
       changed: async c => {
@@ -267,6 +272,10 @@ export const register: Register = on => {
       },
       toggleAwayPicker: async () => {
         await update($, awayPicker, v => !v)
+      },
+      copy: async (text, surface) => {
+        const r = await $.ui.copy({ text, surface })
+        void $.ui.toast(r.isCopied ? 'Copied.' : 'Could not copy here. Select the command and copy it yourself.')
       },
     })
   })
