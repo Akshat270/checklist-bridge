@@ -9,6 +9,7 @@
 - While your checklists are in the mod, their tabs in VS Code say so at the top, with a **Switch back to VS Code** button. A window with no folder open keeps its checklists in VS Code, and so does a checklist that could not be moved.
 - Switching works when Claude runs in VS Code's own terminal too: VS Code follows `/checklist use-extension` and `/checklist use-mod` right away, without clicking away and back. A checklist you worked on in the mod opens in VS Code when it comes back.
 - After `/checklist use-extension`, the chat you are in keeps its checklist: Claude reads and changes it in VS Code, and **Send now** in VS Code reaches that chat. Before, it had to be a new chat.
+- A Claude Code chat started in a subfolder of your project finds the checklists VS Code moved over, and VS Code takes back the ones made there.
 - After switching to the mod, open `/checklist` and press **Continue here** to pick up a checklist that came from VS Code. A chat that was already open follows the switch within a few seconds.
 - The mod's checklist fits narrow panes: ids, labels and buttons stay whole, and long task names wrap under themselves. **Shared with Claude** is green.
 

@@ -417,9 +417,13 @@ export class ChecklistStore {
   /** Checklists that stay usable while locked: they could not be handed to the mod, so only we have them. */
   keptHere = new Set<string>();
 
-  /** Why this checklist can't be changed here right now (lockedNote), or undefined if it can. */
-  lockedFor(c: Checklist | undefined): string | undefined {
-    return c && !c.closed && this.keptHere.has(c.id) ? undefined : this.lockedNote;
+  /**
+   * Why this chat's checklist can't be changed here right now (lockedNote), or undefined if it can. Not the
+   * example checklists (sessions `demo-…`): they are never handed over.
+   */
+  lockedFor(c: Checklist | undefined, sessionId = c?.sessionId ?? ''): string | undefined {
+    if (sessionId.startsWith('demo-') || (c && !c.closed && this.keptHere.has(c.id))) return undefined;
+    return this.lockedNote;
   }
 
   constructor(initial: Checklist[] = []) {
@@ -719,7 +723,7 @@ export class ChecklistStore {
   /** Anything still waiting on the user (so waiting makes sense). */
   hasPending(sessionId: string): boolean {
     const c = this.forSession(sessionId);
-    if (this.lockedFor(c)) return false;
+    if (this.lockedFor(c, sessionId)) return false;
     return !!c && !c.closed && (c.tasks.some((t) => !t.shared) || c.questions.some((q) => !q.answer && !q.retired));
   }
 
@@ -769,7 +773,7 @@ export class ChecklistStore {
   /* ---------- tools (Claude) ---------- */
 
   handleTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
-    const locked = this.lockedFor(this.forSession(sessionId));
+    const locked = this.lockedFor(this.forSession(sessionId), sessionId);
     if (locked) return ok(locked);
     try {
       const res = this.runTool(sessionId, meta, name, args);

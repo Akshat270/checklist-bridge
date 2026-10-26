@@ -11,7 +11,8 @@ const { writeWindow } = require(DIST + '/registry.js');
 const store = new ChecklistStore();
 const events = [];
 store.onChange((e) => events.push(e.kind));
-const server = createWindowServer(store, 'secret').server;
+const ws = createWindowServer(store, 'secret');
+const server = ws.server;
 let failed = 0;
 const check = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) failed++; };
 
@@ -82,6 +83,28 @@ server.listen(0, '127.0.0.1', async () => {
   check(/CLOSED by the user/.test(text(r)), 'Claude is told when the user closed the checklist');
   r = await A.tool('checklist_add_tasks', { tasks: ['Something new'] });
   check(store.all().filter((c) => c.sessionId.startsWith('chatA')).length === 1 && store.all().some((c) => c.title === 'Things to do'), 'adding after close starts a fresh checklist');
+
+  // Handing the checklists to the Claude Code mod ends a wait under way, and says why; so does the next one.
+  {
+    const W = chat('chatW');
+    await W.tool('checklist_add_tasks', { tasks: ['Wait on me'] });
+    const waiting = W.tool('checklist_wait', { timeout_minutes: 5 });
+    await new Promise((r) => setTimeout(r, 300));
+    store.lockedNote = 'Moved to the mod.';
+    ws.endWaits(store.lockedNote);
+    check(text(await waiting) === 'Moved to the mod.', 'a wait under way ends when the checklists go to the mod');
+    check(text(await W.tool('checklist_wait', {})) === 'Moved to the mod.', 'and a new wait says so, not that nothing is waiting');
+    store.lockedNote = undefined;
+    W.kill();
+  }
+
+  // A chat that gives no process (the mod passing calls on) counts as reachable only while it keeps coming back.
+  {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/call`, { method: 'POST', headers: { Authorization: 'Bearer secret' }, body: JSON.stringify({ sessionId: 'mod-chat', tool: '__hello' }) });
+    check(res.status === 200 && ws.isAlive('mod-chat'), 'a chat without a process is reachable while it calls');
+    ws.sessions.get('mod-chat').lastSeen = Date.now() - 3 * 60_000;
+    check(!ws.isAlive('mod-chat') && ws.prune() && !ws.sessions.has('mod-chat'), 'and is dropped once it has been quiet for minutes');
+  }
 
   // window goes away -> clear error, no hang
   server.close(); server.closeAllConnections();

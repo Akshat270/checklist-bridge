@@ -10,7 +10,7 @@
 // One JSON file per checklist, in the shared folder for this project (lib/handover.ts). A mod can't rename
 // or delete files, so a save writes `<id>.json.bak` and then `<id>.json`; if the second write is cut short,
 // loading falls back to the backup.
-import { absolutePath, join, listIds, parseList, sharedDir, type Use } from './lib/handover'
+import { absolutePath, ancestors, join, listIds, parseList, sharedDir, type Use } from './lib/handover'
 import { ChecklistStore, type Checklist } from './lib/model'
 
 export type Paths = { own?: string; userProfile?: string; home?: string }
@@ -35,44 +35,27 @@ export type Loaded = { id: string; mtime: number; at: number; main?: string; bak
 const SETTLED_MS = 5000
 
 /** Images are what Claude may open without asking (see isSharedShot). */
-const IMAGE = /\.(png|jpe?g|gif|webp)$/i
-
-/** A VS Code window as it announces itself in `~/.checklist-bridge/windows/` (src/registry.ts). */
-export type Win = { windowId: string; port: number; token: string; folders: string[]; focusedAt: number; name: string }
-
-/**
- * The VS Code windows to try for a chat in `cwd`, best first: the window with the chat's folder open (the
- * deepest such folder, then the one used last), then the others, the one used last first. A window file can
- * outlive its window, so the caller tries the next when one doesn't answer.
- */
-export function windowsFor(texts: (string | undefined)[], cwd: string): Win[] {
-  const norm = (p: string) => p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-  const here = norm(cwd)
-  const depth = (w: Win) =>
-    Math.max(-1, ...w.folders.map(f => norm(f)).filter(f => here === f || here.startsWith(`${f}/`)).map(f => f.length))
-  const wins: Win[] = []
-  for (const t of texts) {
-    try {
-      const w = JSON.parse(t ?? '')
-      if (w && Number.isInteger(w.port) && typeof w.token === 'string')
-        wins.push({ windowId: String(w.windowId), port: w.port, token: w.token, folders: Array.isArray(w.folders) ? w.folders.map(String) : [], focusedAt: Number(w.focusedAt) || 0, name: String(w.name ?? '') })
-    } catch {
-      // half-written or not a window file
-    }
-  }
-  return wins.sort((a, b) => depth(b) - depth(a) || b.focusedAt - a.focusedAt)
-}
+export const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 
 /** What one save writes, in order, and the version it saves. */
 export type Pending = { id: string; at: number; writes: [string, string][] }
 
 export class App {
   readonly store = new ChecklistStore()
-  readonly dir: string
+  /** The shared folder this chat's checklists are in (see project). */
+  dir: string
+  /** The folder `dir` is for: the chat's own, or the one above it that VS Code handed checklists over for. */
+  project: string
   /** Changed here, not saved yet. */
   private dirty = new Set<string>()
   /** The version (updatedAt) of each checklist as last read from or written to its file. */
   private known = new Map<string, number>()
+  /**
+   * Text typed into a note or "something else" and not saved yet, by `<list>/<item>/<field>`. Typing isn't a
+   * change to save on its own (it would save at every keystroke), so when the file changes elsewhere and
+   * this copy is replaced, what was typed is put back.
+   */
+  private typed = new Map<string, string>()
   /** Each checklist file's time when we last read it, and when that was: settled files are not read again. */
   private readAt = new Map<string, { mtime: number; at: number }>()
 
@@ -83,7 +66,26 @@ export class App {
     public use: Use | undefined,
   ) {
     this.store.host = 'mod'
+    this.project = folder
     this.dir = sharedDir(root, folder)
+  }
+
+  /**
+   * The shared folders to look in, nearest first: this chat's folder's, then each folder's above it. VS Code
+   * hands its checklists over under its project folder, which may be above the folder the chat started in.
+   */
+  candidates(): { folder: string; dir: string }[] {
+    return ancestors(this.folder).map(folder => ({ folder, dir: sharedDir(this.root, folder) }))
+  }
+
+  /** Uses the shared folder for `folder` (one of candidates()). Only while this chat knows no checklist yet. */
+  useProject(folder: string): boolean {
+    if (folder === this.project || this.store.all().length || this.unsaved) return false
+    this.project = folder
+    this.dir = sharedDir(this.root, folder)
+    this.known.clear()
+    this.readAt.clear()
+    return true
   }
 
   /** On unless the user switched to the VS Code extension. */
@@ -130,6 +132,7 @@ export class App {
       if (mine && this.dirty.has(c.id) && mine.updatedAt > c.updatedAt) continue // ours is newer and still to be saved
       const version = c.updatedAt
       this.store.replace(c) // keeps the file's updatedAt: the version both sides compare
+      this.retype(c.id)
       this.known.set(c.id, version)
       this.dirty.delete(c.id)
       changed = true
@@ -198,6 +201,35 @@ export class App {
     return c ? JSON.stringify({ ...c, updatedAt: 0, lastReadAt: 0 }) : ''
   }
 
+  /** What the user types into an item's note, or a question's own answer: kept, not saved yet (see typed). */
+  type(listId: string, itemId: string, field: 'note' | 'other', value: string) {
+    this.typed.set(`${listId}/${itemId}/${field}`, value)
+    this.applyTyped(listId, itemId, field, value)
+  }
+
+  private applyTyped(listId: string, itemId: string, field: 'note' | 'other', value: string) {
+    const c = this.store.get(listId)
+    const t = c?.tasks.find(x => x.id === itemId)
+    if (t) {
+      if (!t.shared && field === 'note') this.store.setDraft(listId, itemId, { note: value })
+      return
+    }
+    const q = c?.questions.find(x => x.id === itemId)
+    if (q && !q.answer) this.store.setAnswerDraft(listId, itemId, field === 'note' ? { note: value } : { other: value })
+  }
+
+  /** Puts back what was typed on a checklist after a newer copy replaced it. */
+  private retype(listId: string) {
+    const c = this.store.get(listId)
+    if (!c) return
+    const version = c.updatedAt
+    for (const [k, v] of this.typed) {
+      const [list, item, field] = k.split('/') as [string, string, 'note' | 'other']
+      if (list === listId) this.applyTyped(list, item, field, v)
+    }
+    c.updatedAt = version // still the file's version: putting back what was typed is no change of its own
+  }
+
   /** Marks a checklist as changed; the next save writes it. */
   touch(c: Checklist | undefined) {
     if (!c) return
@@ -221,7 +253,9 @@ export class App {
   /** A save was written. If the checklist changed again meanwhile, it stays to be saved. */
   saved(p: Pending) {
     this.known.set(p.id, p.at)
-    if (this.store.get(p.id)?.updatedAt === p.at) this.dirty.delete(p.id)
+    if (this.store.get(p.id)?.updatedAt !== p.at) return // changed again meanwhile: saved next time
+    this.dirty.delete(p.id)
+    for (const k of [...this.typed.keys()]) if (k.startsWith(`${p.id}/`)) this.typed.delete(k) // it is in the file now
   }
 
   /** Whether some change is still not saved (a write failed). */

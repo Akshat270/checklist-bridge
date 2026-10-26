@@ -67,6 +67,11 @@ function seed(sb) {
   let W = win(sb); await W.ready; await sleep(2500);
   check(sb.registered(), 'starts connected as usual');
   check(sb.mode() === 'extension', 'and notes that the extension is the one in use');
+  {
+    // The copy Claude Code runs has every file it needs (it only has what the extension copies there).
+    const r = require('child_process').spawnSync(process.execPath, [path.join(sb.cb, 'connector', 'connector.js')], { env: sb.env, input: '', timeout: 10_000, encoding: 'utf8' });
+    check(!/Cannot find module/.test(r.stderr), `the installed connector starts${r.stderr ? ': ' + r.stderr.split('\n')[0] : ''}`);
+  }
 
   await cmd(W, 'checklistBridge.useMod'); await sleep(500);
   check(sb.mode() === 'mod', '"Use the Claude Code mod instead" switches');
@@ -272,6 +277,71 @@ function seed(sb) {
     fs.writeFileSync(path.join(sb11.cb, 'mode.json'), H.modeText('extension'));
     W = win(sb11, '/work/other'); await W.ready; await sleep(2500);
     check(sb11.registered() && !notes(W).some((n) => /no longer connected/.test(n)), 'another folder\'s window, after /checklist use-extension: connects without asking');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- while the mod has the checklists: the example still opens, and a close confirmed after the handover is refused
+  {
+    const sb12 = sandbox();
+    sb12.env.CB_DIALOG_MS = '3000';
+    const id12 = seed(sb12);
+    W = win(sb12); await W.ready; await sleep(2500);
+    W.send({ cmd: 'command', name: 'checklistBridge.close', args: [id12] }); // the user reads the question...
+    await sleep(300);
+    fs.writeFileSync(path.join(sb12.cb, 'mode.json'), H.modeText('mod')); // ...while the switch to the mod happens
+    await sleep(4000);
+    check(notes(W).some((n) => /Switch back to VS Code to close it/.test(n)), 'a close confirmed after the checklist was handed over is refused');
+    await cmd(W, 'checklistBridge.demo'); await sleep(500);
+    check(W.msgs.some((m) => m.panelOpened && m.panelOpened !== 'Launch'), 'the example checklist still opens while the mod has the checklists');
+    W.send({ cmd: 'quit' }); await W.exited;
+    check(!JSON.parse(fs.readFileSync(path.join(sb12.storage, 'checklists', `${id12}.json`), 'utf8')).closed, 'and the handed-over checklist stays open');
+  }
+
+  // ---- switched to the mod and straight back while the handover still runs: the window ends up as the mode file says
+  {
+    const sb13 = sandbox();
+    sb13.env.FAKE_CLAUDE_REMOVE_MS = '4000'; // disconnecting takes a while, so the handover is still running
+    seed(sb13);
+    W = win(sb13); await W.ready;
+    for (let i = 0; i < 40 && !sb13.registered(); i++) await sleep(250); // connected, so the handover has to disconnect
+    fs.writeFileSync(path.join(sb13.cb, 'mode.json'), H.modeText('mod'));
+    W.send({ cmd: 'focus' }); // the handover starts...
+    await sleep(1000);
+    fs.writeFileSync(path.join(sb13.cb, 'mode.json'), H.modeText('extension')); // ...and the user switches back meanwhile
+    W.send({ cmd: 'focus' });
+    await sleep(8000);
+    check(sb13.registered() && modMode(W) === false, 'a switch back made during a handover is not lost');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- a mod chat saving late, after VS Code took the checklist back: the user's later edits in VS Code stay
+  {
+    const sb14 = sandbox();
+    const id14 = seed(sb14);
+    W = win(sb14); await W.ready; await sleep(2500);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    const shared = path.join(sb14.shared(), `${id14}.json`);
+    const stale = fs.readFileSync(shared, 'utf8');
+    fs.writeFileSync(path.join(sb14.cb, 'mode.json'), H.modeText('extension'));
+    await sleep(3500);
+    await user(W, 'Launch', { type: 'share', taskId: 't2', done: true, note: 'edited in VS Code' });
+    fs.writeFileSync(shared, stale); // the late save
+    W.send({ cmd: 'focus' }); await sleep(1500);
+    W.send({ cmd: 'quit' }); await W.exited;
+    const kept = JSON.parse(fs.readFileSync(path.join(sb14.storage, 'checklists', `${id14}.json`), 'utf8'));
+    check(kept.tasks[1].shared?.note === 'edited in VS Code', 'an older copy saved late in the mod does not undo edits made in VS Code');
+  }
+
+  // ---- auto-connect off: coming back from the mod connects only if switching to the mod disconnected it
+  {
+    const sb15 = sandbox();
+    sb15.env.CB_AUTOCONNECT = '0';
+    seed(sb15);
+    W = win(sb15); await W.ready; await sleep(2500);
+    check(!sb15.registered(), 'auto-connect off: not connected at start');
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    await cmd(W, 'checklistBridge.useExtension'); await sleep(1500);
+    check(!sb15.registered(), 'and not connected after switching to the mod and back, as the user never connected it');
     W.send({ cmd: 'quit' }); await W.exited;
   }
 

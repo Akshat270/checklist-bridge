@@ -2,7 +2,7 @@
 // No `vscode` import, so it can be tested on its own.
 import * as fs from 'fs';
 import * as path from 'path';
-import { fromShared, imagesDir, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
+import { FOLDER_NOTE, fromShared, imagesDir, isInside, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
 import { ImageFiles } from './images';
 import type { Checklist, Img } from './model';
 import { LOCKED, sleepSync, writeFileSafe } from './saver';
@@ -35,6 +35,11 @@ export interface ImageSource {
 export function exportLists(root: string, folder: string, lists: Checklist[], images: ImageSource): { written: number; failed: Checklist[] } {
   const dir = sharedDir(root, folder);
   fs.mkdirSync(dir, { recursive: true });
+  try {
+    writeFileSafe(path.join(dir, FOLDER_NOTE), folder);
+  } catch {
+    /* only needed to find a subfolder's checklists */
+  }
   const out = new ImageFiles(imagesDir(root)); // the same file names as the extension's own
   const failed: Checklist[] = [];
   let written = 0;
@@ -81,8 +86,7 @@ function readList(dir: string, id: string): Checklist | undefined {
  * The checklists the mod has for this project, ready for the extension (screenshots read back in), closed
  * ones too (closing one in the mod must close it here), and the ids of every file, for markMoved.
  */
-export function importLists(root: string, folder: string): { lists: Checklist[]; ids: string[] } {
-  const dir = sharedDir(root, folder);
+export function importLists(dir: string): { lists: Checklist[]; ids: string[] } {
   let names: string[];
   try {
     names = fs.readdirSync(dir);
@@ -109,8 +113,7 @@ export function importLists(root: string, folder: string): { lists: Checklist[];
  * After taking checklists in: rename their files so they aren't taken in again, retrying while Windows has
  * one open (the mod reading it). Returns the ids whose file is still there.
  */
-export function markMoved(root: string, folder: string, ids: string[]): string[] {
-  const dir = sharedDir(root, folder);
+export function markMoved(dir: string, ids: string[]): string[] {
   const left: string[] = [];
   for (const id of ids)
     for (const f of [`${id}.json`, `${id}.json.bak`]) {
@@ -119,6 +122,9 @@ export function markMoved(root: string, folder: string, ids: string[]): string[]
         try {
           fs.rmSync(`${from}.moved`, { force: true }); // Windows can't rename over a file
           fs.renameSync(from, `${from}.moved`);
+          // A rename keeps the file's time: stamp when it was moved, which tidyShared counts its 30 days from.
+          const now = new Date();
+          fs.utimesSync(`${from}.moved`, now, now);
           break;
         } catch (e: any) {
           if (e?.code === 'ENOENT') break; // already gone (a checklist with only one of the two)
@@ -201,10 +207,36 @@ export function tidyShared(root: string, now = Date.now()): number {
   return n;
 }
 
-/** Whether the mod has checklists for this project waiting to be taken in. */
-export function hasShared(root: string, folder: string): boolean {
+/**
+ * The mod's shared folders for a window's project folders: each folder's own, and those the mod made for
+ * chats started in a subfolder of one (their FOLDER_NOTE says where). Without case on Windows and macOS.
+ */
+export function sharedDirs(root: string, folders: string[]): string[] {
+  const caseless = process.platform !== 'linux';
+  const dirs = new Set(folders.map((f) => path.resolve(sharedDir(root, f))));
+  const modDir = path.dirname(imagesDir(root));
+  let names: string[] = [];
   try {
-    return listIds(fs.readdirSync(sharedDir(root, folder))).length > 0;
+    names = fs.readdirSync(modDir);
+  } catch {
+    /* nothing handed over yet */
+  }
+  for (const name of names) {
+    let at: string;
+    try {
+      at = fs.readFileSync(path.join(modDir, name, FOLDER_NOTE), 'utf8').trim();
+    } catch {
+      continue;
+    }
+    if (at && folders.some((f) => isInside(at, f, caseless))) dirs.add(path.resolve(modDir, name));
+  }
+  return [...dirs];
+}
+
+/** Whether the mod has checklists for this project waiting to be taken in. */
+export function hasShared(dir: string): boolean {
+  try {
+    return listIds(fs.readdirSync(dir)).length > 0;
   } catch {
     return false;
   }

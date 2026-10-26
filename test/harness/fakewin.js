@@ -45,7 +45,8 @@ const vscode = {
     createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
     createTreeView: (_id, o) => ((tree = o.treeDataProvider), { dispose() {}, onDidChangeVisibility: ev() }),
     showInformationMessage: async (m) => (say({ log: `[${name}] NOTIFY ${m}` }), /^Use Checklist Bridge inside Claude Code/.test(m) ? 'Switch' : undefined),
-    showWarningMessage: async (m, o) => (say({ log: `[${name}] WARN ${m}`, warn: m, detail: o?.detail }), /^Close /.test(m) ? 'Close checklist' : undefined),
+    // CB_DIALOG_MS: how long the user takes to answer a question (to test what happens meanwhile).
+    showWarningMessage: async (m, o) => (say({ log: `[${name}] WARN ${m}`, warn: m, detail: o?.detail }), await new Promise((r) => setTimeout(r, Number(process.env.CB_DIALOG_MS) || 0)), /^Close /.test(m) ? 'Close checklist' : undefined),
     showQuickPick: async () => undefined,
     withProgress: async (o, task) => { say({ log: `[${name}] PROGRESS ${o.title}` }); return task(); },
     createTerminal: () => ({ show() {}, sendText: (t) => say({ log: `[${name}] TERMINAL ${t}` }) }),

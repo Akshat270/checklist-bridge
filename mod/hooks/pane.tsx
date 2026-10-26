@@ -374,7 +374,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             )}
           </Box>
         )}
-        {extras(t, t.draft.note, v => app.store.setDraft(c.id, t.id, { note: v }), t.draft.images, true)}
+        {extras(t, t.draft.note, v => app.type(c.id, t.id, 'note', v), t.draft.images, true)}
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           {filled({
             key: `${t.id}-share-done`,
@@ -510,13 +510,13 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 placeholder="your own answer"
                 value={q.draft.other}
                 submitLabel="save"
-                onInput={v => app.store.setAnswerDraft(c.id, q.id, { other: v })}
+                onInput={v => app.type(c.id, q.id, 'other', v)}
                 onSubmit={v => edit(() => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
               />,
             )}
           </Box>
         )}
-        {extras(q, q.draft.note, v => app.store.setAnswerDraft(c.id, q.id, { note: v }), q.draft.images, false, !(Input && q.allowOther))}
+        {extras(q, q.draft.note, v => app.type(c.id, q.id, 'note', v), q.draft.images, false, !(Input && q.allowOther))}
         <Box marginTop={1}>
           {filled({
             key: `${q.id}-answer`,

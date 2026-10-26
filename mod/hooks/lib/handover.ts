@@ -52,6 +52,37 @@ export const join = (first: string, ...rest: string[]) =>
   [first.replace(/[\\/]+$/, ''), ...rest.map((p) => p.replace(/^[\\/]+|[\\/]+$/g, ''))].join('/');
 
 export const modeFile = (root: string) => join(root, 'mode.json');
+/**
+ * In each shared folder: the project folder it is for, as text. Folder keys are hashes, so this is how VS Code
+ * finds the checklists a mod chat made in a subfolder of its project.
+ */
+export const FOLDER_NOTE = 'folder.txt';
+
+/** A path's own folder and each folder above it, nearest first: `/a/b` gives `/a/b`, `/a`, `/`. */
+export function ancestors(p: string): string[] {
+  const out: string[] = [];
+  let cur = p.trim().replace(/[\\/]+$/, '') || p.trim();
+  if (/^[A-Za-z]:$/.test(cur)) cur += '\\';
+  for (;;) {
+    out.push(cur);
+    const cut = cur.replace(/[\\/][^\\/]*$/, '');
+    // The top: '/' (cut is ''), or a drive like 'C:' (cut has no slash left).
+    const up = cut === '' ? (cur.startsWith('/') && cur !== '/' ? '/' : undefined) : /^[A-Za-z]:$/.test(cut) ? `${cut}\\` : cut;
+    if (!up || up === cur || out.length > 64) return out;
+    cur = up;
+  }
+}
+
+/** Whether `child` is `parent` or inside it. Either slash; without case where the disk ignores it. */
+export function isInside(child: string, parent: string, caseless: boolean): boolean {
+  const norm = (p: string) => {
+    const s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    return caseless ? s.toLowerCase() : s;
+  };
+  const c = norm(child);
+  const f = norm(parent);
+  return c === f || c.startsWith(`${f}/`) || f === '';
+}
 export const sharedDir = (root: string, folder: string) => join(root, 'mod', folderKey(folder));
 export const imagesDir = (root: string) => join(root, 'mod', 'images');
 
@@ -73,6 +104,64 @@ export function absolutePath(typed: string, home: string, cwd: string): string {
   if (/^~(?=$|[\\/])/.test(p)) return join(home, p.slice(1));
   if (/^([\\/]|[A-Za-z]:[\\/])/.test(p)) return p;
   return join(cwd, p.replace(/^\.[\\/]/, ''));
+}
+
+/** A VS Code window as it announces itself in `<root>/windows/` (written by the extension, see registry.ts). */
+export interface WindowInfo {
+  windowId: string;
+  port: number;
+  token: string;
+  pid: number;
+  folders: string[];
+  focusedAt: number;
+  name: string;
+}
+
+/** A window file's contents, or undefined if it isn't one (half-written, or something else). */
+export function parseWindow(text: string | undefined): WindowInfo | undefined {
+  try {
+    const w = JSON.parse(text ?? '');
+    if (!w || !Number.isInteger(w.port) || typeof w.token !== 'string') return undefined;
+    const folders = Array.isArray(w.folders) ? w.folders.map(String) : [];
+    return { windowId: String(w.windowId), port: w.port, token: w.token, pid: Number(w.pid) || 0, folders, focusedAt: Number(w.focusedAt) || 0, name: String(w.name ?? '') };
+  } catch {
+    return undefined;
+  }
+}
+
+/** What tells a chat which VS Code window is its own, most reliable first (see rankWindows). */
+export interface WindowHints {
+  /** The window id the extension put in the environment of the terminal the chat was started from. */
+  envWindow?: string;
+  /** The process of the VS Code window Claude Code's own VS Code integration is connected to. */
+  idePid?: number;
+  /** The chat's folder. */
+  cwd: string;
+  /** Whether paths ignore case (Windows). */
+  caseless: boolean;
+}
+
+/**
+ * The windows best first, with why each one is picked: the one the chat was started from, the one Claude
+ * Code's VS Code integration is connected to, those with the chat's folder open (the deepest folder first,
+ * then the one used last), then the rest, the one used last first. The connector and the mod both use this.
+ */
+export function rankWindows(wins: WindowInfo[], hints: WindowHints): { w: WindowInfo; why: string; rank: string }[] {
+  const norm = (p: string) => {
+    const s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    return hints.caseless ? s.toLowerCase() : s;
+  };
+  const here = norm(hints.cwd);
+  const scored = wins.map((w) => {
+    const depth = Math.max(-1, ...w.folders.map(norm).filter((f) => f && (here === f || here.startsWith(`${f}/`))).map((f) => f.length));
+    const first = hints.envWindow && w.windowId === hints.envWindow ? 2 : hints.idePid !== undefined && w.pid === hints.idePid ? 1 : 0;
+    const why =
+      first === 2 ? 'started from this window' : first === 1 ? 'Claude Code is connected to this window' : depth >= 0 ? 'this window has the project open' : 'most recently used window';
+    return { w, why, first, depth };
+  });
+  scored.sort((a, b) => b.first - a.first || b.depth - a.depth || b.w.focusedAt - a.w.focusedAt);
+  // `rank` is the same for windows only the time of use tells apart.
+  return scored.map(({ w, why, first, depth }) => ({ w, why, rank: `${first}:${depth}` }));
 }
 
 /** Reads a checklist file, or undefined if it isn't one. */

@@ -149,6 +149,41 @@ check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+/* ---------- which VS Code window a chat uses (the connector and the mod) */
+{
+  const win = (windowId, folders, focusedAt, pid = 1) => ({ windowId, port: 1, token: 't', pid, folders, focusedAt, name: windowId });
+  const wins = [win('recent', ['/x'], 9), win('proj', ['/work/proj'], 1), win('deep', ['/work/proj/web'], 0), win('ide', ['/y'], 0, 42)];
+  const ids = (hints) => H.rankWindows(wins, { caseless: false, ...hints }).map((r) => r.w.windowId).join();
+  check(ids({ cwd: '/work/proj/web/src' }) === 'deep,proj,recent,ide', 'windows: the deepest folder of the chat first, then by last use');
+  check(ids({ cwd: '/work/proj', idePid: 42 }).startsWith('ide,proj'), 'windows: Claude Code\'s own VS Code connection before folders');
+  check(ids({ cwd: '/work/proj', idePid: 42, envWindow: 'recent' }).startsWith('recent,ide'), 'windows: the window whose terminal started the chat first of all');
+  check(ids({ cwd: '/work/PROJ' }).startsWith('recent') && H.rankWindows(wins, { cwd: 'C:\\Work\\Proj', caseless: true }).length === 4 && ids({ cwd: '/WORK/PROJ', caseless: true }).startsWith('proj'), 'windows: case counts only where the disk keeps it');
+  check(H.parseWindow('{"port":"1","token":"t"}') === undefined && H.parseWindow('{half') === undefined && H.parseWindow(JSON.stringify(wins[0])).windowId === 'recent', 'window files: only whole ones count');
+}
+
+/* ---------- a chat in a subfolder, and moved files kept their 30 days */
+{
+  const { sharedDirs, markMoved, tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cb-dirs-'));
+  const sub = H.sharedDir(root, '/work/proj/web'), other = H.sharedDir(root, '/work/other');
+  for (const [d, at] of [[sub, '/work/proj/web'], [other, '/work/other']]) {
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, H.FOLDER_NOTE), at);
+  }
+  const dirs = sharedDirs(root, ['/work/proj']).map((d) => path.resolve(d));
+  check(dirs.includes(path.resolve(H.sharedDir(root, '/work/proj'))) && dirs.includes(path.resolve(sub)) && !dirs.includes(path.resolve(other)), 'VS Code finds the checklists of mod chats started in a subfolder');
+
+  const file = path.join(sub, 'a1.json');
+  fs.writeFileSync(file, '{}');
+  const old = (Date.now() - KEEP_MS - 86_400_000) / 1000;
+  fs.utimesSync(file, old, old);
+  markMoved(sub, ['a1']);
+  tidyShared(root);
+  check(fs.existsSync(`${file}.moved`), 'a file last changed long ago is still kept 30 days after it is moved');
+  fs.rmSync(root, { recursive: true, force: true });
+  check(H.ancestors('/a/b').join() === '/a/b,/a,/' && H.ancestors('C:\\u\\p').join() === 'C:\\u\\p,C:\\u,C:\\' && H.isInside('C:\\P\\x', 'c:/p', true) && !H.isInside('/ab', '/a', false), 'folders above a path, and what is inside a folder');
+}
+
 /* ---------- the mod's copies */
 for (const f of SHARED)
   check(fs.readFileSync(path.join(__ROOT, 'mod', 'hooks', 'lib', f), 'utf8').replace(/\r\n/g, '\n') === expected(f), `mod/hooks/lib/${f} matches src/${f} (run npm run build)`);
