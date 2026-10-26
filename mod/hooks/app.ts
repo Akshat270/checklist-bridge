@@ -35,7 +35,7 @@ export type Loaded = { id: string; mtime: number; at: number; main?: string; bak
 const SETTLED_MS = 5000
 
 /** Images are what Claude may open without asking (see isSharedShot). */
-export const IMAGE = /\.(png|jpe?g|gif|webp)$/i
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i
 
 /** What one save writes, in order, and the version it saves. */
 export type Pending = { id: string; at: number; writes: [string, string][] }
@@ -184,6 +184,22 @@ export class App {
     if (!pick || pick.closed) return 'That checklist was moved or closed.'
     pick.sessionId = sid // the chat it came from no longer has it: its next checklist call reads this from disk
     this.touch(pick)
+    return undefined
+  }
+
+  /**
+   * Why a press in this chat's pane can't change checklist `listId` (or its item `itemId`, adding a
+   * screenshot), as the files are now; undefined if it can. Another chat may have taken it over meanwhile.
+   */
+  refusal(listId: string, sid: string, itemId?: string): string | undefined {
+    const c = this.store.get(listId)
+    if (!c || c.closed || c.sessionId !== sid) return 'That checklist was moved or taken over by another chat.'
+    if (!itemId) return undefined
+    const t = c.tasks.find(x => x.id === itemId)
+    const q = c.questions.find(x => x.id === itemId)
+    if (!t && !q) return 'That one is no longer on the checklist.'
+    if (t ? t.shared : q!.answer) return 'That one was already shared. Unshare it to add a screenshot.'
+    if ((t ? t.draft : q!.draft).images.length >= 8) return 'This one already has 8 screenshots.'
     return undefined
   }
 

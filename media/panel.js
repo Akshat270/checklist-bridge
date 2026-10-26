@@ -1265,7 +1265,7 @@
     } else if (m.type === 'flush') {
       // The window is about to ask about closing: send what isn't saved yet first, so the question counts it.
       flushDrafts();
-      post({ type: 'flushed' });
+      post({ type: 'flushed', n: m.n }); // which request this answers: a late answer must not end the next one
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });

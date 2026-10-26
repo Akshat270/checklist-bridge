@@ -1,7 +1,7 @@
 // Run with `claude plugin test mod`. The hooks `on` registers here stand for Claude Code beneath the mod:
 // an in-memory file system, the environment, the session id, and records of what the mod showed and sent.
 import { expect, mock, test } from 'claude-code/testing'
-import { sharedDir } from './lib/handover'
+import { FOLDER_NOTE, HANDED_NOTE, sharedDir } from './lib/handover'
 import { ChecklistStore } from './lib/model'
 import { palette } from './theme'
 
@@ -526,11 +526,13 @@ test('a change that could not be saved is dropped once VS Code has the checklist
 })
 
 /** A checklist as VS Code hands it over: named after its chat process, so no mod chat's id matches it. */
-function fromVSCode(files: Record<string, string>, title: string) {
+function fromVSCode(files: Record<string, string>, title: string, folder = CWD) {
   const s = new ChecklistStore()
-  s.handleTool('4242-/work/My App', { cwd: CWD }, 'checklist_add_tasks', { title, tasks: [{ text: 'Set the key' }] })
-  const c = s.forSession('4242-/work/My App')!
-  files[`${sharedDir(ROOT, CWD)}/${c.id}.json`] = JSON.stringify(c)
+  s.handleTool(`4242-${folder}`, { cwd: folder }, 'checklist_add_tasks', { title, tasks: [{ text: 'Set the key' }] })
+  const c = s.forSession(`4242-${folder}`)!
+  const dir = sharedDir(ROOT, folder)
+  files[`${dir}/${c.id}.json`] = JSON.stringify(c)
+  files[`${dir}/${FOLDER_NOTE}`] = files[`${dir}/${HANDED_NOTE}`] = folder
   return c.id
 }
 
@@ -657,22 +659,17 @@ test('a chat in VS Code: the window it was started from first, the folder\'s bef
   expect(textOf(await pending)).toMatch(/may or may not have gone through/)
 })
 
-test('screenshots VS Code names open without asking; a chat with no checklist there does not poll it', async ($, on) => {
+test('screenshots from VS Code reach Claude as images; a chat with no checklist there does not poll it', async ($, on) => {
   const clock = mock.clock(on, { now: Date.now() })
   const { files, net, chat } = world(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'checklist', args: 'use-extension' } as any)
   windowFile(files, 'mine', 7101, [CWD], 1)
-  net.answer[7101] = (route, body) =>
-    route === '/poll' ? { status: 200, text: '{"events":[]}' } : (body.tool === 'checklist_read'
-          ? { status: 200, text: JSON.stringify({ content: [{ type: 'text', text: 'Checklist "x": t1 done' }, { type: 'text', text: 't1 (Login: admin) screenshot 1/1: /home/u/shot one.png (open it with your Read tool)' }] }) }
-          : said('ok'))
+  net.answer[7101] = route => (route === '/poll' ? { status: 200, text: '{"events":[]}' } : said('ok'))
   // This chat had no checklist when it switched, and hasn't called VS Code: it doesn't poll.
   await clock.advance(3_000)
   expect(net.posts.some(p => p.url.endsWith('/poll'))).toBe(false)
   await $.tool.call({ tool: `${T}checklist_read` } as any)
-  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/home/u/shot one.png' } })).decision).toBe('allow')
-  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/home/u/other.png' } })).decision).toBe('ask')
   // A screenshot VS Code sends inline reaches Claude in the form the model can see.
   net.answer[7101] = () => ({ status: 200, text: JSON.stringify({ content: [{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }] }) })
   const r = await $.tool.call({ tool: `${T}checklist_read` } as any)
@@ -712,4 +709,36 @@ test('a chat started in a subfolder finds the checklists VS Code handed over for
   await $.session.start({ cwd: '/elsewhere/proj', surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'Here' }] } as any)
   expect(files[`${sharedDir(ROOT, '/elsewhere/proj')}/folder.txt`]).toBe('/elsewhere/proj')
+})
+
+test('a folder above the chat that VS Code never handed over is not this chat\'s project', async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  // Another chat once used the folder above (no VS Code handover there).
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Above', tasks: [{ text: 'Not mine' }] } as any)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect(textOf(await $.command.run({ command: 'checklist', args: 'list' } as any).then(r => ({ result: r.text })))).toMatch(/No earlier checklists/)
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Mine', tasks: [{ text: 'Here' }] } as any)
+  expect(files[`${sharedDir(ROOT, CWD)}/${FOLDER_NOTE}`]).toBe(CWD)
+})
+
+test('a press after another chat took the checklist over changes nothing, and a paste says why it can\'t', async ($, on) => {
+  const { files, seen, clipboard } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }, { text: 'Two' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Shared from somewhere else meanwhile: the paste is refused before it runs, for that reason.
+  elsewhere(files, c => (c.tasks[0].shared = { at: Date.now(), done: true, note: '', images: [] }))
+  const runs = clipboard.runs.length
+  await ui.press({ key: 't1-paste' })
+  expect(seen.toasts.at(-1)).toMatch(/already shared/)
+  expect(clipboard.runs.length).toBe(runs)
+  // Another chat takes the checklist over: this pane's press is refused.
+  elsewhere(files, c => (c.sessionId = 'chat-2'))
+  const before = files[listFile(files)]
+  await ui.press({ key: 't1-share-done' }) // the card still drawn
+  expect(seen.toasts.at(-1)).toMatch(/taken over by another chat/)
+  expect(files[listFile(files)]).toBe(before)
+  await ui.unmount()
 })

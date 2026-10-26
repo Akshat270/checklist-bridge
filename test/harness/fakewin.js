@@ -54,7 +54,7 @@ const vscode = {
     createWebviewPanel: (type, title) => {
       const msg = new EventEmitter(), disp = new EventEmitter();
       const p = {
-        title, webview: { options: {}, cspSource: 'x', asWebviewUri: (u) => u, onDidReceiveMessage: msg.event, postMessage: async (m) => { if (m.type === 'state') { p.state = m.list; p.routes = m.routes; say({ state: m, title: p.title }); } else say({ webMsg: m, title: p.title }); if (m.type === 'flush') setTimeout(() => { for (const x of p.unsaved || []) msg.fire(x); p.unsaved = []; msg.fire({ type: 'flushed' }); }, 20); return true; }, set html(v) { setTimeout(() => msg.fire({ type: 'ready' })); } },
+        title, webview: { options: {}, cspSource: 'x', asWebviewUri: (u) => u, onDidReceiveMessage: msg.event, postMessage: async (m) => { if (m.type === 'state') { p.state = m.list; p.routes = m.routes; say({ state: m, title: p.title }); } else say({ webMsg: m, title: p.title }); if (m.type === 'flush') setTimeout(() => { for (const x of p.unsaved || []) msg.fire(x); p.unsaved = []; msg.fire({ type: 'flushed', n: m.n }); }, Number(process.env.CB_FLUSH_MS) || 20); return true; }, set html(v) { setTimeout(() => msg.fire({ type: 'ready' })); } },
         onDidDispose: disp.event, reveal() {}, dispose() { if (p.gone) return; p.gone = true; disp.fire(); say({ panelClosed: p.title }); },
         user: (m) => msg.fire(m),
       };

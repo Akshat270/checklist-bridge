@@ -86,16 +86,25 @@ server.listen(0, '127.0.0.1', async () => {
 
   // Handing the checklists to the Claude Code mod ends a wait under way, and says why; so does the next one.
   {
-    const W = chat('chatW');
+    const W = chat('chatW'), K = chat('chatK');
     await W.tool('checklist_add_tasks', { tasks: ['Wait on me'] });
+    await K.tool('checklist_add_tasks', { tasks: ['Kept here'] });
     const waiting = W.tool('checklist_wait', { timeout_minutes: 5 });
+    let keptDone = false;
+    const keptWait = K.tool('checklist_wait', { timeout_minutes: 1 }).then((r) => ((keptDone = true), r));
     await new Promise((r) => setTimeout(r, 300));
     store.lockedNote = 'Moved to the mod.';
-    ws.endWaits(store.lockedNote);
+    store.keptHere = new Set(store.all().filter((c) => c.sessionId.startsWith('chatK')).map((c) => c.id)); // its export failed
+    ws.endWaits((sid) => store.lockedFor(store.forSession(sid), sid));
     check(text(await waiting) === 'Moved to the mod.', 'a wait under way ends when the checklists go to the mod');
+    await new Promise((r) => setTimeout(r, 200));
+    check(!keptDone, 'but not the wait on a checklist that stays usable here');
+    store.keptHere = new Set();
     check(text(await W.tool('checklist_wait', {})) === 'Moved to the mod.', 'and a new wait says so, not that nothing is waiting');
     store.lockedNote = undefined;
-    W.kill();
+    store.share(store.all().find((c) => c.sessionId.startsWith('chatK')).id, 't1');
+    check(!/Moved to the mod/.test(text(await keptWait)), 'which ends as usual, with the user\'s update');
+    W.kill(); K.kill();
   }
 
   // A chat that gives no process (the mod passing calls on) counts as reachable only while it keeps coming back.

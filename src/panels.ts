@@ -169,7 +169,9 @@ export class Panels {
     for (const p of [...this.open.values()]) p.dispose();
   }
 
-  private flushing = new Map<string, () => void>();
+  /** The flush each panel waits on: its number, and what ends the wait. */
+  private flushing = new Map<string, { n: number; done: () => void }>();
+  private flushSeq = 0;
   private flushes = new Map<string, Promise<void>>();
   private lockNoticeAt = 0;
   /**
@@ -182,6 +184,7 @@ export class Panels {
     // One at a time per panel: a second wait starts when the first has its answer, so neither returns early.
     const earlier = this.flushes.get(id);
     if (earlier) return earlier.then(() => this.flush(id, ms));
+    const n = ++this.flushSeq;
     const run = new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer);
@@ -190,8 +193,8 @@ export class Panels {
         resolve();
       };
       const timer = setTimeout(done, ms);
-      this.flushing.set(id, done);
-      p.webview.postMessage({ type: 'flush' });
+      this.flushing.set(id, { n, done });
+      p.webview.postMessage({ type: 'flush', n });
     });
     this.flushes.set(id, run);
     return run;
@@ -219,7 +222,8 @@ export class Panels {
         vscode.commands.executeCommand('checklistBridge.useExtension');
         break;
       case 'flushed': // everything held back was sent before this, and messages arrive in order: it is saved
-        this.flushing.get(id)?.();
+        // Only the answer to the flush waited on now: one that timed out may still answer late.
+        if (this.flushing.get(id)?.n === m.n) this.flushing.get(id)!.done();
         break;
       case 'ready': {
         this.ready.add(id);

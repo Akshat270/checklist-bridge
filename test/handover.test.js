@@ -161,27 +161,53 @@ check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod
   check(H.parseWindow('{"port":"1","token":"t"}') === undefined && H.parseWindow('{half') === undefined && H.parseWindow(JSON.stringify(wins[0])).windowId === 'recent', 'window files: only whole ones count');
 }
 
-/* ---------- a chat in a subfolder, and moved files kept their 30 days */
+/* ---------- which shared folders a window takes back, and moving files */
 {
-  const { sharedDirs, markMoved, tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
+  const { sharedDirs, markMoved, importLists, hasShared, tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
   const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cb-dirs-'));
-  const sub = H.sharedDir(root, '/work/proj/web'), other = H.sharedDir(root, '/work/other');
-  for (const [d, at] of [[sub, '/work/proj/web'], [other, '/work/other']]) {
+  const R = (d) => path.resolve(d);
+  const dirFor = (at, handed = false) => {
+    const d = H.sharedDir(root, at);
     fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(d, H.FOLDER_NOTE), at);
-  }
-  const dirs = sharedDirs(root, ['/work/proj']).map((d) => path.resolve(d));
-  check(dirs.includes(path.resolve(H.sharedDir(root, '/work/proj'))) && dirs.includes(path.resolve(sub)) && !dirs.includes(path.resolve(other)), 'VS Code finds the checklists of mod chats started in a subfolder');
+    if (handed) fs.writeFileSync(path.join(d, H.HANDED_NOTE), at);
+    return R(d);
+  };
+  const web = dirFor('/work/proj/web'); // a mod chat started in a subfolder
+  const other = dirFor('/work/other');
+  const api = dirFor('/work/proj/api', true); // a VS Code window on /work/proj/api handed it over
+  const deep = dirFor('/work/proj/lib/x'); // a mod chat under a folder another window has open
+  const dirs = sharedDirs(root, ['/work/proj'], ['/work/proj/lib']).map(R);
+  check(dirs.includes(R(H.sharedDir(root, '/work/proj'))) && dirs.includes(web), 'VS Code finds the checklists of mod chats started in a subfolder');
+  check(!dirs.includes(other) && !dirs.includes(api), 'but not another project\'s, nor what a window on a subfolder handed over');
+  check(!dirs.includes(deep) && sharedDirs(root, ['/work/proj/lib'], ['/work/proj']).map(R).includes(deep), 'a subfolder goes to the window nearest to it');
+  check(sharedDirs(root, ['/work'], [], '/work').map(R).length === 1, 'a window on the home folder takes only its own folder\'s');
 
-  const file = path.join(sub, 'a1.json');
-  fs.writeFileSync(file, '{}');
+  // Moving: a file the mod saved again after it was read stays, to be taken in next; the others are moved.
+  const list = (id, updatedAt) => JSON.stringify({ id, title: id, sessionId: 's', tasks: [], questions: [], updatedAt });
+  fs.writeFileSync(path.join(web, 'a1.json'), list('a1', 1));
+  fs.writeFileSync(path.join(web, 'a2.json'), list('a2', 1));
+  const { lists, seen } = importLists(web, (c) => c.id === 'a1');
+  check(lists.map((c) => c.id).join() === 'a1' && Object.keys(seen).sort().join() === 'a1,a2', 'import: only the checklists wanted are read in, every one is noted');
+  fs.writeFileSync(path.join(web, 'a2.json'), list('a2', 2)); // saved meanwhile
+  const moved = markMoved(web, seen);
+  check(moved.changed.join() === 'a2' && fs.existsSync(path.join(web, 'a2.json')) && fs.existsSync(path.join(web, 'a1.json.moved')), 'a file saved again while being taken in is not moved away unread');
+
+  // A file that can't be moved starts no take-back until it changes.
+  const p2 = path.join(web, 'a2.json');
+  const stuck = new Map([[p2, fs.statSync(p2).mtimeMs]]);
+  check(!hasShared(web, stuck) && hasShared(web), 'a file that could not be moved does not count again until it changes');
+
+  // Moved files keep their 30 days, counted from the move.
+  const file = path.join(web, 'a3.json');
+  fs.writeFileSync(file, list('a3', 1));
   const old = (Date.now() - KEEP_MS - 86_400_000) / 1000;
   fs.utimesSync(file, old, old);
-  markMoved(sub, ['a1']);
+  markMoved(web, { a3: 1 });
   tidyShared(root);
   check(fs.existsSync(`${file}.moved`), 'a file last changed long ago is still kept 30 days after it is moved');
   fs.rmSync(root, { recursive: true, force: true });
-  check(H.ancestors('/a/b').join() === '/a/b,/a,/' && H.ancestors('C:\\u\\p').join() === 'C:\\u\\p,C:\\u,C:\\' && H.isInside('C:\\P\\x', 'c:/p', true) && !H.isInside('/ab', '/a', false), 'folders above a path, and what is inside a folder');
+  check(H.ancestors('/a/b').join() === '/a/b,/a,/' && H.ancestors('C:\\u\\p').join() === 'C:\\u\\p,C:\\u,C:\\' && H.isInside('C:\\P\\x', 'c:/p', true) && !H.isInside('/ab', '/a', false) && H.isInside('/srv/app', '/', false), 'folders above a path, and what is inside a folder (the root too)');
 }
 
 /* ---------- the mod's copies */

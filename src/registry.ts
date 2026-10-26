@@ -84,6 +84,6 @@ function idePid(env: NodeJS.ProcessEnv): number | undefined {
  */
 export function pickWindow(env: NodeJS.ProcessEnv, cwd: string, exclude: Set<string> = new Set()): { w: WindowInfo; why: string } | undefined {
   const all = readWindows().filter((w) => !exclude.has(w.windowId));
-  const best = rankWindows(all, { envWindow: env[ENV_WINDOW], idePid: idePid(env), cwd: path.resolve(cwd), caseless: process.platform === 'win32' })[0];
+  const best = rankWindows(all, { envWindow: env[ENV_WINDOW], idePid: idePid(env), cwd: path.resolve(cwd), caseless: process.platform !== 'linux' })[0];
   return best && { w: best.w, why: best.why };
 }

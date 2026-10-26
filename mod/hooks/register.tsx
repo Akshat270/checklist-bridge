@@ -11,10 +11,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, Timer } from 'claude-code'
 
-import { App, homeFrom, IMAGE, rootFrom, type Loaded } from './app'
+import { App, homeFrom, rootFrom, type Loaded } from './app'
 import { parseAway } from './away'
 import { noImage, pasteResult, pasteCommand, platformFrom, type Platform } from './clipboard'
-import { FOLDER_NOTE, imagesDir, join, listIds, modeFile, modeText, parseList, parseMode, parseWindow, rankWindows, type WindowInfo } from './lib/handover'
+import { FOLDER_NOTE, HANDED_NOTE, imagesDir, join, listIds, modeFile, modeText, parseList, parseMode, parseWindow, rankWindows, type WindowInfo } from './lib/handover'
 import { MOD_INSTRUCTIONS, MOD_TOOLS, withoutWait, type ToolResult } from './lib/model'
 import { drawPane } from './pane'
 import { palette } from './theme'
@@ -63,8 +63,6 @@ let vscode: { post: (route: '/call' | '/poll', body: object, safeToRetry: boolea
 let platform: Platform | undefined
 /** Whether this chat's checklist is in VS Code now, so its calls and Send now go through the window. */
 let inVSCode = false
-/** Screenshot paths VS Code's checklist named for this chat: Claude may open those without asking. */
-const shotsInVSCode = new Set<string>()
 /** The timers of the session that started last; a new start stops them, so there is one set at a time. */
 let timers: Timer[] = []
 /**
@@ -75,21 +73,6 @@ let timers: Timer[] = []
 function toModel(c: ToolResult['content'][number]) {
   if (c.type === 'text') return { type: 'text' as const, text: withoutWait(c.text) }
   return { type: 'image' as const, source: { type: 'base64' as const, media_type: c.mimeType, data: c.data } }
-}
-
-/**
- * The image path in a screenshot line of checklist_read, `<label>: <path> (open it with your Read tool)`. The
- * label may hold ': ' too (a task's title), so the path starts at the first one followed by an absolute path.
- */
-function shotPath(text: string): string | undefined {
-  const m = /^([\s\S]*) \(open it with your Read tool\)$/.exec(text)
-  if (!m) return undefined
-  const line = m[1]!
-  for (let i = line.indexOf(': '); i >= 0; i = line.indexOf(': ', i + 1)) {
-    const path = line.slice(i + 2)
-    if (/^([\\/]|[A-Za-z]:[\\/])/.test(path) && IMAGE.test(path)) return path
-  }
-  return undefined
 }
 
 export const register: Register = (on, options) => {
@@ -104,27 +87,33 @@ export const register: Register = (on, options) => {
     }
     const a = new App(rootFrom(paths), homeFrom(paths), e.cwd, undefined)
     let noted = ''
+    let lookedUp = 0
     app = a
     // The tools stay registered with Claude Code across sessions of the process; the timers are made anew.
     for (const t of timers) t.cancel()
     timers = []
     inVSCode = false
-    shotsInVSCode.clear()
     disk = {
       // The mode and the folder as they are now: only files that changed since they were last read are read,
       // and a backup only when its file is missing or damaged. Returns whether any checklist changed.
       load: async () => {
+        const was = a.use
         a.use = parseMode(await $.fs.read(modeFile(a.root)).catch(() => undefined))
-        // No checklist yet: use the nearest folder, this chat's or one above it, that has checklists (VS Code
-        // hands its project's over under the project folder, which may be above where the chat started).
-        if (!a.store.all().length)
-          for (const at of a.candidates()) {
+        if (a.use !== was) lookedUp = 0 // a switch: VS Code may have just handed checklists over
+        // No checklist yet: use the nearest folder with checklists, this chat's own or one above it that VS Code
+        // handed its project's over for (the project folder may be above where the chat started). Not every
+        // folder above: one another chat happened to use is not this project. Looked for every half minute.
+        if (!a.store.all().length && Date.now() - lookedUp > 30_000) {
+          lookedUp = Date.now()
+          for (const [i, at] of a.candidates().entries()) {
             if (!(await $.fs.exists(at.dir))) continue
+            if (i > 0 && !(await $.fs.exists(join(at.dir, HANDED_NOTE)))) continue
             const names = (await $.fs.list(at.dir)).filter(f => f.kind === 'file').map(f => f.name)
             if (!listIds(names).length) continue
             a.useProject(at.folder)
             break
           }
+        }
         const entries = (await $.fs.exists(a.dir)) ? (await $.fs.list(a.dir)).filter(f => f.kind === 'file') : []
         const { present, read } = a.plan(entries)
         const files: Loaded[] = []
@@ -149,8 +138,11 @@ export const register: Register = (on, options) => {
         }
         // Says which folder this shared folder is for, so VS Code finds it when the chat is in a subfolder.
         if (ok && pending.length && noted !== a.dir) {
-          await $.fs.write(join(a.dir, FOLDER_NOTE), a.project).catch(() => undefined)
-          noted = a.dir
+          const wrote = await $.fs.write(join(a.dir, FOLDER_NOTE), a.project).then(
+            () => true,
+            () => false,
+          )
+          if (wrote) noted = a.dir // otherwise tried again with the next save
         }
         return ok
       },
@@ -190,7 +182,7 @@ export const register: Register = (on, options) => {
         }
       })(),
       cwd: a.folder,
-      caseless: platform === 'windows',
+      caseless: platform !== 'linux', // Windows and macOS disks ignore case
     }
     /** One request to a window, or why there is no answer: 'none' (nothing there) or 'late' (no answer in time). */
     const ask = (w: WindowInfo, route: string, body: object, ms: number) =>
@@ -336,11 +328,6 @@ export const register: Register = (on, options) => {
       if (!r || !Array.isArray(r.content)) return { result: OFF_FOR_CLAUDE }
       inVSCode = true // the window knows this chat now: its Send now can reach it here
       const content = r.content.map(toModel)
-      // Screenshots VS Code names by path (ones shared in the mod): Claude opens them without a question each time.
-      for (const c of content) {
-        const path = c.type === 'text' ? shotPath(c.text) : undefined
-        if (path) shotsInVSCode.add(path)
-      }
       return { result: content, ...(r.isError ? { isError: true } : {}) }
     }
     const had = a.current(sid)
@@ -365,7 +352,6 @@ export const register: Register = (on, options) => {
   on('tool.check', { tool: 'Read' }, async ($, e, next) => {
     const file = (e.input as { file_path?: unknown } | undefined)?.file_path
     if (typeof file === 'string' && app?.isOn && app.isSharedShot(await $.session.id(), file)) return { decision: 'allow' as const }
-    if (typeof file === 'string' && app && !app.isOn && shotsInVSCode.has(file)) return { decision: 'allow' as const }
     return next(e)
   })
 
@@ -475,9 +461,10 @@ export const register: Register = (on, options) => {
           await update($, rev, n => n + 1)
           return void $.ui.toast(OFF_FOR_USER)
         }
-        if (!a.store.get(listId)) {
+        const gone = a.refusal(listId, sid)
+        if (gone) {
           await update($, rev, n => n + 1)
-          return void $.ui.toast('That checklist was moved or taken over by another chat.')
+          return void $.ui.toast(gone)
         }
         const refused = change()
         if (refused) return void $.ui.toast(refused)
@@ -495,6 +482,9 @@ export const register: Register = (on, options) => {
         void $.ui.toast('Sent to Claude.')
       },
       paste: async (c, itemId) => {
+        await d.load()
+        const before = a.isOn ? a.refusal(c.id, sid, itemId) : OFF_FOR_USER
+        if (before) return void $.ui.toast(before)
         // The system's own tool writes the PNG (a mod can't write binary files). Its folder must exist first.
         const dir = imagesDir(a.root)
         await $.fs.write(join(dir, '.keep'), '')
@@ -502,9 +492,11 @@ export const register: Register = (on, options) => {
         const r = await $.process.run(pasteCommand(p), { env: { CB_SHOT: file }, timeoutMs: 20_000 }).catch(() => undefined)
         const result = pasteResult(r?.stdout)
         if (result !== 'ok') return void $.ui.toast(noImage(p, result))
+        // Changed meanwhile? Then the image stays unused, and VS Code's tidying deletes it after 30 days.
         await d.load()
-        if (!a.isOn) return void $.ui.toast(OFF_FOR_USER)
-        if (!a.store.addImagePath(c.id, itemId, file)) return void $.ui.toast('This one already has 8 screenshots.')
+        const after = a.isOn ? a.refusal(c.id, sid, itemId) : OFF_FOR_USER
+        if (after) return void $.ui.toast(after)
+        if (!a.store.addImagePath(c.id, itemId, file)) return void $.ui.toast('That is not a .png, .jpg, .gif or .webp file.')
         a.touch(a.store.get(c.id))
         await done()
         void $.ui.toast('Screenshot added.')

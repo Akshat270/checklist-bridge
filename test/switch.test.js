@@ -314,6 +314,21 @@ function seed(sb) {
     W.send({ cmd: 'quit' }); await W.exited;
   }
 
+  // ---- switched back to VS Code in Claude while the "Use the Claude Code mod" command still runs
+  {
+    const sb16 = sandbox();
+    sb16.env.FAKE_CLAUDE_REMOVE_MS = '4000';
+    seed(sb16);
+    W = win(sb16); await W.ready;
+    for (let i = 0; i < 40 && !sb16.registered(); i++) await sleep(250);
+    const running = cmd(W, 'checklistBridge.useMod'); // disconnecting takes a while
+    await sleep(1500);
+    fs.writeFileSync(path.join(sb16.cb, 'mode.json'), H.modeText('extension')); // /checklist use-extension
+    await running; await sleep(6000);
+    check(sb16.registered() && modMode(W) === false, 'a switch back made while a switch command runs is not lost');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
   // ---- a mod chat saving late, after VS Code took the checklist back: the user's later edits in VS Code stay
   {
     const sb14 = sandbox();

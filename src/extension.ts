@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { Checklist, ChecklistStore, stillOpen } from './model';
 import { createWindowServer, WindowServer } from './windowServer';
-import { ENV_WINDOW, ROOT, removeWindow, writeWindow } from './registry';
+import { ENV_WINDOW, ROOT, readWindows, removeWindow, writeWindow } from './registry';
 import { Panels, Routes, VIEW_TYPE } from './panels';
 import { ChecklistTree } from './sidebar';
 import { startUpdater } from './updater';
@@ -738,8 +739,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
         'Put the steps or the question in your reply instead; in a new chat Claude uses the mod\'s checklist.'
       : undefined;
     store.keptHere = new Set(on ? kept : []);
-    // A chat waiting on its checklist would otherwise wait out its full time for an update that can't come.
-    if (store.lockedNote) ws?.endWaits(store.lockedNote);
+    // A chat waiting on a checklist that went to the mod would otherwise wait out its full time for an update
+    // that can't come. Not the ones still usable here (kept, or an example).
+    if (store.lockedNote) ws?.endWaits((sid) => store.lockedFor(store.forSession(sid), sid));
     vscode.commands.executeCommand('setContext', 'checklistBridge.modMode', on);
     panels.refreshAll();
   };
@@ -782,28 +784,50 @@ export async function activate(ctx: vscode.ExtensionContext) {
     log(`Switched to the Claude Code mod; handed over ${n} checklist(s).`);
     return n;
   };
+  // The mod's shared folders this window takes back from (see sharedDirs), and files in them that could not
+  // be moved (so they don't start a take-back at every focus until they change).
+  const modDirs = () => {
+    const others = readWindows()
+      .filter((w) => w.windowId !== windowId)
+      .flatMap((w) => w.folders);
+    return sharedDirs(ROOT, folders, others, os.homedir());
+  };
+  const stuck = new Map<string, number>();
   const takeBack = async () => {
     let n = 0;
-    // This window's folders, and the subfolders mod chats were started in.
-    const dirs = sharedDirs(ROOT, folders).filter(hasShared);
     const handedAt = ctx.globalState.get<Record<string, number>>(handedAtKey) ?? {};
     const changed: Checklist[] = [];
-    for (const dir of dirs) {
-      const { lists, ids } = importLists(dir);
-      for (const c of lists) {
-        const mine = store.get(c.id);
-        // Taken in only if the mod changed it: newer than what we handed over, or (no handover to go by: a file
-        // left behind, or one a mod chat saved late) newer than ours. So a stale file never undoes edits here.
-        if (mine && c.updatedAt <= (handedAt[c.id] ?? mine.updatedAt)) continue;
-        if (!mine && c.closed) continue; // made and closed in the mod: nothing to bring back
-        owners.claim(c.id);
-        if (!c.closed) c.hidden = false; // the user just worked on it in the mod: show it, even if its tab was closed here
-        store.replace(c); // closed in the mod: closed here too
-        if (!c.closed) changed.push(store.get(c.id)!);
-        n++;
+    // Taken in only if the mod changed it: newer than what we handed over, or (no handover to go by: a file
+    // left behind, or one a mod chat saved late) newer than ours. So a stale file never undoes edits here.
+    const want = (c: Checklist) => {
+      const mine = store.get(c.id);
+      if (mine) return c.updatedAt > (handedAt[c.id] ?? mine.updatedAt);
+      return !c.closed; // made and closed in the mod: nothing to bring back
+    };
+    // A file the mod saves while this runs is left by markMoved and taken in by the next pass.
+    for (let pass = 0; pass < 3; pass++) {
+      let again = false;
+      for (const dir of modDirs().filter((d) => hasShared(d, stuck))) {
+        const { lists, seen } = importLists(dir, want);
+        for (const c of lists) {
+          owners.claim(c.id);
+          if (!c.closed) c.hidden = false; // the user just worked on it in the mod: show it, even if its tab was closed here
+          store.replace(c); // closed in the mod: closed here too
+          if (!c.closed) changed.push(store.get(c.id)!);
+          n++;
+        }
+        const r = markMoved(dir, seen);
+        for (const f of r.stuck) {
+          try {
+            stuck.set(f, fs.statSync(f).mtimeMs); // looked at again only once it changes
+          } catch {
+            /* gone meanwhile */
+          }
+        }
+        if (r.stuck.length) log(`Could not mark these checklist files as moved (they stay unless the mod changes them): ${r.stuck.join(', ')}`);
+        if (r.changed.length) again = true;
       }
-      const left = markMoved(dir, ids);
-      if (left.length) log(`Could not mark these checklist files as moved (they stay unless the mod changes them): ${left.join(', ')}`);
+      if (!again) break;
     }
     reopenTabs(changed); // only what the mod changed or made; tabs the user had closed stay closed
     try {
@@ -824,29 +848,30 @@ export async function activate(ctx: vscode.ExtensionContext) {
     return n;
   };
   // One switch at a time. Closing a switch command's dialog gives the window focus, and a focus event while a
-  // switch is running or waiting must not start a second handover or take-back: it is dropped. The commands
-  // wait their turn.
+  // switch is running or waiting must not start a second handover or take-back. The commands wait their turn.
   let switching: Promise<unknown> = Promise.resolve();
   let inLine = 0;
+  // A change seen while a switch runs or waits (a focus, the mode file's watcher, which fires only once) is
+  // looked at again once the last one is done, whichever it was: the commands' too. So the window always ends
+  // up as mode.json says.
+  let modeChanged = false;
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
     inLine++;
-    const run = switching.then(work).finally(() => inLine--);
+    const run = switching.then(work).finally(() => {
+      inLine--;
+      if (inLine || !modeChanged) return;
+      modeChanged = false;
+      void followMode();
+    });
     switching = run.catch(() => {});
     return run;
   };
-  // A change seen while a switch runs or waits is looked at again once it is done (the mode file's watcher
-  // fires once, and the window may never lose focus), so the window always ends up as mode.json says.
-  let modeChanged = false;
   const followMode = (): Promise<unknown> => {
     if (inLine) {
       modeChanged = true;
       return switching;
     }
-    return oneAtATime(followModeNow).finally(() => {
-      if (!modeChanged) return;
-      modeChanged = false;
-      void followMode();
-    });
+    return oneAtATime(followModeNow);
   };
   async function followModeNow() {
     try {
@@ -869,7 +894,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
         if (use === undefined && registeredInConfig(connectorPath)) writeUse(ROOT, (now = 'extension'));
         // With no choice made and the extension not connected (auto-connect off, or the user disconnected it),
         // the mod is the one in use: leave its checklists there.
-        if (ctx.globalState.get(handedKey) || (now === 'extension' && sharedDirs(ROOT, folders).some(hasShared))) await takeBack();
+        if (ctx.globalState.get(handedKey) || (now === 'extension' && modDirs().some((d) => hasShared(d, stuck)))) await takeBack();
       }
     } catch (e) {
       log(`Could not switch between the extension and the Claude Code mod: ${e}`);

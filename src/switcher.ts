@@ -2,7 +2,7 @@
 // No `vscode` import, so it can be tested on its own.
 import * as fs from 'fs';
 import * as path from 'path';
-import { FOLDER_NOTE, fromShared, imagesDir, isInside, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
+import { FOLDER_NOTE, HANDED_NOTE, fromShared, imagesDir, isInside, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
 import { ImageFiles } from './images';
 import type { Checklist, Img } from './model';
 import { LOCKED, sleepSync, writeFileSafe } from './saver';
@@ -37,8 +37,9 @@ export function exportLists(root: string, folder: string, lists: Checklist[], im
   fs.mkdirSync(dir, { recursive: true });
   try {
     writeFileSafe(path.join(dir, FOLDER_NOTE), folder);
+    writeFileSafe(path.join(dir, HANDED_NOTE), folder);
   } catch {
-    /* only needed to find a subfolder's checklists */
+    /* only needed to match subfolders to this folder */
   }
   const out = new ImageFiles(imagesDir(root)); // the same file names as the extension's own
   const failed: Checklist[] = [];
@@ -53,7 +54,8 @@ export function exportLists(root: string, folder: string, lists: Checklist[], im
       const copy = toShared(c, (img) => {
         const target = out.file(c.id, img);
         try {
-          writeFileSafe(target, img.data ? Buffer.from(img.data, 'base64') : fs.readFileSync(images.file(c.id, img)));
+          // Named by checklist and screenshot, which never changes: one copied at an earlier handover is kept.
+          if (!fs.existsSync(target)) writeFileSafe(target, img.data ? Buffer.from(img.data, 'base64') : fs.readFileSync(images.file(c.id, img)));
           return target;
         } catch {
           return undefined; // its file is gone: the screenshot is left out
@@ -83,15 +85,16 @@ function readList(dir: string, id: string): Checklist | undefined {
 }
 
 /**
- * The checklists the mod has for this project, ready for the extension (screenshots read back in), closed
- * ones too (closing one in the mod must close it here), and the ids of every file, for markMoved.
+ * The checklists in one of the mod's shared folders that `want` takes, ready for the extension (screenshots
+ * read back in; closed ones too, as closing one in the mod must close it here), and the version of each one
+ * read (`seen`), for markMoved.
  */
-export function importLists(dir: string): { lists: Checklist[]; ids: string[] } {
+export function importLists(dir: string, want: (c: Checklist) => boolean = () => true): { lists: Checklist[]; seen: Record<string, number> } {
   let names: string[];
   try {
     names = fs.readdirSync(dir);
   } catch {
-    return { lists: [], ids: [] };
+    return { lists: [], seen: {} };
   }
   const readImage = (p: string) => {
     try {
@@ -101,42 +104,56 @@ export function importLists(dir: string): { lists: Checklist[]; ids: string[] } 
     }
   };
   const lists: Checklist[] = [];
-  const ids = listIds(names);
-  for (const id of ids) {
+  const seen: Record<string, number> = {};
+  for (const id of listIds(names)) {
     const c = readList(dir, id);
-    if (c) lists.push(fromShared(c, readImage));
+    if (!c) continue; // being written: taken next time
+    seen[id] = c.updatedAt;
+    if (want(c)) lists.push(fromShared(c, readImage)); // screenshots read only for those taken in
   }
-  return { lists, ids };
+  return { lists, seen };
 }
 
 /**
- * After taking checklists in: rename their files so they aren't taken in again, retrying while Windows has
- * one open (the mod reading it). Returns the ids whose file is still there.
+ * After taking checklists in: rename the files of those read (`seen`, from importLists) so they aren't taken
+ * in again, retrying while Windows has one open (the mod reading it). One the mod saved again since it was
+ * read is left, to be taken in next (`changed`), so that save isn't moved away unread. `stuck` are the
+ * files that could not be renamed.
  */
-export function markMoved(dir: string, ids: string[]): string[] {
-  const left: string[] = [];
-  for (const id of ids)
+export function markMoved(dir: string, seen: Record<string, number>): { changed: string[]; stuck: string[] } {
+  const changed: string[] = [];
+  const stuck: string[] = [];
+  for (const [id, version] of Object.entries(seen)) {
+    if (readList(dir, id)?.updatedAt !== version) {
+      changed.push(id);
+      continue;
+    }
     for (const f of [`${id}.json`, `${id}.json.bak`]) {
       const from = path.join(dir, f);
       for (let attempt = 0; ; attempt++) {
         try {
           fs.rmSync(`${from}.moved`, { force: true }); // Windows can't rename over a file
           fs.renameSync(from, `${from}.moved`);
-          // A rename keeps the file's time: stamp when it was moved, which tidyShared counts its 30 days from.
-          const now = new Date();
-          fs.utimesSync(`${from}.moved`, now, now);
           break;
         } catch (e: any) {
           if (e?.code === 'ENOENT') break; // already gone (a checklist with only one of the two)
           if (!LOCKED.has(e?.code) || attempt >= 5) {
-            if (!left.includes(id)) left.push(id);
+            stuck.push(from);
             break;
           }
           sleepSync(50);
         }
       }
+      try {
+        // A rename keeps the file's time: stamp when it was moved, which tidyShared counts its 30 days from.
+        const now = new Date();
+        if (fs.existsSync(`${from}.moved`)) fs.utimesSync(`${from}.moved`, now, now);
+      } catch {
+        /* kept a little less long */
+      }
     }
-  return left;
+  }
+  return { changed, stuck };
 }
 
 /** How long `.moved` files and screenshot copies no checklist uses are kept, in case they are wanted back. */
@@ -208,13 +225,18 @@ export function tidyShared(root: string, now = Date.now()): number {
 }
 
 /**
- * The mod's shared folders for a window's project folders: each folder's own, and those the mod made for
- * chats started in a subfolder of one (their FOLDER_NOTE says where). Without case on Windows and macOS.
+ * The mod's shared folders a window takes checklists back from: each of its folders' own, and those of mod
+ * chats started in a subfolder of one (their FOLDER_NOTE says where), unless they are another's:
+ * - one VS Code handed over (HANDED_NOTE) belongs to the window on that folder;
+ * - a subfolder another open window is nearer to (it has that subfolder, or one between, open) is that window's;
+ * - a window on the home folder or a drive's top takes only its own folder's, not every project below it.
+ * `others` are the folders of the other open VS Code windows. Without case on Windows and macOS.
  */
-export function sharedDirs(root: string, folders: string[]): string[] {
+export function sharedDirs(root: string, folders: string[], others: string[] = [], home = ''): string[] {
   const caseless = process.platform !== 'linux';
   const dirs = new Set(folders.map((f) => path.resolve(sharedDir(root, f))));
   const modDir = path.dirname(imagesDir(root));
+  const tooWide = (f: string) => path.resolve(f) === path.resolve(f, '..') || (!!home && isInside(home, f, caseless));
   let names: string[] = [];
   try {
     names = fs.readdirSync(modDir);
@@ -222,22 +244,43 @@ export function sharedDirs(root: string, folders: string[]): string[] {
     /* nothing handed over yet */
   }
   for (const name of names) {
+    const dir = path.resolve(modDir, name);
+    if (dirs.has(dir) || fs.existsSync(path.join(dir, HANDED_NOTE))) continue;
     let at: string;
     try {
-      at = fs.readFileSync(path.join(modDir, name, FOLDER_NOTE), 'utf8').trim();
+      at = fs.readFileSync(path.join(dir, FOLDER_NOTE), 'utf8').trim();
     } catch {
       continue;
     }
-    if (at && folders.some((f) => isInside(at, f, caseless))) dirs.add(path.resolve(modDir, name));
+    const mine = folders.filter((f) => at && !tooWide(f) && isInside(at, f, caseless));
+    if (!mine.length) continue;
+    const depth = Math.max(...mine.map((f) => f.length));
+    if (others.some((f) => isInside(at, f, caseless) && f.length > depth)) continue;
+    dirs.add(dir);
   }
   return [...dirs];
 }
 
-/** Whether the mod has checklists for this project waiting to be taken in. */
-export function hasShared(dir: string): boolean {
+/**
+ * Whether the mod has checklists in this shared folder waiting to be taken in. `stuck` are files that
+ * could not be moved before, with their times: they count again only once they change.
+ */
+export function hasShared(dir: string, stuck: Map<string, number> = new Map()): boolean {
+  let names: string[];
   try {
-    return listIds(fs.readdirSync(dir)).length > 0;
+    names = fs.readdirSync(dir);
   } catch {
     return false;
   }
+  return listIds(names).some((id) =>
+    [`${id}.json`, `${id}.json.bak`].some((f) => {
+      const p = path.join(dir, f);
+      try {
+        const t = fs.statSync(p).mtimeMs;
+        return stuck.get(p) !== t;
+      } catch {
+        return false;
+      }
+    })
+  );
 }

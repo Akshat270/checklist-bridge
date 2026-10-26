@@ -57,6 +57,11 @@ export const modeFile = (root: string) => join(root, 'mode.json');
  * finds the checklists a mod chat made in a subfolder of its project.
  */
 export const FOLDER_NOTE = 'folder.txt';
+/**
+ * In a shared folder VS Code handed checklists over to: the window's project folder. The folder belongs to
+ * that window: a mod chat in a subfolder uses it, and only a window on that same folder takes it back.
+ */
+export const HANDED_NOTE = 'from-vscode.txt';
 
 /** A path's own folder and each folder above it, nearest first: `/a/b` gives `/a/b`, `/a`, `/`. */
 export function ancestors(p: string): string[] {
@@ -75,13 +80,14 @@ export function ancestors(p: string): string[] {
 
 /** Whether `child` is `parent` or inside it. Either slash; without case where the disk ignores it. */
 export function isInside(child: string, parent: string, caseless: boolean): boolean {
+  // Either slash, no slash at the end; the root itself ('/') and a drive ('C:') end without one too.
   const norm = (p: string) => {
     const s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '');
     return caseless ? s.toLowerCase() : s;
   };
   const c = norm(child);
   const f = norm(parent);
-  return c === f || c.startsWith(`${f}/`) || f === '';
+  return c === f || c.startsWith(`${f}/`);
 }
 export const sharedDir = (root: string, folder: string) => join(root, 'mod', folderKey(folder));
 export const imagesDir = (root: string) => join(root, 'mod', 'images');
@@ -137,7 +143,7 @@ export interface WindowHints {
   idePid?: number;
   /** The chat's folder. */
   cwd: string;
-  /** Whether paths ignore case (Windows). */
+  /** Whether paths ignore case (Windows and macOS disks do). */
   caseless: boolean;
 }
 
@@ -147,13 +153,9 @@ export interface WindowHints {
  * then the one used last), then the rest, the one used last first. The connector and the mod both use this.
  */
 export function rankWindows(wins: WindowInfo[], hints: WindowHints): { w: WindowInfo; why: string; rank: string }[] {
-  const norm = (p: string) => {
-    const s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '');
-    return hints.caseless ? s.toLowerCase() : s;
-  };
-  const here = norm(hints.cwd);
+  const here = hints.cwd;
   const scored = wins.map((w) => {
-    const depth = Math.max(-1, ...w.folders.map(norm).filter((f) => f && (here === f || here.startsWith(`${f}/`))).map((f) => f.length));
+    const depth = Math.max(-1, ...w.folders.filter((f) => f.trim() && isInside(here, f, hints.caseless)).map((f) => f.trim().length));
     const first = hints.envWindow && w.windowId === hints.envWindow ? 2 : hints.idePid !== undefined && w.pid === hints.idePid ? 1 : 0;
     const why =
       first === 2 ? 'started from this window' : first === 1 ? 'Claude Code is connected to this window' : depth >= 0 ? 'this window has the project open' : 'most recently used window';

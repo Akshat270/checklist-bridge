@@ -26,8 +26,8 @@ export interface WindowServer {
   prune(): boolean;
   /** Queue a channel message for this chat. Returns false if no connector is listening. */
   push(sessionId: string, content: string): boolean;
-  /** Ends every checklist_wait under way with this text (the checklists were handed to the Claude Code mod). */
-  endWaits(text: string): void;
+  /** Ends the checklist_wait calls under way for which `why` gives a text, with that text (handed to the mod). */
+  endWaits(why: (sessionId: string) => string | undefined): void;
   onSessionsChange(fn: () => void): void;
 }
 
@@ -256,8 +256,11 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
       }
       return true;
     },
-    endWaits(text) {
-      for (const set of [...waiters.values()]) for (const done of [...set]) done({ content: [{ type: 'text', text }] });
+    endWaits(why) {
+      for (const [sid, set] of [...waiters]) {
+        const text = why(sid);
+        if (text) for (const done of [...set]) done({ content: [{ type: 'text', text }] });
+      }
     },
     onSessionsChange: (fn) => changeFns.push(fn),
   };
