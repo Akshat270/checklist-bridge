@@ -720,13 +720,16 @@ export async function activate(ctx: vscode.ExtensionContext) {
   /* ---------- switching to the Claude Code mod and back (switcher.ts, handover.ts) ---------- */
   // ~/.checklist-bridge/mode.json says which one is on. Either side can change it; this window follows it
   // when it starts and whenever it gets focus. The checklists of this folder go with the switch.
-  const project = folders[0];
+  // The window's folders as they are now: the user may add or remove some after it opened.
+  const liveFolders = () => (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
   const MOD_INSTALL = '/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge';
   // This window gave its checklists to the mod. Folderless windows get a new id each start, so they share one key.
   const windowKey = windowId.startsWith('empty-') ? 'empty' : windowId;
   const handedKey = `handedToMod:${windowKey}`;
   const handedAtKey = `handedAt:${windowKey}`; // each handed-over checklist's updatedAt, to tell if the mod changed it
   const keptKey = `keptHere:${windowKey}`; // checklists that could not be handed over, so stay usable here
+  const handedToKey = `handedTo:${windowKey}`; // the folder they were handed over for ('' with no folder open)
+  const handedTo = () => ctx.globalState.get<string>(handedToKey) ?? liveFolders()[0] ?? '';
   // While the mod has the checklists, this window changes none of them: chats still connected to it get
   // this instead, and its panels say so (see panels.ts). Otherwise their changes would be lost on the way back.
   // A window with no folder open hands nothing over (the mod keeps checklists per folder), so it stays editable,
@@ -734,7 +737,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   let lockedOn = false;
   const lock = (on: boolean, kept: string[] = []) => {
     lockedOn = on;
-    store.lockedNote = on && project
+    store.lockedNote = on && handedTo()
       ? 'The user switched Checklist Bridge to its Claude Code mod, so this checklist is read-only here. ' +
         'Put the steps or the question in your reply instead; in a new chat Claude uses the mod\'s checklist.'
       : undefined;
@@ -750,12 +753,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
     const handedAt: Record<string, number> = {};
     let kept: string[] = [];
     const ours = () => store.all().filter((c) => !c.sessionId.startsWith('demo-'));
+    const project = liveFolders()[0];
+    await ctx.globalState.update(handedToKey, project ?? '');
     if (project) {
       // What was typed in a panel a moment ago goes along too (the panel holds typing back briefly).
       await Promise.all(ours().map((c) => panels.flush(c.id)));
       // From here to lock() nothing waits, so no tool call can change a checklist after it was written.
       const lists = ours();
-      const r = exportLists(ROOT, project, lists, images);
+      const r = exportLists(ROOT, project, lists, images, windowId);
       n = r.written;
       kept = r.failed.map((c) => c.id);
       for (const c of lists) if (!kept.includes(c.id)) handedAt[c.id] = c.updatedAt;
@@ -785,12 +790,22 @@ export async function activate(ctx: vscode.ExtensionContext) {
     return n;
   };
   // The mod's shared folders this window takes back from (see sharedDirs), and files in them that could not
-  // be moved (so they don't start a take-back at every focus until they change).
-  const modDirs = () => {
+  // be moved (so they don't start a take-back at every focus until they change). The folder it handed over
+  // counts as its own even if the user has since removed it from the window. Working them out reads every
+  // window's file and shared folder, so a focus with no switch uses the last answer for half a minute.
+  let dirsAt = 0;
+  let dirsWere: string[] = [];
+  const modDirs = (fresh = true) => {
+    if (!fresh && Date.now() - dirsAt < 30_000) return dirsWere;
+    const mine = liveFolders();
+    const to = ctx.globalState.get(handedKey) ? ctx.globalState.get<string>(handedToKey) : undefined;
+    if (to && !mine.includes(to)) mine.push(to);
     const others = readWindows()
       .filter((w) => w.windowId !== windowId)
-      .flatMap((w) => w.folders);
-    return sharedDirs(ROOT, folders, others, os.homedir());
+      .map((w) => ({ id: w.windowId, folders: w.folders }));
+    dirsWere = sharedDirs(ROOT, { id: windowId, folders: mine }, others, os.homedir());
+    dirsAt = Date.now();
+    return dirsWere;
   };
   const stuck = new Map<string, number>();
   const takeBack = async () => {
@@ -839,6 +854,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     lock(false);
     await ctx.globalState.update(handedAtKey, undefined);
     await ctx.globalState.update(keptKey, undefined);
+    await ctx.globalState.update(handedToKey, undefined);
     if (ctx.globalState.get(handedKey) || n) {
       await ctx.globalState.update(handedKey, false);
       // Put back the connection switching to the mod removed; otherwise connect only if the user lets us.
@@ -894,7 +910,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
         if (use === undefined && registeredInConfig(connectorPath)) writeUse(ROOT, (now = 'extension'));
         // With no choice made and the extension not connected (auto-connect off, or the user disconnected it),
         // the mod is the one in use: leave its checklists there.
-        if (ctx.globalState.get(handedKey) || (now === 'extension' && modDirs().some((d) => hasShared(d, stuck)))) await takeBack();
+        if (ctx.globalState.get(handedKey) || (now === 'extension' && modDirs(false).some((d) => hasShared(d, stuck)))) await takeBack();
       }
     } catch (e) {
       log(`Could not switch between the extension and the Claude Code mod: ${e}`);

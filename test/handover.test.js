@@ -166,22 +166,30 @@ check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod
   const { sharedDirs, markMoved, importLists, hasShared, tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
   const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cb-dirs-'));
   const R = (d) => path.resolve(d);
-  const dirFor = (at, handed = false) => {
+  const dirFor = (at, handed = false, by = 'w-x') => {
     const d = H.sharedDir(root, at);
     fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(d, H.FOLDER_NOTE), at);
-    if (handed) fs.writeFileSync(path.join(d, H.HANDED_NOTE), at);
+    if (handed) fs.writeFileSync(path.join(d, H.HANDED_NOTE), H.handedNote(at, by));
     return R(d);
   };
+  const win = (id, ...folders) => ({ id, folders });
   const web = dirFor('/work/proj/web'); // a mod chat started in a subfolder
   const other = dirFor('/work/other');
   const api = dirFor('/work/proj/api', true); // a VS Code window on /work/proj/api handed it over
   const deep = dirFor('/work/proj/lib/x'); // a mod chat under a folder another window has open
-  const dirs = sharedDirs(root, ['/work/proj'], ['/work/proj/lib']).map(R);
+  const dirs = sharedDirs(root, win('w-p', '/work/proj'), [win('w-l', '/work/proj/lib')]).map(R);
   check(dirs.includes(R(H.sharedDir(root, '/work/proj'))) && dirs.includes(web), 'VS Code finds the checklists of mod chats started in a subfolder');
   check(!dirs.includes(other) && !dirs.includes(api), 'but not another project\'s, nor what a window on a subfolder handed over');
-  check(!dirs.includes(deep) && sharedDirs(root, ['/work/proj/lib'], ['/work/proj']).map(R).includes(deep), 'a subfolder goes to the window nearest to it');
-  check(sharedDirs(root, ['/work'], [], '/work').map(R).length === 1, 'a window on the home folder takes only its own folder\'s');
+  check(!dirs.includes(deep) && sharedDirs(root, win('w-l', '/work/proj/lib'), [win('w-p', '/work/proj')]).map(R).includes(deep), 'a subfolder goes to the window nearest to it');
+  check(sharedDirs(root, win('w-h', '/work'), [], '/work').map(R).length === 1, 'a window on the home folder takes only its own folder\'s');
+  // Two windows with the same folder open (one a multi-root workspace): each shared folder goes to one of them.
+  const a = sharedDirs(root, win('w-a', '/work/proj'), [win('w-b', '/elsewhere', '/work/proj')]).map(R);
+  const b = sharedDirs(root, win('w-b', '/elsewhere', '/work/proj'), [win('w-a', '/work/proj')]).map(R);
+  check(a.includes(web) && !b.includes(web) && a.includes(R(H.sharedDir(root, '/work/proj'))) && !b.includes(R(H.sharedDir(root, '/work/proj'))), 'two windows on the same folder: only one takes its checklists back');
+  const both = (id, others) => sharedDirs(root, win(id, '/work/proj/api'), others).map(R).includes(api);
+  check(!both('w-a', [win('w-x', '/work/proj/api')]) && both('w-x', [win('w-a', '/work/proj/api')]), 'and a handed-over folder goes back to the window that handed it over');
+  check(both('w-a', [win('w-b', '/work/proj/api')]) && !both('w-b', [win('w-a', '/work/proj/api')]), 'or, once that window is closed, to one of the others');
 
   // Moving: a file the mod saved again after it was read stays, to be taken in next; the others are moved.
   const list = (id, updatedAt) => JSON.stringify({ id, title: id, sessionId: 's', tasks: [], questions: [], updatedAt });
@@ -192,6 +200,41 @@ check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod
   fs.writeFileSync(path.join(web, 'a2.json'), list('a2', 2)); // saved meanwhile
   const moved = markMoved(web, seen);
   check(moved.changed.join() === 'a2' && fs.existsSync(path.join(web, 'a2.json')) && fs.existsSync(path.join(web, 'a1.json.moved')), 'a file saved again while being taken in is not moved away unread');
+
+  // A save that lands after the look but before the rename is put back, not moved away unread.
+  const race = dirFor('/work/race');
+  fs.writeFileSync(path.join(race, 'a4.json'), list('a4', 1));
+  fs.writeFileSync(path.join(race, 'a4.json.bak'), list('a4', 1));
+  const rename = fs.renameSync;
+  let once = true;
+  fs.renameSync = (from, to) => {
+    if (once && from.endsWith('a4.json')) {
+      once = false;
+      fs.writeFileSync(path.join(race, 'a4.json.bak'), list('a4', 2));
+      fs.writeFileSync(path.join(race, 'a4.json'), list('a4', 2));
+    }
+    return rename(from, to);
+  };
+  let late;
+  try {
+    late = markMoved(race, { a4: 1 });
+  } finally {
+    fs.renameSync = rename;
+  }
+  check(late.changed.join() === 'a4' && JSON.parse(fs.readFileSync(path.join(race, 'a4.json'), 'utf8')).updatedAt === 2, 'a save landing just before the move is put back, to be taken in next');
+
+  // Screenshots come back only from image files, whatever a checklist file names.
+  const png = path.join(root, 'shot.png');
+  fs.writeFileSync(png, Buffer.from('89504e470d0a1a0a0000', 'hex'));
+  const secret = path.join(root, 'secret.png');
+  fs.writeFileSync(secret, 'API_KEY=hunter2');
+  const env = path.join(root, '.env');
+  fs.writeFileSync(env, 'API_KEY=hunter2');
+  const shots = fs.mkdtempSync(path.join(root, 'shots-'));
+  const img = (id, p) => ({ id, mime: 'image/png', w: 0, h: 0, path: p });
+  fs.writeFileSync(path.join(shots, 'i1.json'), JSON.stringify({ id: 'i1', title: 'x', sessionId: 's', questions: [], updatedAt: 1, tasks: [{ id: 't1', text: 'x', draft: { images: [img('a', png), img('b', secret), img('c', env)] } }] }));
+  const got = importLists(shots).lists[0].tasks[0].draft.images;
+  check(got.length === 1 && got[0].id === 'a' && got[0].mime === 'image/png', 'a screenshot path to a file that is not an image is left out');
 
   // A file that can't be moved starts no take-back until it changes.
   const p2 = path.join(web, 'a2.json');

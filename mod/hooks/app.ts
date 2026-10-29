@@ -11,7 +11,7 @@
 // or delete files, so a save writes `<id>.json.bak` and then `<id>.json`; if the second write is cut short,
 // loading falls back to the backup.
 import { absolutePath, ancestors, join, listIds, parseList, sharedDir, type Use } from './lib/handover'
-import { ChecklistStore, type Checklist } from './lib/model'
+import { ChecklistStore, imageMime, type Checklist } from './lib/model'
 
 export type Paths = { own?: string; userProfile?: string; home?: string }
 
@@ -34,8 +34,18 @@ export type Loaded = { id: string; mtime: number; at: number; main?: string; bak
  */
 const SETTLED_MS = 5000
 
-/** Images are what Claude may open without asking (see isSharedShot). */
-const IMAGE = /\.(png|jpe?g|gif|webp)$/i
+/**
+ * Whether Claude Code's settings (the text of ~/.claude.json) have the VS Code extension's connection, the
+ * `checklist` server running its connector. Undefined if they can't be read (being written just then).
+ */
+export function extensionConnected(config: string): boolean | undefined {
+  try {
+    const s = JSON.parse(config)?.mcpServers?.checklist
+    return Array.isArray(s?.args) && s.args.some((x: unknown) => typeof x === 'string' && /connector\.js$/.test(x))
+  } catch {
+    return undefined
+  }
+}
 
 /** What one save writes, in order, and the version it saves. */
 export type Pending = { id: string; at: number; writes: [string, string][] }
@@ -168,7 +178,7 @@ export class App {
     const c = this.current(sid)
     if (!c || !file) return false
     // Only image files, whatever a checklist file says: it is plain JSON that something else could have edited.
-    if (!IMAGE.test(file)) return false
+    if (!imageMime(file)) return false
     const imgs = [...c.tasks.map(t => t.shared?.images ?? []), ...c.questions.map(q => q.answer?.images ?? [])].flat()
     return imgs.some(i => i.path === file)
   }

@@ -742,3 +742,82 @@ test('a press after another chat took the checklist over changes nothing, and a 
   expect(files[listFile(files)]).toBe(before)
   await ui.unmount()
 })
+
+const COMPOSE = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] } as any
+
+test('a switch to VS Code first seen as Claude starts a turn still brings Send now from VS Code', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  const { files, net, seen } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  // Switched in VS Code; the user types a prompt before the mod's next look at the mode.
+  files[`${ROOT}/mode.json`] = JSON.stringify({ use: 'extension', at: 2 })
+  windowFile(files, 'mine', 5003, [CWD])
+  net.answer[5003] = route => ({ status: 200, text: JSON.stringify(route === '/poll' ? { events: ['Sent from VS Code.'] } : { content: [] }) })
+  const r = await $.prompt.compose(COMPOSE)
+  expect(r.sections.find(s => s.id === 'checklist-bridge:instructions')?.text).toMatch(/The checklist is in VS Code now/)
+  await clock.advance(4_000)
+  expect(seen.prompts).toContain('Sent from VS Code.')
+})
+
+test('a project under the home folder does not take what a window on the home folder handed over', async ($, on) => {
+  const files: Record<string, string> = { [`${ROOT}/mode.json`]: JSON.stringify({ use: 'mod', at: 1 }) }
+  world(on, files)
+  fromVSCode(files, 'Home window', '/home/u')
+  await $.session.start({ cwd: '/home/u/work/other', surface: 'terminal', isInteractive: true })
+  expect((await $.command.run({ command: 'checklist', args: 'list' } as any)).text).toMatch(/No earlier checklists/)
+  await $.session.start({ cwd: '/home/u', surface: 'terminal', isInteractive: true })
+  expect((await $.command.run({ command: 'checklist', args: 'list' } as any)).text).toMatch(/1\. Home window/)
+})
+
+test('the first start writes down that the mod is on, so VS Code leaves its checklists alone', async ($, on) => {
+  const { files, seen } = world(on, { '/home/u/.claude.json': JSON.stringify({ mcpServers: { other: {} } }) })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect(JSON.parse(files[`${ROOT}/mode.json`]!).use).toBe('mod')
+  expect(seen.tools).toContain('checklist_read')
+})
+
+test('the first start leaves the extension on if it is connected to Claude Code', async ($, on) => {
+  const config = { mcpServers: { checklist: { command: 'node', args: ['/home/u/.checklist-bridge/connector/connector.js'] } } }
+  const { files, seen, env } = world(on, { '/cfg/.claude.json': JSON.stringify(config) })
+  env.CLAUDE_CONFIG_DIR = '/cfg'
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect(JSON.parse(files[`${ROOT}/mode.json`]!).use).toBe('extension')
+  expect(seen.tools).toEqual([])
+})
+
+test('nothing is written down while Claude Code\'s settings can\'t be read', async ($, on) => {
+  const { files } = world(on, { '/home/u/.claude.json': '{"mcpServers": {"check' })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect(`${ROOT}/mode.json` in files).toBe(false)
+})
+
+test('a typed screenshot path on a task shared from another chat says why it is not added', async ($, on) => {
+  const { files, seen } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  elsewhere(files, c => (c.tasks[0].shared = { at: Date.now(), done: true, note: '', images: [] }))
+  await ui.input({ key: 't1-shot', text: '/home/u/a.png' })
+  expect(seen.toasts.at(-1)).toMatch(/already shared/)
+  await ui.unmount()
+})
+
+test('/checklist continue N takes the one listed as N, even after the order changed', async ($, on) => {
+  const { files, chat } = world(on)
+  for (const [sid, title] of [['chat-a', 'A'], ['chat-b', 'B']]) {
+    chat.sid = sid!
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await $.tool.call({ tool: `${T}checklist_add_tasks`, title, tasks: [{ text: 'One' }] } as any)
+  }
+  chat.sid = 'chat-c'
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect((await $.command.run({ command: 'checklist', args: 'list' } as any)).text).toMatch(/^1\. B[^]*\n2\. A/)
+  // Chat A changes its checklist: it would be first in a new list.
+  const f = Object.keys(files).find(k => k.endsWith('.json') && JSON.parse(files[k]!).title === 'A')!
+  const a = JSON.parse(files[f]!)
+  a.updatedAt += 10_000
+  files[f] = files[`${f}.bak`] = JSON.stringify(a)
+  expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"B" is this chat's checklist now/)
+  expect(JSON.parse(files[f]!).sessionId).toBe('chat-a')
+})

@@ -7,7 +7,7 @@ let tree;
 const commands = {};
 const terminals = []; const termOpen = [];
 const panels = [];
-const focusListeners = []; let serializer;
+const focusListeners = [], folderListeners = []; let serializer;
 const ev = () => () => noop;
 class EventEmitter { constructor() { this.l = []; this.event = (f) => (this.l.push(f), noop); } fire(x) { this.l.forEach((f) => f(x)); } }
 const Uri = { parse: (v) => ({ fsPath: v, toString() { return v; } }), joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p, toString() { return 'vscode-resource:' + p; } }) };
@@ -64,7 +64,7 @@ const vscode = {
     },
   },
   commands: { registerCommand: (n, f) => ((commands[n] = f), noop), executeCommand: (n, ...a) => { if (n === 'setContext') { say({ context: { [a[0]]: a[1] } }); return Promise.resolve(); } if (n.startsWith('workbench.')) { say({ log: `[${name}] VSCODE ${n} ${a.map(String).join(' ')}` }); return Promise.resolve(); } return commands[n](...a); } },
-  workspace: { name, workspaceFolders: process.env.CB_FOLDERLESS ? undefined : [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: (section) => config(section) },
+  workspace: { name, workspaceFolders: process.env.CB_FOLDERLESS ? undefined : [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: (f) => (folderListeners.push(f), noop), getConfiguration: (section) => config(section) },
   env: { clipboard: { writeText: async (t) => say({ clipboard: t }) }, openExternal: async (u) => (say({ opened: String(u) }), true) },
   extensions: { getExtension: (id) => (process.env.HAS_OLD === '1' && id === 'akshat.checklist-bridge' ? { id } : undefined) },
 };
@@ -84,6 +84,8 @@ const ctx = {
 ext.activate(ctx).then(() => say({ ready: name }));
 
 process.on('message', (m) => {
+  // The user adds or removes workspace folders: m.folders is the window's folders after.
+  if (m.cmd === 'folders') { vscode.workspace.workspaceFolders = m.folders.map((f) => ({ uri: { fsPath: f }, name: path.basename(f) })); folderListeners.forEach((f) => f({})); setTimeout(() => say({ done: 1 }), 100); }
   if (m.cmd === 'focus') { vscode.window.state.focused = true; focusListeners.forEach((f) => f({ focused: true })); }
   if (m.cmd === 'panels') say({ panels: panels.filter((p) => !p.gone).map((p) => ({ title: p.title, away: !!p.state?.away, awayLeft: p.state?.awayLeft, awayLabel: p.state?.awayLabel, awayMs: p.state?.awayMs, id: p.state?.id, routes: p.routes, questions: (p.state?.questions || []).map((q) => ({ id: q.id, answered: !!q.answer, seen: !!q.seenAt, pushed: !!q.pushedAt, retired: !!q.retired })), tasks: (p.state?.tasks || []).map((t) => t.id + (t.shared ? '*' : '')) })) });
   if (m.cmd === 'addTerminal') { const t = { name: 'claude', processId: Promise.resolve(m.pid), show() {}, sendText: (x) => say({ termText: x }) }; terminals.push(t); termOpen.forEach((fn) => fn(t)); setTimeout(() => say({ done: 1 }), 300); }

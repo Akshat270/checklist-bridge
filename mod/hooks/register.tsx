@@ -11,10 +11,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, Timer } from 'claude-code'
 
-import { App, homeFrom, rootFrom, type Loaded } from './app'
+import { App, extensionConnected, homeFrom, rootFrom, type Loaded } from './app'
 import { parseAway } from './away'
 import { noImage, pasteResult, pasteCommand, platformFrom, type Platform } from './clipboard'
-import { FOLDER_NOTE, HANDED_NOTE, imagesDir, join, listIds, modeFile, modeText, parseList, parseMode, parseWindow, rankWindows, type WindowInfo } from './lib/handover'
+import { FOLDER_NOTE, HANDED_NOTE, imagesDir, join, listIds, modeFile, modeText, parseList, parseMode, parseWindow, rankWindows, tooWide, type WindowInfo } from './lib/handover'
 import { MOD_INSTRUCTIONS, MOD_TOOLS, withoutWait, type ToolResult } from './lib/model'
 import { drawPane } from './pane'
 import { palette } from './theme'
@@ -50,9 +50,14 @@ const HELP = [
 ].join('\n')
 
 let app: App | undefined
-/** Reading and writing this folder's checklists (made in session.start, used by every hook). */
-let disk: { load: () => Promise<boolean>; save: () => Promise<boolean> } | undefined
+/**
+ * Reading and writing this folder's checklists, and following the mode (made in session.start, used by every
+ * hook). `mode` reads mode.json and makes a switch's changes here; `load` does that too.
+ */
+let disk: { mode: () => Promise<boolean>; load: () => Promise<boolean>; save: () => Promise<boolean> } | undefined
 let toolsRegistered = false
+/** The checklists /checklist list showed last, in its order: /checklist continue N picks from these. */
+let listed: string[] = []
 /**
  * Calls to the VS Code window, as the extension's connector makes them (src/connector.ts): Claude's calls in a
  * chat that had the mod's tools before the user switched to VS Code (a chat can't gain the extension's own
@@ -93,19 +98,53 @@ export const register: Register = (on, options) => {
     for (const t of timers) t.cancel()
     timers = []
     inVSCode = false
+    listed = []
+    // Which clipboard tool "Paste screenshot" uses. Windows says so in OS; elsewhere ask uname.
+    const os = await $.env.get('OS')
+    const uname = os === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s']).catch(() => undefined)
+    platform = platformFrom(os, uname?.stdout)
+    const caseless = platform !== 'linux' // Windows and macOS disks ignore case
+    const registerTools = async () => {
+      for (const t of MOD_TOOLS)
+        await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
+      toolsRegistered = true
+    }
+    // No choice made yet (no mode.json): the mod is on, unless the VS Code extension is connected to Claude Code
+    // (it was there first; /checklist use-mod switches). Written down, so VS Code sees the choice too and leaves
+    // the mod's checklists alone. Not when Claude Code's settings can't be read: then nothing is known.
+    if (!(await $.fs.exists(modeFile(a.root)))) {
+      const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+      const config = await $.fs.read(join(configDir || a.home, '.claude.json')).catch(() => undefined)
+      const connected = config === undefined ? undefined : extensionConnected(config)
+      if (connected !== undefined) await $.fs.write(modeFile(a.root), modeText(connected ? 'extension' : 'mod')).catch(() => undefined)
+    }
+    a.use = parseMode(await $.fs.read(modeFile(a.root)).catch(() => undefined))
     disk = {
-      // The mode and the folder as they are now: only files that changed since they were last read are read,
-      // and a backup only when its file is missing or damaged. Returns whether any checklist changed.
-      load: async () => {
+      // Follows a switch made elsewhere (VS Code, another chat). Returns whether the mode changed.
+      mode: async () => {
         const was = a.use
         a.use = parseMode(await $.fs.read(modeFile(a.root)).catch(() => undefined))
-        if (a.use !== was) lookedUp = 0 // a switch: VS Code may have just handed checklists over
+        if (a.use === was) return false
+        lookedUp = 0 // VS Code may have just handed checklists over
+        if (a.isOn) {
+          inVSCode = false
+          // Switched to the mod from VS Code while this chat was open: Claude gets its checklist tools now.
+          if (!toolsRegistered) await registerTools()
+        } else if (a.current(await $.session.id())) inVSCode = true // its checklist goes to VS Code, and so do its calls
+        return true
+      },
+      // The mode and the folder as they are now: only files that changed since they were last read are read,
+      // and a backup only when its file is missing or damaged. Returns whether the mode or a checklist changed.
+      load: async () => {
+        const switched = await disk!.mode()
         // No checklist yet: use the nearest folder with checklists, this chat's own or one above it that VS Code
         // handed its project's over for (the project folder may be above where the chat started). Not every
-        // folder above: one another chat happened to use is not this project. Looked for every half minute.
+        // folder above: one another chat happened to use is not this project, and nor is the home folder or a
+        // disk's top (as VS Code sees it: sharedDirs). Looked for every half minute.
         if (!a.store.all().length && Date.now() - lookedUp > 30_000) {
           lookedUp = Date.now()
           for (const [i, at] of a.candidates().entries()) {
+            if (i > 0 && tooWide(at.folder, a.home, caseless)) break
             if (!(await $.fs.exists(at.dir))) continue
             if (i > 0 && !(await $.fs.exists(join(at.dir, HANDED_NOTE)))) continue
             const names = (await $.fs.list(at.dir)).filter(f => f.kind === 'file').map(f => f.name)
@@ -122,7 +161,7 @@ export const register: Register = (on, options) => {
           const bak = parseList(main) ? undefined : await $.fs.read(f.bak).catch(() => undefined)
           files.push({ id: f.id, mtime: f.mtime, at: f.at, main, bak })
         }
-        return a.sync(present, files)
+        return a.sync(present, files) || switched
       },
       // Writes every unsaved change. One that fails stays unsaved and is tried again next time.
       save: async () => {
@@ -149,10 +188,6 @@ export const register: Register = (on, options) => {
     }
     await disk.load()
 
-    // Which clipboard tool "Paste screenshot" uses. Windows says so in OS; elsewhere ask uname.
-    const os = await $.env.get('OS')
-    const uname = os === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s']).catch(() => undefined)
-    platform = platformFrom(os, uname?.stdout)
 
     await $.command.register({
       name: 'checklist',
@@ -160,11 +195,7 @@ export const register: Register = (on, options) => {
       argumentHint: '[away 2h | back | list | use-extension]',
     })
     // While the user has switched to the VS Code extension, a new chat gets the extension's tools instead.
-    if (a.isOn) {
-      for (const t of MOD_TOOLS)
-        await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
-      toolsRegistered = true
-    }
+    if (a.isOn) await registerTools()
 
     // How this chat finds its VS Code window, as the connector does (registry.ts): the window whose terminal it
     // was started in, the one Claude Code's VS Code integration is connected to, then by folder (rankWindows).
@@ -182,7 +213,7 @@ export const register: Register = (on, options) => {
         }
       })(),
       cwd: a.folder,
-      caseless: platform !== 'linux', // Windows and macOS disks ignore case
+      caseless,
     }
     /** One request to a window, or why there is no answer: 'none' (nothing there) or 'late' (no answer in time). */
     const ask = (w: WindowInfo, route: string, body: object, ms: number) =>
@@ -260,19 +291,8 @@ export const register: Register = (on, options) => {
     // down an away, and end it when its time is up (Claude already stops treating the user as away then; this
     // clears the pane and saves). Files that didn't change are not read again, so this stays cheap.
     timers.push($.clock.every(3_000, async () => {
-      const wasOn = a.isOn
       const sid = await $.session.id()
-      const had = !!a.current(sid)
-      const changed = (await disk!.load()) || a.isOn !== wasOn
-      // Switched to VS Code with a checklist here: it goes to VS Code, and so do this chat's calls.
-      if (wasOn && !a.isOn && had) inVSCode = true
-      if (a.isOn) inVSCode = false
-      if (a.isOn && !toolsRegistered) {
-        // Switched to the mod from VS Code while this chat was open: Claude gets its checklist tools now.
-        for (const t of MOD_TOOLS)
-          await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
-        toolsRegistered = true
-      }
+      const changed = await disk!.load()
       const c = a.isOn ? a.current(sid) : undefined
       if (c?.awayUntil && c.awayUntil <= Date.now() && a.store.endAway(c.id)) {
         a.touch(c)
@@ -296,8 +316,8 @@ export const register: Register = (on, options) => {
   // Claude's instructions, while the mod is on. The mode is read each time: the user may have switched.
   on('prompt.compose', async ($, e, next) => {
     const r = await next(e)
-    if (!app) return r
-    app.use = parseMode(await $.fs.read(modeFile(app.root)).catch(() => undefined))
+    if (!app || !disk) return r
+    if (await disk.mode()) await update($, rev, n => n + 1)
     // Switched to VS Code: a chat with the mod's tools keeps them (they reach VS Code); a new one has none.
     if (!toolsRegistered) return r
     const text = MOD_INSTRUCTIONS + (app.isOn ? '' : IN_VS_CODE)
@@ -366,15 +386,8 @@ export const register: Register = (on, options) => {
 
     if (sub === 'use-mod') {
       await $.fs.write(modeFile(a.root), modeText('mod'))
-      a.use = 'mod'
-      inVSCode = false
-      // What VS Code handed over since this chat started.
+      // Follows the switch (the tools, if this chat started without them), and reads what VS Code handed over.
       await disk!.load()
-      if (!toolsRegistered) {
-        for (const t of MOD_TOOLS)
-          await $.tool.register({ name: t.name, description: t.description, inputSchema: t.inputSchema, isDeferred: false })
-        toolsRegistered = true
-      }
       void $.ui.open({ id: PANE, title: 'Checklist' })
       out =
         'Checklist Bridge now runs here in Claude Code. If VS Code is open, it moves its checklists here in a few seconds: ' +
@@ -408,15 +421,19 @@ export const register: Register = (on, options) => {
       } else out = 'You were not marked as away.'
     } else if (sub === 'list' || sub === 'continue') {
       const others = a.others(sid)
-      const pick = sub === 'continue' ? others[Number(rest[0]) - 1] : undefined
-      if (!others.length) out = 'No earlier checklists in this folder.'
-      else if (sub === 'list')
-        out =
-          others
-            .slice(0, 9)
-            .map((o, i) => `${i + 1}. ${o.title}: ${o.tasks.filter(t => !t.shared).length} tasks waiting (${new Date(o.updatedAt).toLocaleString()})`)
-            .join('\n') + '\n\nRun /checklist continue N to make one this chat\'s checklist.'
-      else if (!pick) out = 'Run /checklist list, then /checklist continue with the number of the one you want.'
+      // N is a number from the list the user was shown: the order changes as other chats update theirs.
+      const wanted = sub === 'continue' ? listed[Number(rest[0]) - 1] : undefined
+      const pick = wanted ? others.find(o => o.id === wanted) : undefined
+      if (sub === 'list') {
+        listed = others.slice(0, 9).map(o => o.id)
+        out = others.length
+          ? others
+              .slice(0, 9)
+              .map((o, i) => `${i + 1}. ${o.title}: ${o.tasks.filter(t => !t.shared).length} tasks waiting (${new Date(o.updatedAt).toLocaleString()})`)
+              .join('\n') + '\n\nRun /checklist continue N to make one this chat\'s checklist.'
+          : 'No earlier checklists in this folder.'
+      } else if (!wanted) out = 'Run /checklist list, then /checklist continue with the number of the one you want.'
+      else if (!pick) out = 'That checklist was closed or taken by another chat since. Run /checklist list to see them as they are now.'
       else {
         const refused = a.takeOver(pick.id, sid)
         if (!refused) void $.ui.open({ id: PANE, title: 'Checklist' })

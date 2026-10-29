@@ -2,7 +2,7 @@
 // No `vscode` import, so it can be tested on its own.
 import * as fs from 'fs';
 import * as path from 'path';
-import { FOLDER_NOTE, HANDED_NOTE, fromShared, imagesDir, isInside, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, type Use } from './handover';
+import { FOLDER_NOTE, HANDED_NOTE, fromShared, handedBy, handedNote, imagesDir, isInside, listIds, modeFile, modeText, parseList, parseMode, sharedDir, toShared, tooWide, type Use } from './handover';
 import { ImageFiles } from './images';
 import type { Checklist, Img } from './model';
 import { LOCKED, sleepSync, writeFileSafe } from './saver';
@@ -30,14 +30,15 @@ export interface ImageSource {
  * Writes the checklists into the mod's folder for this project, each screenshot copied to an image file
  * the mod can point Claude at. Saved like Saver saves (temp file, then rename). One checklist that can't
  * be written doesn't stop the others: it is in `failed`. A checklist whose file in the mod's folder is newer
- * than ours (the mod has changed it since an earlier handover) is left as the mod has it.
+ * than ours (the mod has changed it since an earlier handover) is left as the mod has it. `windowId` is the
+ * window handing them over: it takes them back.
  */
-export function exportLists(root: string, folder: string, lists: Checklist[], images: ImageSource): { written: number; failed: Checklist[] } {
+export function exportLists(root: string, folder: string, lists: Checklist[], images: ImageSource, windowId: string): { written: number; failed: Checklist[] } {
   const dir = sharedDir(root, folder);
   fs.mkdirSync(dir, { recursive: true });
   try {
     writeFileSafe(path.join(dir, FOLDER_NOTE), folder);
-    writeFileSafe(path.join(dir, HANDED_NOTE), folder);
+    writeFileSafe(path.join(dir, HANDED_NOTE), handedNote(folder, windowId));
   } catch {
     /* only needed to match subfolders to this folder */
   }
@@ -98,7 +99,8 @@ export function importLists(dir: string, want: (c: Checklist) => boolean = () =>
   }
   const readImage = (p: string) => {
     try {
-      return fs.readFileSync(p).toString('base64');
+      const b = fs.readFileSync(p);
+      return isImage(b) ? b.toString('base64') : undefined;
     } catch {
       return undefined;
     }
@@ -114,26 +116,42 @@ export function importLists(dir: string, want: (c: Checklist) => boolean = () =>
   return { lists, seen };
 }
 
+/** Whether a file's bytes are a PNG, JPEG, GIF or WebP image, whatever its name says. */
+function isImage(b: Buffer): boolean {
+  const at = (i: number, text: string) => b.subarray(i, i + text.length).toString('latin1') === text;
+  return at(0, '\x89PNG') || (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) || at(0, 'GIF8') || (at(0, 'RIFF') && at(8, 'WEBP'));
+}
+
 /**
  * After taking checklists in: rename the files of those read (`seen`, from importLists) so they aren't taken
  * in again, retrying while Windows has one open (the mod reading it). One the mod saved again since it was
- * read is left, to be taken in next (`changed`), so that save isn't moved away unread. `stuck` are the
- * files that could not be renamed.
+ * read is left, to be taken in next (`changed`), so that save isn't moved away unread: it is looked at before
+ * the rename, and the moved files after it, for a save that landed in between. `stuck` are the files that
+ * could not be renamed.
  */
 export function markMoved(dir: string, seen: Record<string, number>): { changed: string[]; stuck: string[] } {
   const changed: string[] = [];
   const stuck: string[] = [];
-  for (const [id, version] of Object.entries(seen)) {
-    if (readList(dir, id)?.updatedAt !== version) {
+  const version = (f: string) => {
+    try {
+      return parseList(fs.readFileSync(path.join(dir, f), 'utf8'))?.updatedAt;
+    } catch {
+      return undefined;
+    }
+  };
+  for (const [id, seenAt] of Object.entries(seen)) {
+    if (readList(dir, id)?.updatedAt !== seenAt) {
       changed.push(id);
       continue;
     }
+    const moved: string[] = [];
     for (const f of [`${id}.json`, `${id}.json.bak`]) {
       const from = path.join(dir, f);
       for (let attempt = 0; ; attempt++) {
         try {
           fs.rmSync(`${from}.moved`, { force: true }); // Windows can't rename over a file
           fs.renameSync(from, `${from}.moved`);
+          moved.push(f);
           break;
         } catch (e: any) {
           if (e?.code === 'ENOENT') break; // already gone (a checklist with only one of the two)
@@ -152,6 +170,20 @@ export function markMoved(dir: string, seen: Record<string, number>): { changed:
         /* kept a little less long */
       }
     }
+    // A save between the look above and the rename was moved with it: put it back, unless the mod has
+    // written that file again since (then the new one is newer still). Copied, not renamed, so it can't
+    // land on top of such a write.
+    let late = false;
+    for (const f of moved) {
+      if (!((version(`${f}.moved`) ?? 0) > seenAt)) continue; // an older backup is no save
+      late = true;
+      try {
+        fs.copyFileSync(path.join(dir, `${f}.moved`), path.join(dir, f), fs.constants.COPYFILE_EXCL);
+      } catch {
+        /* written again meanwhile */
+      }
+    }
+    if (late) changed.push(id);
   }
   return { changed, stuck };
 }
@@ -224,39 +256,73 @@ export function tidyShared(root: string, now = Date.now()): number {
   return n;
 }
 
+/** An open VS Code window, for sharedDirs: its id and its folders. */
+export interface OpenWindow {
+  id: string;
+  folders: string[];
+}
+
 /**
- * The mod's shared folders a window takes checklists back from: each of its folders' own, and those of mod
- * chats started in a subfolder of one (their FOLDER_NOTE says where), unless they are another's:
- * - one VS Code handed over (HANDED_NOTE) belongs to the window on that folder;
- * - a subfolder another open window is nearer to (it has that subfolder, or one between, open) is that window's;
- * - a window on the home folder or a drive's top takes only its own folder's, not every project below it.
- * `others` are the folders of the other open VS Code windows. Without case on Windows and macOS.
+ * The mod's shared folders window `me` takes checklists back from: each of its folders' own, and those of mod
+ * chats started in a subfolder of one (their FOLDER_NOTE says where). Each shared folder goes to one window,
+ * the open window (of `me` and `others`) nearest to it:
+ * - one VS Code handed over (HANDED_NOTE) goes only to a window on that same folder;
+ * - a subfolder goes to the window with the deepest folder it is in;
+ * - a window on the home folder or a disk's top takes only its own folder's, not every project below it;
+ * - two windows on the same folder: the one that handed it over, else the one whose id sorts first.
+ * Without case on Windows and macOS.
  */
-export function sharedDirs(root: string, folders: string[], others: string[] = [], home = ''): string[] {
+export function sharedDirs(root: string, me: OpenWindow, others: OpenWindow[] = [], home = ''): string[] {
   const caseless = process.platform !== 'linux';
-  const dirs = new Set(folders.map((f) => path.resolve(sharedDir(root, f))));
+  const norm = (f: string) => {
+    const s = f.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    return caseless ? s.toLowerCase() : s;
+  };
+  const read = (f: string) => {
+    try {
+      return fs.readFileSync(f, 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  const all = [me, ...others];
+  /** The window that takes back the shared folder for `at`. */
+  const owner = (at: string, handed: string | undefined) => {
+    let best: { w: OpenWindow; depth: number } | undefined;
+    for (const w of all)
+      for (const f of w.folders) {
+        const same = norm(f) === norm(at);
+        if (!same && (handed !== undefined || tooWide(f, home, caseless) || !isInside(at, f, caseless))) continue;
+        const depth = norm(f).length;
+        const wins =
+          !best ||
+          depth > best.depth ||
+          (depth === best.depth && best.w.id !== handed && (w.id === handed || w.id < best.w.id));
+        if (wins) best = { w, depth };
+      }
+    return best?.w;
+  };
   const modDir = path.dirname(imagesDir(root));
-  const tooWide = (f: string) => path.resolve(f) === path.resolve(f, '..') || (!!home && isInside(home, f, caseless));
   let names: string[] = [];
   try {
     names = fs.readdirSync(modDir);
   } catch {
     /* nothing handed over yet */
   }
+  const dirs = new Set<string>();
+  const seen = new Set<string>();
+  const consider = (dir: string, at: string | undefined) => {
+    dir = path.resolve(dir);
+    if (seen.has(dir) || !at) return;
+    seen.add(dir);
+    const note = read(path.join(dir, HANDED_NOTE));
+    const handed = note === undefined ? undefined : handedBy(note) ?? '';
+    if (owner(at, handed) === me) dirs.add(dir);
+  };
+  for (const f of me.folders) consider(sharedDir(root, f), f);
   for (const name of names) {
-    const dir = path.resolve(modDir, name);
-    if (dirs.has(dir) || fs.existsSync(path.join(dir, HANDED_NOTE))) continue;
-    let at: string;
-    try {
-      at = fs.readFileSync(path.join(dir, FOLDER_NOTE), 'utf8').trim();
-    } catch {
-      continue;
-    }
-    const mine = folders.filter((f) => at && !tooWide(f) && isInside(at, f, caseless));
-    if (!mine.length) continue;
-    const depth = Math.max(...mine.map((f) => f.length));
-    if (others.some((f) => isInside(at, f, caseless) && f.length > depth)) continue;
-    dirs.add(dir);
+    const dir = path.join(modDir, name);
+    if (path.resolve(dir) !== path.resolve(imagesDir(root))) consider(dir, read(path.join(dir, FOLDER_NOTE))?.trim());
   }
   return [...dirs];
 }

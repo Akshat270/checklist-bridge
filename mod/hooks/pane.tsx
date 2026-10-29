@@ -323,7 +323,9 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 placeholder="or type a file path"
                 submitLabel="add"
                 onSubmit={v => {
-                  if (v.trim()) void edit(() => (app.addShot(c.id, owner.id, v) ? undefined : 'That is not a .png, .jpg, .gif or .webp file.'))
+                  // Checked as the files are now: it may have been shared, or filled, from another chat meanwhile.
+                  if (v.trim())
+                    void edit(() => app.refusal(c.id, sid, owner.id) ?? (app.addShot(c.id, owner.id, v) ? undefined : 'That is not a .png, .jpg, .gif or .webp file.'))
                 }}
               />
             </Box>

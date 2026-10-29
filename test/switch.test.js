@@ -372,6 +372,48 @@ function seed(sb) {
     W.send({ cmd: 'quit' }); await W.exited;
   }
 
+  // ---- the mod is the one in use (it wrote that down when it first ran): VS Code leaves its checklists there
+  {
+    const sb16 = sandbox();
+    const s = new ChecklistStore();
+    s.handleTool('mod-chat', { cwd: '/work/proj' }, 'checklist_add_tasks', { title: 'Mod only', tasks: [{ text: 'One' }] });
+    const f = path.join(sb16.shared(), `${s.forSession('mod-chat').id}.json`);
+    fs.mkdirSync(sb16.shared(), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(s.forSession('mod-chat')));
+    fs.writeFileSync(path.join(sb16.cb, 'mode.json'), H.modeText('mod'));
+    W = win(sb16); await W.ready; await sleep(3000);
+    check(!sb16.registered() && sb16.mode() === 'mod', 'a new install while the mod is in use does not connect or switch');
+    check(fs.existsSync(f) && !W.msgs.some((m) => m.panelOpened === 'Mod only'), 'and leaves the mod\'s checklists with the mod');
+    W.send({ cmd: 'quit' }); await W.exited;
+  }
+
+  // ---- workspace folders changed after the window opened: the switch uses the folders it has now
+  {
+    const sb17 = sandbox();
+    const id17 = seed(sb17);
+    W = win(sb17); await W.ready; await sleep(2500);
+    W.send({ cmd: 'folders', folders: ['/work/new'] }); await sleep(300);
+    await cmd(W, 'checklistBridge.useMod'); await sleep(500);
+    const now = path.join(H.sharedDir(sb17.cb, '/work/new'), `${id17}.json`);
+    check(fs.existsSync(now) && !fs.existsSync(path.join(sb17.shared(), `${id17}.json`)), 'checklists are handed over for the folder the window has now');
+    // A mod chat in the folder added since, and a change to the handed-over one after that folder is removed too.
+    W.send({ cmd: 'folders', folders: ['/work/other'] }); await sleep(300);
+    const c = H.parseList(fs.readFileSync(now, 'utf8'));
+    c.tasks[1].shared = { at: Date.now(), done: true, note: 'done in the mod', images: [] };
+    c.updatedAt = Date.now();
+    fs.writeFileSync(now, JSON.stringify(c));
+    const s = new ChecklistStore();
+    s.handleTool('mod-chat', { cwd: '/work/other' }, 'checklist_add_tasks', { title: 'Made in other', tasks: [{ text: 'One' }] });
+    const otherDir = H.sharedDir(sb17.cb, '/work/other');
+    fs.mkdirSync(otherDir, { recursive: true });
+    fs.writeFileSync(path.join(otherDir, `${s.forSession('mod-chat').id}.json`), JSON.stringify(s.forSession('mod-chat')));
+    await cmd(W, 'checklistBridge.useExtension'); await sleep(1500);
+    check(fs.existsSync(`${now}.moved`) && W.msgs.some((m) => m.panelOpened === 'Made in other'), 'and taken back from it, and from a folder added since');
+    W.send({ cmd: 'quit' }); await W.exited;
+    const back = JSON.parse(fs.readFileSync(path.join(sb17.storage, 'checklists', `${id17}.json`), 'utf8'));
+    check(back.tasks[1].shared?.note === 'done in the mod', 'with what the user did in the mod');
+  }
+
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
   process.exit(failed ? 1 : 0);
 })();

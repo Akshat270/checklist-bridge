@@ -10,7 +10,7 @@
 // copy can be saved over the other's newer one.
 //
 // The mod can only write text files, so in the shared folder a screenshot is a path to an image file.
-import { normalize, type Checklist, type Img } from './model';
+import { imageMime, normalize, type Checklist, type Img } from './model';
 
 export type Use = 'extension' | 'mod';
 
@@ -58,10 +58,22 @@ export const modeFile = (root: string) => join(root, 'mode.json');
  */
 export const FOLDER_NOTE = 'folder.txt';
 /**
- * In a shared folder VS Code handed checklists over to: the window's project folder. The folder belongs to
- * that window: a mod chat in a subfolder uses it, and only a window on that same folder takes it back.
+ * In a shared folder VS Code handed checklists over to: the window's project folder, and on the next line the
+ * window's id (handedNote). The folder belongs to that window: a mod chat in a subfolder uses it, and only a
+ * window on that same folder takes it back (the one that handed it over, if two have it open).
  */
 export const HANDED_NOTE = 'from-vscode.txt';
+export const handedNote = (folder: string, windowId: string) => `${folder}\n${windowId}\n`;
+/** The id of the window that handed a folder over, from its HANDED_NOTE. */
+export const handedBy = (text: string | undefined) => text?.split(/\r?\n/)[1]?.trim() || undefined;
+
+/**
+ * Whether a folder holds too much to count as one project: the top of a disk, or the home folder or one above
+ * it. A window or a chat there uses only that folder's own checklists, not every project below it.
+ */
+export function tooWide(folder: string, home: string, caseless: boolean): boolean {
+  return ancestors(folder).length === 1 || (!!home && isInside(home, folder, caseless));
+}
 
 /** A path's own folder and each folder above it, nearest first: `/a/b` gives `/a/b`, `/a`, `/`. */
 export function ancestors(p: string): string[] {
@@ -203,16 +215,18 @@ export function toShared(c: Checklist, saveImage: (img: Img) => string | undefin
 }
 
 /**
- * A shared checklist made ready for the extension. `readImage` returns a file's base64 data (or undefined);
- * screenshots whose file is gone are left out.
+ * A shared checklist made ready for the extension. `readImage` returns an image file's base64 data (or
+ * undefined if it is gone or not an image); those screenshots are left out, and so are paths not to an image.
  */
 export function fromShared(c: Checklist, readImage: (path: string) => string | undefined): Checklist {
   const copy: Checklist = JSON.parse(JSON.stringify(c));
   eachImageList(copy, (imgs) =>
     imgs.flatMap((img) => {
       if (!img.path) return img.data || img.stored ? [img] : [];
-      const data = readImage(img.path);
-      return data ? [{ id: img.id, mime: img.mime, w: img.w, h: img.h, data }] : [];
+      // Only image files, whatever the checklist file says: it is plain JSON that something else could edit.
+      const mime = imageMime(img.path);
+      const data = mime && readImage(img.path);
+      return mime && data ? [{ id: img.id, mime, w: img.w, h: img.h, data }] : [];
     })
   );
   return normalize(copy);

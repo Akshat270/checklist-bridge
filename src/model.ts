@@ -15,6 +15,12 @@ const randomUUID = (): string =>
  * write image files, a screenshot is a `path` to a file the user named; Claude opens it itself.
  */
 export interface Img { id: string; mime: string; data?: string; stored?: boolean; w: number; h: number; path?: string }
+
+/** The image type of a screenshot file, from its name; undefined if it isn't a .png, .jpg, .gif or .webp file. */
+export function imageMime(p: string): string | undefined {
+  const ext = /\.(png|jpe?g|gif|webp)$/i.exec(p)?.[1]?.toLowerCase();
+  return ext && `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+}
 export interface Draft { done: boolean; note: string; images: Img[] }
 export interface Shared { at: number; done: boolean; note: string; images: Img[] }
 
@@ -529,11 +535,10 @@ export class ChecklistStore {
   /** The mod's screenshots: a path to an image file, as given (absolutePath cleans what the user typed). False if it isn't one. */
   addImagePath(listId: string, id: string, p: string): boolean {
     const x = this.item(listId, id);
-    const ext = /\.(png|jpe?g|gif|webp)$/i.exec(p)?.[1].toLowerCase();
-    if (!x || (x.t ? x.t.shared : x.q!.answer) || !ext || p.length > 1000) return false;
+    const mime = imageMime(p);
+    if (!x || (x.t ? x.t.shared : x.q!.answer) || !mime || p.length > 1000) return false;
     const draft = x.t ? x.t.draft : x.q!.draft;
     if (draft.images.length >= 8) return false;
-    const mime = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
     draft.images.push({ id: randomUUID().slice(0, 8), mime, path: p, w: 0, h: 0 });
     (x.t ?? x.q!).rev++;
     this.emit({ checklist: x.c, kind: 'updated' });
