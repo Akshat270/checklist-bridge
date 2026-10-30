@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 - **Use it without VS Code.** Checklist Bridge now also comes as a mod for Claude Code, so the checklist shows in a pane next to the chat in the terminal or the Claude desktop app. Install it with `/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge`.
 - The mod's checklist has a new look: actions at the top, framed cards, a key bar at the bottom, and a **copy** button for commands. For a light terminal, set **Colors** to `light` in `/config`.
 - In the mod, press **☾ Away** to tell Claude you're away for 30 min, 1 h, 2 h or 4 h. The checklist counts down the time left, with **+30 min** and **I'm back**.

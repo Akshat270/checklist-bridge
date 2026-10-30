@@ -2,7 +2,7 @@
   "name": "checklist-bridge",
   "displayName": "Checklist Bridge for Claude Code",
   "description": "A checklist for every Claude Code chat. Claude adds the manual tasks and decisions that need you; you tick them off, add notes and screenshots, and share them back when ready.",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "publisher": "Akshat270",
   "license": "MIT",
   "engines": {
