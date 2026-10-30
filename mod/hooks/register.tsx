@@ -489,6 +489,7 @@ export const register: Register = (on, options) => {
         await done()
       },
       toast: text => void $.ui.toast(text),
+      redraw: () => void update($, rev, n => n + 1),
       send: async c => {
         await d.load()
         const fresh = a.isOn ? a.store.get(c.id) : undefined

@@ -822,14 +822,18 @@ test('/checklist continue N takes the one listed as N, even after the order chan
   expect(JSON.parse(files[f]!).sessionId).toBe('chat-a')
 })
 
-test('a note longer than one line stays in view: the field is two lines or more, and grows with the note', async ($, on) => {
+test('a note longer than its field is shown whole under it as it is typed, and the field grows a line per line', async ($, on) => {
   world(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(2)
-  await ui.input({ key: 't1-note', text: 'x'.repeat(200) })
-  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBeGreaterThan(2)
-  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBeLessThanOrEqual(5)
+  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(1)
+  const long = 'the key is in the shared vault under payments, ask Sam for access first'
+  await ui.input({ key: 't1-note', text: long, kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: long })).toBeDefined()
+  await ui.input({ key: 't1-note', text: 'short', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: long })).toBeUndefined()
+  await ui.input({ key: 't1-note', text: 'one\ntwo\nthree', kind: 'change' })
+  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(3)
   await ui.unmount()
 })

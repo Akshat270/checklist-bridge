@@ -45,6 +45,8 @@ export type Actions = {
   continueHere: (listId: string) => Promise<void>
   /** Shows or hides the ☾ Away time choices. */
   toggleAwayPicker: () => Promise<void>
+  /** Draws the pane again (no change saved): what is typed is shown in full under its field. */
+  redraw: () => void
 }
 
 export type View = {
@@ -183,14 +185,26 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   }
   /** A one-line framed text field: its label, the entry, and the field's own ⏎ action at the edge. */
   /**
-   * How many lines a typed-text field is: at least 2, so what is typed past the first line stays in view (a
-   * longer text scrolls inside the field), and more as the text grows, up to 5.
+   * A typed-text field: one line, and one more for each line typed with shift+Enter, up to 5 (more scroll
+   * inside). The field cuts a line at its edge instead of wrapping it, and Claude Code draws its keys
+   * ("⏎ save · shift+⏎ new line") beside it, so a line longer than the room left (`overflows`) is also shown
+   * whole, wrapped, under the field, redrawn as it is typed.
    */
-  const rowsFor = (text: string) => {
-    const cols = Math.max(10, width - 24) // the card's and the field's frames, the label and "save"
-    const lines = text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cols)), 0)
-    return Math.min(5, Math.max(2, lines + 1))
+  const rowsFor = (text: string) => Math.min(5, text.split('\n').length)
+  const room = Math.max(8, width - 42) // the card's and the field's frames, the label, and the keys beside it
+  const overflows = (text: string) => text.split('\n').some(l => l.length > room)
+  const typing = (listId: string, itemId: string, field: 'note' | 'other', was: string) => (v: string) => {
+    app.type(listId, itemId, field, v)
+    if (overflows(v) || overflows(was) || rowsFor(v) !== rowsFor(was)) act.redraw()
   }
+  const whole = (text: string) =>
+    overflows(text) && (
+      <Box paddingX={1}>
+        <Text color={P.muted} wrap="wrap">
+          {text}
+        </Text>
+      </Box>
+    )
 
   const field = (label: string, input: RenderElement) => (
     <Box flexDirection="row" borderStyle="round" borderColor={P.fieldBorder} paddingX={1} gap={2}>
@@ -322,6 +336,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             onSubmit={v => edit(() => setNote(v))}
           />,
         )}
+      {Input && whole(note)}
       {shots(owner, imgs)}
       {withShots && imgs.length < 8 && (
         <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
@@ -387,7 +402,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             )}
           </Box>
         )}
-        {extras(t, t.draft.note, v => app.type(c.id, t.id, 'note', v), t.draft.images, true)}
+        {extras(t, t.draft.note, typing(c.id, t.id, 'note', t.draft.note), t.draft.images, true)}
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           {filled({
             key: `${t.id}-share-done`,
@@ -524,13 +539,14 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 value={q.draft.other}
                 rows={rowsFor(q.draft.other)}
                 submitLabel="save"
-                onInput={v => app.type(c.id, q.id, 'other', v)}
+                onInput={typing(c.id, q.id, 'other', q.draft.other)}
                 onSubmit={v => edit(() => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
               />,
             )}
+            {whole(q.draft.other)}
           </Box>
         )}
-        {extras(q, q.draft.note, v => app.type(c.id, q.id, 'note', v), q.draft.images, false, !(Input && q.allowOther))}
+        {extras(q, q.draft.note, typing(c.id, q.id, 'note', q.draft.note), q.draft.images, false, !(Input && q.allowOther))}
         <Box marginTop={1}>
           {filled({
             key: `${q.id}-answer`,
