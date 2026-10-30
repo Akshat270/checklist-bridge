@@ -58,6 +58,8 @@ let disk: { mode: () => Promise<boolean>; load: () => Promise<boolean>; save: ()
 let toolsRegistered = false
 /** The checklists /checklist list showed last, in its order: /checklist continue N picks from these. */
 let listed: string[] = []
+/** A redraw asked for while typing, not drawn yet (see `redraw`). */
+let redrawSoon: Timer | undefined
 /**
  * Calls to the VS Code window, as the extension's connector makes them (src/connector.ts): Claude's calls in a
  * chat that had the mod's tools before the user switched to VS Code (a chat can't gain the extension's own
@@ -130,10 +132,7 @@ export const register: Register = (on, options) => {
           inVSCode = false
           // Switched to the mod from VS Code while this chat was open: Claude gets its checklist tools now.
           if (!toolsRegistered) await registerTools()
-        } else {
-          if (a.current(await $.session.id())) inVSCode = true // its checklist goes to VS Code, and so do its calls
-          a.forgetTyped() // VS Code has the checklists: what was typed here is not put back on them later
-        }
+        } else if (a.current(await $.session.id())) inVSCode = true // its checklist goes to VS Code, and so do its calls
         return true
       },
       // The mode and the folder as they are now: only files that changed since they were last read are read,
@@ -398,10 +397,10 @@ export const register: Register = (on, options) => {
     } else if (!a.isOn) {
       out = OFF_FOR_USER
     } else if (sub === 'use-extension') {
+      a.keepTyped() // a note typed and not saved yet goes over too
       await disk!.save() // everything goes over as it is now
       await $.fs.write(modeFile(a.root), modeText('extension'))
       a.use = 'extension'
-      a.forgetTyped()
       inVSCode = !!c
       out = [
         'Switched to the VS Code extension.',
@@ -439,13 +438,11 @@ export const register: Register = (on, options) => {
               .join('\n') + '\n\nRun /checklist continue N to make one this chat\'s checklist.'
           : 'No earlier checklists in this folder.'
       } else if (!wanted) out = 'Run /checklist list, then /checklist continue with the number of the one you want.'
+      else if (a.store.get(wanted)?.sessionId === sid) out = 'That one is this chat\'s checklist already.'
       else if (!pick) out = 'That checklist was closed or taken by another chat since. Run /checklist list to see them as they are now.'
       else {
         const refused = a.takeOver(pick.id, sid)
-        if (!refused) {
-          listed = [] // that list is out of date now: the next N counts in the list as it is then
-          void $.ui.open({ id: PANE, title: 'Checklist' })
-        }
+        if (!refused) void $.ui.open({ id: PANE, title: 'Checklist' })
         out = refused ?? `"${pick.title}" is this chat's checklist now. Claude sees it the next time it reads the checklist.`
       }
     } else if (sub === '' || sub === 'open') {
@@ -480,7 +477,8 @@ export const register: Register = (on, options) => {
       await update($, rev, n => n + 1)
       $.ui.status(a.status(sid))
     }
-    return drawPane(els, a, sid, view, {
+    a.startDraw()
+    const tree = drawPane(els, a, sid, view, {
       edit: async (listId, change) => {
         await d.load()
         if (!a.isOn) {
@@ -499,7 +497,13 @@ export const register: Register = (on, options) => {
         await done()
       },
       toast: text => void $.ui.toast(text),
-      redraw: () => void update($, rev, n => n + 1),
+      // At most every quarter second: typing a long note would otherwise draw the pane at every key.
+      redraw: () => {
+        redrawSoon ??= $.clock.after(250, () => {
+          redrawSoon = undefined
+          void update($, rev, n => n + 1)
+        })
+      },
       focus: key => void $.ui.focus({ requestId: PANE, key }).catch(() => undefined),
       send: async c => {
         await d.load()
@@ -554,5 +558,7 @@ export const register: Register = (on, options) => {
         void $.ui.toast(r.isCopied ? 'Copied.' : 'Could not copy here. Select the command and copy it yourself.')
       },
     })
+    a.endDraw()
+    return tree
   })
 }

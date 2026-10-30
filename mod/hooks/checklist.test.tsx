@@ -1,6 +1,7 @@
 // Run with `claude plugin test mod`. The hooks `on` registers here stand for Claude Code beneath the mod:
 // an in-memory file system, the environment, the session id, and records of what the mod showed and sent.
 import { expect, mock, test } from 'claude-code/testing'
+import { App } from './app'
 import { FOLDER_NOTE, HANDED_NOTE, sharedDir } from './lib/handover'
 import { ChecklistStore } from './lib/model'
 import { palette } from './theme'
@@ -251,7 +252,11 @@ test('an earlier checklist can be continued in a new chat', async ($, on) => {
   await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Old work', tasks: [{ text: 'One' }] } as any)
   chat.sid = 'chat-2'
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  expect((await $.command.run({ command: 'checklist', args: 'list' } as any)).text).toMatch(/1\. Old work: 1 tasks waiting/)
+  expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"Old work" is this chat's checklist now/)
   // Without listing first, N counts in the list as it is now.
+  chat.sid = 'chat-3'
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"Old work" is this chat's checklist now/)
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/Checklist "Old work"/)
 })
@@ -823,6 +828,7 @@ test('/checklist continue N takes the one listed as N, even after the order chan
 })
 
 test('a note longer than its field is shown whole under it as it is typed, and the field grows a line per line', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
   world(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
@@ -830,11 +836,21 @@ test('a note longer than its field is shown whole under it as it is typed, and t
   expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(1)
   const long = 'the key is in the shared vault under payments, ask Sam for access first'
   await ui.input({ key: 't1-note', text: long, kind: 'change' })
+  await clock.advance(300) // redrawn at most every quarter second while typing
   expect(await ui.find({ type: 'Text', text: long })).toBeDefined()
+  // The field keeps the text it was drawn with while it is typed in: a redraw doesn't undo what was typed since.
+  expect((await ui.find({ key: 't1-note' }))?.props.value).toBe('')
   await ui.input({ key: 't1-note', text: 'short', kind: 'change' })
+  await clock.advance(300)
   expect(await ui.find({ type: 'Text', text: long })).toBeUndefined()
   await ui.input({ key: 't1-note', text: 'one\ntwo\nthree', kind: 'change' })
+  await clock.advance(300)
   expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(3)
+  // A wide script takes two columns a character: 30 of them don't fit an 80-column pane's field.
+  const wide = '鍵は共有の保管庫にあります。支払いの下にあります。まずサムに聞いてね'
+  await ui.input({ key: 't1-note', text: wide, kind: 'change' })
+  await clock.advance(300)
+  expect(await ui.find({ type: 'Text', text: wide })).toBeDefined()
   await ui.unmount()
 })
 
@@ -885,7 +901,7 @@ test('what was typed before switching to VS Code is not put back over a newer no
   await again.unmount()
 })
 
-test('/checklist continue N after an earlier continue counts in the list as it is now', async ($, on) => {
+test('/checklist continue N after an earlier continue still counts in the list the user was shown', async ($, on) => {
   const { files, chat } = world(on)
   for (const [sid, title] of [['chat-a', 'A'], ['chat-b', 'B']]) {
     chat.sid = sid!
@@ -896,11 +912,36 @@ test('/checklist continue N after an earlier continue counts in the list as it i
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'checklist', args: 'list' } as any) // 1. B, 2. A
   expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"B" is this chat's checklist now/)
-  // B is closed (in VS Code, say); continue 1 is now A, the only other one.
+  expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/this chat's checklist already/)
+  // B is closed (in VS Code, say): 2 is still A, as shown.
   const f = Object.keys(files).find(k => k.endsWith('.json') && JSON.parse(files[k]!).title === 'B')!
   const b = JSON.parse(files[f]!)
   b.closed = true
   b.updatedAt += 10_000
   files[f] = files[`${f}.bak`] = JSON.stringify(b)
-  expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"A" is this chat's checklist now/)
+  expect((await $.command.run({ command: 'checklist', args: 'continue 2' } as any)).text).toMatch(/"A" is this chat's checklist now/)
+})
+
+test('a note typed and not saved goes to VS Code with /checklist use-extension', async ($, on) => {
+  const { files } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 't1-note', text: 'typed, no Enter', kind: 'change' })
+  await ui.unmount()
+  await $.command.run({ command: 'checklist', args: 'use-extension' } as any)
+  expect(JSON.parse(files[listFile(files)]!).tasks[0].draft.note).toBe('typed, no Enter')
+})
+
+test('what is typed while a save is being written is still kept after it', () => {
+  const a = new App('/r', '/h', '/w', 'mod')
+  a.store.handleTool('s', { cwd: '/w' }, 'checklist_add_tasks', { tasks: [{ text: 'One' }] })
+  const c = a.store.forSession('s')!
+  a.touch(c)
+  const p = a.pending()[0]!
+  a.type(c.id, 't1', 'note', 'typed during the write')
+  a.saved(p)
+  // Still known as typed: the next save that is made writes it.
+  a.keepTyped()
+  expect(a.pending().length).toBe(1)
 })

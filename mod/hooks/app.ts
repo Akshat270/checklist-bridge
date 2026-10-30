@@ -47,8 +47,8 @@ export function extensionConnected(config: string): boolean | undefined {
   }
 }
 
-/** What one save writes, in order, and the version it saves. */
-export type Pending = { id: string; at: number; writes: [string, string][] }
+/** What one save writes, in order, the version it saves, and what was typed on it then (by typed's key). */
+export type Pending = { id: string; at: number; writes: [string, string][]; typed: [string, string][] }
 
 export class App {
   readonly store = new ChecklistStore()
@@ -61,11 +61,20 @@ export class App {
   /** The version (updatedAt) of each checklist as last read from or written to its file. */
   private known = new Map<string, number>()
   /**
-   * Text typed into a note or "something else" and not saved yet, by `<list>/<item>/<field>`. Typing isn't a
-   * change to save on its own (it would save at every keystroke), so when the file changes elsewhere and
-   * this copy is replaced, what was typed is put back.
+   * Text typed into a note or "something else" and not saved yet, by `<list>/<item>/<field>`, with what the
+   * field held when the typing began (`base`). Typing isn't a change to save on its own (it would save at
+   * every keystroke), so when the file changes elsewhere and this copy is replaced, what was typed is put back,
+   * unless that field itself was changed elsewhere meanwhile (then the newer text is kept).
    */
-  private typed = new Map<string, string>()
+  private typed = new Map<string, { value: string; base: string }>()
+  /**
+   * The text each field was last drawn with, by `<list>/<field key>`, and the fields the drawing under way has
+   * drawn (startDraw / endDraw). While its text is being typed, a field is drawn with the same text: Claude
+   * Code fills a field with a drawn text that differs from the one it drew last, so a redraw with the text as
+   * typed a moment ago would replace what was typed since.
+   */
+  private shown = new Map<string, string>()
+  private drawing = new Set<string>()
   /** How many times each field was saved with Enter: part of its key (fieldKey). */
   private rounds = new Map<string, number>()
   /** Each checklist file's time when we last read it, and when that was: settled files are not read again. */
@@ -231,16 +240,47 @@ export class App {
 
   /** What the user types into an item's note, or a question's own answer: kept, not saved yet (see typed). */
   type(listId: string, itemId: string, field: 'note' | 'other', value: string) {
-    this.typed.set(`${listId}/${itemId}/${field}`, value)
+    const k = `${listId}/${itemId}/${field}`
+    this.typed.set(k, { value, base: this.typed.get(k)?.base ?? this.fieldText(listId, itemId, field) })
     this.applyTyped(listId, itemId, field, value)
   }
 
+  /** Forgets what was typed on a checklist another chat has taken over: it is not put back if it comes back. */
+  forgetTyped(listId: string) {
+    for (const k of [...this.typed.keys()]) if (k.startsWith(`${listId}/`)) this.typed.delete(k)
+  }
+
+  /** Makes what was typed and not saved yet part of the next save (before handing the checklists to VS Code). */
+  keepTyped() {
+    for (const k of this.typed.keys()) this.touch(this.store.get(k.split('/')[0]!))
+  }
+
+  /** Starts drawing the pane: see shown. */
+  startDraw() {
+    this.drawing.clear()
+  }
+
   /**
-   * Forgets what was typed on a checklist (all, without `listId`) that this chat no longer has: switched to
-   * VS Code, or taken over by another chat. Otherwise it would be put back over a newer note later.
+   * The text a field is drawn with: `now`, or while it is being typed in, the text it was drawn with before
+   * (see shown).
    */
-  forgetTyped(listId?: string) {
-    for (const k of [...this.typed.keys()]) if (!listId || k.startsWith(`${listId}/`)) this.typed.delete(k)
+  fieldValue(listId: string, itemId: string, field: 'note' | 'other', now: string): string {
+    const k = `${listId}/${this.fieldKey(listId, itemId, field)}`
+    this.drawing.add(k)
+    if (!this.typed.has(`${listId}/${itemId}/${field}`) || !this.shown.has(k)) this.shown.set(k, now)
+    return this.shown.get(k)!
+  }
+
+  /** Done drawing: a field not drawn this time (its card folded) starts afresh with its text when drawn again. */
+  endDraw() {
+    for (const k of [...this.shown.keys()]) if (!this.drawing.has(k)) this.shown.delete(k)
+  }
+
+  private fieldText(listId: string, itemId: string, field: 'note' | 'other'): string {
+    const c = this.store.get(listId)
+    const t = c?.tasks.find(x => x.id === itemId)
+    const q = c?.questions.find(x => x.id === itemId)
+    return (field === 'note' ? (t ?? q)?.draft.note : q?.draft.other) ?? ''
   }
 
   /**
@@ -272,14 +312,19 @@ export class App {
     if (q && !q.answer) this.store.setAnswerDraft(listId, itemId, field === 'note' ? { note: value } : { other: value })
   }
 
-  /** Puts back what was typed on a checklist after a newer copy replaced it. */
+  /**
+   * Puts back what was typed on a checklist after a newer copy replaced it, where that copy still has the
+   * field as it was when the typing began. A field changed elsewhere meanwhile keeps the newer text.
+   */
   private retype(listId: string) {
     const c = this.store.get(listId)
     if (!c) return
     const version = c.updatedAt
-    for (const [k, v] of this.typed) {
+    for (const [k, v] of [...this.typed]) {
       const [list, item, field] = k.split('/') as [string, string, 'note' | 'other']
-      if (list === listId) this.applyTyped(list, item, field, v)
+      if (list !== listId) continue
+      if (this.fieldText(list, item, field) === v.base) this.applyTyped(list, item, field, v.value)
+      else this.typed.delete(k)
     }
     c.updatedAt = version // still the file's version: putting back what was typed is no change of its own
   }
@@ -299,7 +344,8 @@ export class App {
       const c = this.store.get(id)
       if (!c) continue
       const text = JSON.stringify(c)
-      out.push({ id, at: c.updatedAt, writes: [[join(this.dir, `${id}.json.bak`), text], [join(this.dir, `${id}.json`), text]] })
+      const typed = [...this.typed].filter(([k]) => k.startsWith(`${id}/`)).map(([k, v]): [string, string] => [k, v.value])
+      out.push({ id, at: c.updatedAt, writes: [[join(this.dir, `${id}.json.bak`), text], [join(this.dir, `${id}.json`), text]], typed })
     }
     return out
   }
@@ -309,7 +355,9 @@ export class App {
     this.known.set(p.id, p.at)
     if (this.store.get(p.id)?.updatedAt !== p.at) return // changed again meanwhile: saved next time
     this.dirty.delete(p.id)
-    this.forgetTyped(p.id) // it is in the file now
+    // What was typed is in the file now; not what was typed while it was being written (typing doesn't change
+    // the version), which stays to be put back.
+    for (const [k, value] of p.typed) if (this.typed.get(k)?.value === value) this.typed.delete(k)
   }
 
   /** Whether some change is still not saved (a write failed). */

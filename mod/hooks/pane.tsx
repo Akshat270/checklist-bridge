@@ -89,6 +89,29 @@ function ordered(c: Checklist) {
   })
 }
 
+/**
+ * How many columns a line takes in a terminal: two for each wide character (Chinese, Japanese, Korean, and
+ * most emoji), one for the others.
+ */
+export function columns(line: string): number {
+  let n = 0
+  for (const ch of line) {
+    const c = ch.codePointAt(0)!
+    const wide =
+      (c >= 0x1100 && c <= 0x115f) ||
+      (c >= 0x2e80 && c <= 0xa4cf && c !== 0x303f) ||
+      (c >= 0xac00 && c <= 0xd7a3) ||
+      (c >= 0xf900 && c <= 0xfaff) ||
+      (c >= 0xfe30 && c <= 0xfe4f) ||
+      (c >= 0xff00 && c <= 0xff60) ||
+      (c >= 0xffe0 && c <= 0xffe6) ||
+      (c >= 0x1f300 && c <= 0x1faff) ||
+      (c >= 0x20000 && c <= 0x3fffd)
+    n += wide ? 2 : 1
+  }
+  return n
+}
+
 export function drawPane(els: Elements[keyof Elements], app: App, sid: string, view: View, act: Actions): RenderElement {
   const { Box, Text, Button } = els
   // The phone app has no text fields: there the pane shows the list with its buttons only.
@@ -195,8 +218,8 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
    * The columns a field's entry shows of a line: the pane less the card's and the field's frames, the label,
    * and the keys Claude Code draws beside it ("⏎ save", and "· shift+⏎ new line" once it has several lines).
    */
-  const roomFor = (label: string, text: string) => width - 8 - (label.length + 2) - (rowsFor(text) > 1 ? 28 : 9)
-  const overflows = (label: string, text: string) => text.split('\n').some(l => l.length > roomFor(label, text))
+  const roomFor = (label: string, text: string) => view.width - 2 - 8 - (label.length + 2) - (rowsFor(text) > 1 ? 28 : 9)
+  const overflows = (label: string, text: string) => text.split('\n').some(l => columns(l) > roomFor(label, text))
   const typing = (label: string, listId: string, itemId: string, field: 'note' | 'other', was: string) => (v: string) => {
     app.type(listId, itemId, field, v)
     if (overflows(label, v) || overflows(label, was) || rowsFor(v) !== rowsFor(was)) act.redraw()
@@ -343,7 +366,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Input
             key={app.fieldKey(c.id, owner.id, 'note')}
             placeholder="optional: what you did, or a value Claude needs"
-            value={note}
+            value={app.fieldValue(c.id, owner.id, 'note', note)}
             rows={rowsFor(note)}
             submitLabel="save"
             onInput={setNote}
@@ -550,7 +573,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
               <Input
                 key={app.fieldKey(c.id, q.id, 'other')}
                 placeholder="your own answer"
-                value={q.draft.other}
+                value={app.fieldValue(c.id, q.id, 'other', q.draft.other)}
                 rows={rowsFor(q.draft.other)}
                 submitLabel="save"
                 onInput={typing('Something else', c.id, q.id, 'other', q.draft.other)}
