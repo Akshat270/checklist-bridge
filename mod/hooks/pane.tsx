@@ -183,35 +183,39 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
       </Box>
     )
   }
-  /** A one-line framed text field: its label, the entry, and the field's own ⏎ action at the edge. */
-  /**
-   * A typed-text field: one line, and one more for each line typed with shift+Enter, up to 5 (more scroll
-   * inside). The field cuts a line at its edge instead of wrapping it, and Claude Code draws its keys
-   * ("⏎ save · shift+⏎ new line") beside it, so a line longer than the room left (`overflows`) is also shown
-   * whole, wrapped, under the field, redrawn as it is typed.
+  /*
+   * Typed-text fields. One line, and one more for each line typed with shift+Enter, up to 5 (more scroll
+   * inside). A field cuts a line at its edge instead of wrapping it, so a line longer than its room is also
+   * shown whole, wrapped, inside the frame under the entry, and redrawn as it is typed.
    */
   const rowsFor = (text: string) => Math.min(5, text.split('\n').length)
-  const room = Math.max(8, width - 42) // the card's and the field's frames, the label, and the keys beside it
-  const overflows = (text: string) => text.split('\n').some(l => l.length > room)
-  const typing = (listId: string, itemId: string, field: 'note' | 'other', was: string) => (v: string) => {
+  /**
+   * The columns a field's entry shows of a line: the pane less the card's and the field's frames, the label,
+   * and the keys Claude Code draws beside it ("⏎ save", and "· shift+⏎ new line" once it has several lines).
+   */
+  const roomFor = (label: string, text: string) => width - 8 - (label.length + 2) - (rowsFor(text) > 1 ? 28 : 9)
+  const overflows = (label: string, text: string) => text.split('\n').some(l => l.length > roomFor(label, text))
+  const typing = (label: string, listId: string, itemId: string, field: 'note' | 'other', was: string) => (v: string) => {
     app.type(listId, itemId, field, v)
-    if (overflows(v) || overflows(was) || rowsFor(v) !== rowsFor(was)) act.redraw()
+    if (overflows(label, v) || overflows(label, was) || rowsFor(v) !== rowsFor(was)) act.redraw()
   }
-  const whole = (text: string) =>
-    overflows(text) && (
-      <Box paddingX={1}>
-        <Text color={P.muted} wrap="wrap">
-          {text}
-        </Text>
-      </Box>
-    )
 
-  const field = (label: string, input: RenderElement) => (
-    <Box flexDirection="row" borderStyle="round" borderColor={P.fieldBorder} paddingX={1} gap={2}>
-      {keep(<Text color={P.muted}>{label}</Text>)}
-      <Box flexGrow={1} flexShrink={1}>
-        {input}
+  /** A framed text field: its label, the entry (with its own ⏎ action at the edge), and its text in full if the entry cuts it. */
+  const field = (label: string, input: RenderElement, text = '') => (
+    <Box flexDirection="column" borderStyle="round" borderColor={P.fieldBorder} paddingX={1}>
+      <Box flexDirection="row" gap={2}>
+        {keep(<Text color={P.muted}>{label}</Text>)}
+        <Box flexGrow={1} flexShrink={1}>
+          {input}
+        </Box>
       </Box>
+      {overflows(label, text) && (
+        <Box marginLeft={label.length + 2} marginTop={1}>
+          <Text color={P.muted} wrap="wrap">
+            {text}
+          </Text>
+        </Box>
+      )}
     </Box>
   )
 
@@ -335,8 +339,8 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             onInput={setNote}
             onSubmit={v => edit(() => setNote(v))}
           />,
+          note,
         )}
-      {Input && whole(note)}
       {shots(owner, imgs)}
       {withShots && imgs.length < 8 && (
         <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
@@ -402,7 +406,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             )}
           </Box>
         )}
-        {extras(t, t.draft.note, typing(c.id, t.id, 'note', t.draft.note), t.draft.images, true)}
+        {extras(t, t.draft.note, typing('Note', c.id, t.id, 'note', t.draft.note), t.draft.images, true)}
         <Box flexDirection="row" flexWrap="wrap" columnGap={2} marginTop={1}>
           {filled({
             key: `${t.id}-share-done`,
@@ -539,14 +543,14 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 value={q.draft.other}
                 rows={rowsFor(q.draft.other)}
                 submitLabel="save"
-                onInput={typing(c.id, q.id, 'other', q.draft.other)}
+                onInput={typing('Something else', c.id, q.id, 'other', q.draft.other)}
                 onSubmit={v => edit(() => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
               />,
+              q.draft.other,
             )}
-            {whole(q.draft.other)}
           </Box>
         )}
-        {extras(q, q.draft.note, typing(c.id, q.id, 'note', q.draft.note), q.draft.images, false, !(Input && q.allowOther))}
+        {extras(q, q.draft.note, typing('Note', c.id, q.id, 'note', q.draft.note), q.draft.images, false, !(Input && q.allowOther))}
         <Box marginTop={1}>
           {filled({
             key: `${q.id}-answer`,

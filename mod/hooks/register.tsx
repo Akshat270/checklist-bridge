@@ -421,8 +421,10 @@ export const register: Register = (on, options) => {
       } else out = 'You were not marked as away.'
     } else if (sub === 'list' || sub === 'continue') {
       const others = a.others(sid)
-      // N is a number from the list the user was shown: the order changes as other chats update theirs.
-      const wanted = sub === 'continue' ? listed[Number(rest[0]) - 1] : undefined
+      // N is a number from the list the user was shown, as the order changes when other chats update theirs.
+      // Nothing listed yet in this chat: the list as it is now.
+      const shown = listed.length ? listed : others.slice(0, 9).map(o => o.id)
+      const wanted = sub === 'continue' ? shown[Number(rest[0]) - 1] : undefined
       const pick = wanted ? others.find(o => o.id === wanted) : undefined
       if (sub === 'list') {
         listed = others.slice(0, 9).map(o => o.id)

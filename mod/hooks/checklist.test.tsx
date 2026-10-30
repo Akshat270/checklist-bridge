@@ -251,7 +251,7 @@ test('an earlier checklist can be continued in a new chat', async ($, on) => {
   await $.tool.call({ tool: `${T}checklist_add_tasks`, title: 'Old work', tasks: [{ text: 'One' }] } as any)
   chat.sid = 'chat-2'
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
-  expect((await $.command.run({ command: 'checklist', args: 'list' } as any)).text).toMatch(/1\. Old work: 1 tasks waiting/)
+  // Without listing first, N counts in the list as it is now.
   expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"Old work" is this chat's checklist now/)
   expect(textOf(await $.tool.call({ tool: `${T}checklist_read` } as any))).toMatch(/Checklist "Old work"/)
 })
