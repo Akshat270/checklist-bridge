@@ -128,8 +128,13 @@ const allNotes = (c) => c.notes.filter((n) => n.method === 'notifications/claude
   const B = chat('B', ['--dangerously-load-development-channels', 'server:checklist']);
   await init(B);
   await B.tool('checklist_ask', { title: 'Naming', questions: [{ question: 'Name it?', options: ['A', 'B'] }] });
-  await sleep(1500);
-  check((await panel('Naming')).routes?.channel === true, 'channel route detected');
+  // The connector polls once it has sent the chat's process chain, which takes a while on Windows: wait for it.
+  let channel = false;
+  for (let t0 = Date.now(); !channel && Date.now() - t0 < 10_000; ) {
+    await sleep(300);
+    channel = (await panel('Naming')).routes?.channel === true;
+  }
+  check(channel, 'channel route detected');
 
   // Nothing is sent to Claude when the user comes back: an idle chat's cache has usually expired,
   // so waking it would cost the user. Claude finds out on its next read.
