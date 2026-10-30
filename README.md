@@ -91,7 +91,7 @@ This installs the VS Code extension. Don't use VS Code? [Install the Claude Code
    ```
    code --install-extension Akshat270.checklist-bridge
    ```
-   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.7.2.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
+   <sub>No Marketplace access (for example in Cursor or VSCodium)? [Download the `.vsix`](https://github.com/Akshat270/checklist-bridge/raw/main/releases/checklist-bridge-0.8.0.vsix), then in the Extensions view click `…` → **Install from VSIX…** and pick the file.</sub>
 2. That's it: the extension connects itself to Claude Code the first time VS Code starts, and tells you when it's done. There's no command to type.
 3. Start a **new** Claude chat (Claude Code loads tools when a chat starts). Run `/mcp` to check that `checklist` is connected.
 

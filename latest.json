@@ -1,6 +1,6 @@
 {
-  "version": "0.7.2",
-  "vsix": "releases/checklist-bridge-0.7.2.vsix",
-  "sha256": "e6766f5630d5f13d181ee2748e50f6bb6fde2758a4b1d66a809584cb48e70ec1",
-  "notes": "Keyboard and screen-reader support, the next task stays in its group, and away-mode fixes."
+  "version": "0.8.0",
+  "vsix": "releases/checklist-bridge-0.8.0.vsix",
+  "sha256": "de85b0b285d6dfc2e98f967ea2264068186869fe84455354250be58753cb8a24",
+  "notes": "Use Checklist Bridge without VS Code, as a Claude Code mod, and switch between the two."
 }
