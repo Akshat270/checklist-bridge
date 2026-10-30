@@ -121,6 +121,14 @@ server.listen(0, '127.0.0.1', async () => {
   r = await A.tool('checklist_read', {});
   check(r.isError && /no VS Code window/.test(text(r)), 'helpful error when VS Code is not running');
 
+  // A window's folder is compared as the chat's is, made absolute and tidied (on Windows, /work/x is D:\work\x):
+  // the window with the project open wins over one used more recently.
+  const { pickWindow } = require(DIST + '/registry.js');
+  writeWindow({ windowId: 'w-dots', port: 1, token: 't', pid: process.pid, folders: ['/work/other/../dotted'], focusedAt: 1, name: 'dots' });
+  writeWindow({ windowId: 'w-recent', port: 2, token: 't', pid: process.pid, folders: ['/elsewhere'], focusedAt: Date.now() + 1e6, name: 'recent' });
+  const picked = pickWindow({}, '/work/dotted');
+  check(picked?.w.windowId === 'w-dots' && picked.w.folders[0] === '/work/other/../dotted', `the window with the chat's folder open is picked: ${picked?.w.windowId} (${picked?.why})`);
+
   A.kill(); B.kill();
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');
   process.exit(failed ? 1 : 0);

@@ -84,6 +84,9 @@ function idePid(env: NodeJS.ProcessEnv): number | undefined {
  */
 export function pickWindow(env: NodeJS.ProcessEnv, cwd: string, exclude: Set<string> = new Set()): { w: WindowInfo; why: string } | undefined {
   const all = readWindows().filter((w) => !exclude.has(w.windowId));
-  const best = rankWindows(all, { envWindow: env[ENV_WINDOW], idePid: idePid(env), cwd: path.resolve(cwd), caseless: process.platform !== 'linux' })[0];
-  return best && { w: best.w, why: best.why };
+  // Both sides made absolute and tidied the same way (on Windows, /work/x is D:\work\x), then ranked.
+  const resolved = all.map((w) => ({ ...w, folders: w.folders.map((f) => path.resolve(f)) }));
+  const best = rankWindows(resolved, { envWindow: env[ENV_WINDOW], idePid: idePid(env), cwd: path.resolve(cwd), caseless: process.platform !== 'linux' })[0];
+  const w = best && all.find((x) => x.windowId === best.w.windowId);
+  return w && { w, why: best.why };
 }
