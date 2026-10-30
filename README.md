@@ -4,7 +4,7 @@
 
 <h1 align="center">Checklist Bridge for Claude Code</h1>
 
-<p align="center"><b>Give every Claude Code chat its own checklist in VS Code.</b><br>
+<p align="center"><b>Give every Claude Code chat its own checklist, in VS Code or right inside Claude Code.</b><br>
 The things only you can do, and the decisions you can make later, no longer get lost in the chat.</p>
 
 <p align="center">
@@ -30,6 +30,13 @@ When Claude Code needs you to do something by hand, like create an API key, run 
   <img src="https://raw.githubusercontent.com/Akshat270/checklist-bridge/main/docs/checklist-decide.png" width="300" alt="The Decide section: an urgent question about payment gateways with Claude's pick highlighted">
 </p>
 
+**Two ways to use it.** Pick one; you can switch at any time and your checklists come with you.
+
+| | Where the checklist shows | Install |
+|---|---|---|
+| **VS Code extension** | A tab in VS Code, next to the chat. Works with Claude in the terminal or in the Claude panel. | [From the Marketplace](#install) |
+| **Claude Code mod** | A pane inside Claude Code itself: in the terminal or the Claude desktop app. No VS Code needed. | `/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge` ([more](#use-it-without-vs-code)) |
+
 ## Why people install it
 
 - **Never scroll the chat for "what do I need to do?"** The next task is open and highlighted. Urgent ones turn red.
@@ -38,6 +45,7 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 - **Claude never assumes.** It sees only what you've shared: done, not done, your note, your screenshots. Nothing else is guessed.
 - **One checklist per chat.** Running several agents? Each has its own list, in the window it runs in.
 - **Nothing to set up.** Install it and it connects itself to Claude Code. No config files, no commands.
+- **With or without VS Code.** Use the VS Code extension, or the mod that runs inside Claude Code. [Use it without VS Code](#use-it-without-vs-code).
 - **Private.** Everything stays on your computer. [More on privacy](#privacy).
 
 ## How it works
@@ -76,6 +84,8 @@ When Claude Code needs you to do something by hand, like create an API key, run 
 - Anyone running several Claude agents at once and losing track of what each one is waiting on.
 
 ## Install
+
+This installs the VS Code extension. Don't use VS Code? [Install the Claude Code mod](#use-it-without-vs-code) instead.
 
 1. **Install it from the VS Code Marketplace.** In VS Code, open the Extensions view, search for **Checklist Bridge** and click **Install**. Or [open the Marketplace page](https://marketplace.visualstudio.com/items?itemName=Akshat270.checklist-bridge), or run:
    ```
@@ -210,7 +220,11 @@ Claude gets five tools:
 
 **Do I need Claude Code?** Yes. Checklist Bridge works with [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), in the terminal or in the VS Code extension. It doesn't add a chat of its own.
 
-**Does it work in the terminal and the Claude panel?** Both. The checklist opens in VS Code either way.
+**Do I need VS Code?** No. Without VS Code, use the [Claude Code mod](#use-it-without-vs-code): the checklist opens in a pane inside Claude Code, in the terminal or the Claude desktop app.
+
+**Does it work in the terminal and the Claude panel?** Both. With the extension the checklist opens in VS Code either way; with the mod it opens inside Claude Code.
+
+**Can I use the extension and the mod together?** One at a time. Switching moves your open checklists across. See [Switching between the extension and the mod](#switching-between-the-extension-and-the-mod).
 
 **Does Claude see my checklist before I share it?** No. Claude sees only tasks and answers you've shared. Anything else shows as "waiting".
 
@@ -230,7 +244,7 @@ If Checklist Bridge saves you time, a [review on the Marketplace](https://market
 
 ## Privacy
 
-Everything stays on your computer. Checklists, notes and screenshots are stored in VS Code's own storage for the workspace. Claude Code talks to the extension over `127.0.0.1` only, with a random token. Screenshots reach Claude only when you share the task they're attached to.
+Everything stays on your computer. Checklists, notes and screenshots are stored in VS Code's own storage for the workspace. The mod keeps its checklists in `~/.checklist-bridge/mod` and its screenshots as image files on your disk. Claude Code talks to the extension over `127.0.0.1` only, with a random token. Screenshots reach Claude only when you share the task they're attached to.
 
 The one network request the extension makes is the update check described below. You can switch it off.
 
@@ -255,6 +269,8 @@ Settings that decide where updates come from or which program runs (`updateRepo`
   3. The window that has the chat's project folder open.
   4. The window you used most recently.
 - **Claude doesn't notice what you shared.** Claude reads the checklist when it replies. Send any message, even "done".
+- **The mod says your checklists are in the VS Code extension.** Only one of the two is on at a time. Type `/checklist use-mod` in Claude Code to use the mod.
+- **The mod's checklist doesn't show.** Type `/checklist` to open it. Mods are new in Claude Code: update Claude Code if `/plugin install` doesn't know the mod.
 
 ## Installing the newest build from GitHub
 
