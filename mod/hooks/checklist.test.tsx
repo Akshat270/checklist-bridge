@@ -821,3 +821,15 @@ test('/checklist continue N takes the one listed as N, even after the order chan
   expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"B" is this chat's checklist now/)
   expect(JSON.parse(files[f]!).sessionId).toBe('chat-a')
 })
+
+test('a note longer than one line stays in view: the field is two lines or more, and grows with the note', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(2)
+  await ui.input({ key: 't1-note', text: 'x'.repeat(200) })
+  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBeGreaterThan(2)
+  expect((await ui.find({ key: 't1-note' }))?.props.rows).toBeLessThanOrEqual(5)
+  await ui.unmount()
+})

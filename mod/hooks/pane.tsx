@@ -182,6 +182,16 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
     )
   }
   /** A one-line framed text field: its label, the entry, and the field's own ⏎ action at the edge. */
+  /**
+   * How many lines a typed-text field is: at least 2, so what is typed past the first line stays in view (a
+   * longer text scrolls inside the field), and more as the text grows, up to 5.
+   */
+  const rowsFor = (text: string) => {
+    const cols = Math.max(10, width - 24) // the card's and the field's frames, the label and "save"
+    const lines = text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cols)), 0)
+    return Math.min(5, Math.max(2, lines + 1))
+  }
+
   const field = (label: string, input: RenderElement) => (
     <Box flexDirection="row" borderStyle="round" borderColor={P.fieldBorder} paddingX={1} gap={2}>
       {keep(<Text color={P.muted}>{label}</Text>)}
@@ -306,6 +316,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             key={`${owner.id}-note`}
             placeholder="optional: what you did, or a value Claude needs"
             value={note}
+            rows={rowsFor(note)}
             submitLabel="save"
             onInput={setNote}
             onSubmit={v => edit(() => setNote(v))}
@@ -511,6 +522,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
                 key={`${q.id}-other`}
                 placeholder="your own answer"
                 value={q.draft.other}
+                rows={rowsFor(q.draft.other)}
                 submitLabel="save"
                 onInput={v => app.type(c.id, q.id, 'other', v)}
                 onSubmit={v => edit(() => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
