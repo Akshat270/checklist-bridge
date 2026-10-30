@@ -3,16 +3,9 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { parseWindow, rankWindows, type WindowInfo } from './handover';
 
-export interface WindowInfo {
-  windowId: string;
-  port: number;
-  token: string;
-  pid: number;
-  folders: string[];
-  focusedAt: number;
-  name: string;
-}
+export type { WindowInfo };
 
 export const ROOT = process.env.CHECKLIST_BRIDGE_HOME || path.join(os.homedir(), '.checklist-bridge');
 export const WINDOWS_DIR = path.join(ROOT, 'windows');
@@ -54,25 +47,17 @@ export function readWindows(): WindowInfo[] {
   }
   const out: WindowInfo[] = [];
   for (const n of names) {
+    let text: string | undefined;
     try {
-      const w = JSON.parse(fs.readFileSync(path.join(WINDOWS_DIR, n), 'utf8')) as WindowInfo;
-      if (w && typeof w.port === 'number' && alive(w.pid)) out.push(w);
+      text = fs.readFileSync(path.join(WINDOWS_DIR, n), 'utf8');
     } catch {
-      /* half-written or stale file */
+      continue; // removed meanwhile
     }
+    const w = parseWindow(text); // undefined while half-written
+    if (w && alive(w.pid)) out.push(w);
   }
   return out;
 }
-
-const norm = (p: string) => {
-  const r = path.resolve(p);
-  return process.platform === 'win32' ? r.toLowerCase() : r;
-};
-const inside = (child: string, parent: string) => {
-  const c = norm(child);
-  const p = norm(parent);
-  return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
-};
 
 /** The PID of the VS Code extension host that launched this Claude chat, via Claude Code's own IDE lock file. */
 function idePid(env: NodeJS.ProcessEnv): number | undefined {
@@ -99,27 +84,9 @@ function idePid(env: NodeJS.ProcessEnv): number | undefined {
  */
 export function pickWindow(env: NodeJS.ProcessEnv, cwd: string, exclude: Set<string> = new Set()): { w: WindowInfo; why: string } | undefined {
   const all = readWindows().filter((w) => !exclude.has(w.windowId));
-  if (!all.length) return undefined;
-
-  const byEnv = env[ENV_WINDOW] && all.find((w) => w.windowId === env[ENV_WINDOW]);
-  if (byEnv) return { w: byEnv, why: 'started from this window' };
-
-  const pid = idePid(env);
-  const byIde = pid !== undefined && all.find((w) => w.pid === pid);
-  if (byIde) return { w: byIde, why: 'Claude Code is connected to this window' };
-
-  let best: WindowInfo | undefined;
-  let bestLen = -1;
-  for (const w of all) {
-    for (const f of w.folders) {
-      if (inside(cwd, f) && (f.length > bestLen || (f.length === bestLen && w.focusedAt > (best?.focusedAt ?? 0)))) {
-        best = w;
-        bestLen = f.length;
-      }
-    }
-  }
-  if (best) return { w: best, why: 'this window has the project open' };
-
-  const recent = all.sort((a, b) => b.focusedAt - a.focusedAt)[0];
-  return { w: recent, why: 'most recently used window' };
+  // Both sides made absolute and tidied the same way (on Windows, /work/x is D:\work\x), then ranked.
+  const resolved = all.map((w) => ({ ...w, folders: w.folders.map((f) => path.resolve(f)) }));
+  const best = rankWindows(resolved, { envWindow: env[ENV_WINDOW], idePid: idePid(env), cwd: path.resolve(cwd), caseless: process.platform !== 'linux' })[0];
+  const w = best && all.find((x) => x.windowId === best.w.windowId);
+  return w && { w, why: best.why };
 }

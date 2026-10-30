@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+- **Use it without VS Code.** Checklist Bridge now also comes as a mod for Claude Code, so the checklist shows in a pane next to the chat in the terminal or the Claude desktop app. Install it with `/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge`.
+- The mod's checklist has a new look: actions at the top, framed cards, a key bar at the bottom, and a **copy** button for commands. For a light terminal, set **Colors** to `light` in `/config`.
+- In the mod, press **☾ Away** to tell Claude you're away for 30 min, 1 h, 2 h or 4 h. The checklist counts down the time left, with **+30 min** and **I'm back**.
+- In the mod, press **Paste screenshot** to add the screenshot on your clipboard to a task. Claude can open the screenshots you share without asking each time.
+- You can switch between the VS Code extension and the mod at any time, and your open checklists come with you. In VS Code, run *Checklist Bridge: Use the Claude Code mod instead*; in Claude Code, type `/checklist use-extension` to come back.
+- While your checklists are in the mod, their tabs in VS Code say so at the top, with a **Switch back to VS Code** button. A window with no folder open keeps its checklists in VS Code, and so does a checklist that could not be moved.
+- Switching works when Claude runs in VS Code's own terminal too: VS Code follows `/checklist use-extension` and `/checklist use-mod` right away, without clicking away and back. A checklist you worked on in the mod opens in VS Code when it comes back.
+- After `/checklist use-extension`, the chat you are in keeps its checklist: Claude reads and changes it in VS Code, and **Send now** in VS Code reaches that chat. Before, it had to be a new chat.
+- A Claude Code chat started in a subfolder of your project finds the checklists VS Code moved over, and VS Code takes back the ones made there.
+- After switching to the mod, open `/checklist` and press **Continue here** to pick up a checklist that came from VS Code. A chat that was already open follows the switch within a few seconds.
+- If you install the mod while the VS Code extension is connected, the extension stays in use until you type `/checklist use-mod`. If you started with the mod, opening VS Code no longer switches it off and takes its checklists.
+- In the mod, a note too long for its field is shown in full under it, in the same frame, as you type. Enter saves the note, and it stays in the field. Shift+Enter starts a new line, and the field grows with each line.
+- The mod's checklist fits narrow panes: ids, labels and buttons stay whole, and long task names wrap under themselves. **Shared with Claude** is green.
+
 ## 0.7.2
 - **Easier to use with a keyboard.** Every row opens with Enter or Space, answered questions too. Task ids and screenshots can be reached with Tab, and a screenshot shown full size closes with Escape. With one choice to pick, the arrow keys move between the choices. When Claude updates the checklist, the focus stays where it was.
 - **Screen readers now hear what the colours and icons show:** urgent or important, shared as done or not done, and whether Claude has read it.

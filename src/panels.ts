@@ -14,7 +14,14 @@ export interface Routes { waiting: boolean; channel: boolean; terminal: boolean 
 export interface PanelHooks {
   routes(c: Checklist): Routes;
   sendNow(c: Checklist): Promise<void>;
+  /** Why checklists can't be changed here right now (they are with the Claude Code mod), if they can't. */
+  locked?(c: Checklist | undefined): string | undefined;
 }
+
+/** Messages that only show or copy, and still work while the checklists are locked. */
+const READ_ONLY = new Set(['flushed', 'ready', 'copy', 'hide', 'unlock']);
+/** At most one "read-only" message this often, however many changes are turned down (typing sends several). */
+const LOCK_NOTICE_MS = 8000;
 
 export const VIEW_TYPE = 'checklistBridge.checklist';
 
@@ -51,7 +58,8 @@ export class Panels {
       // How long until the user's midnight, if the away ends after it: the panel says "tomorrow" until then, as Claude is told.
       if (c.awayMidnight) list.awayMidnightLeft = c.awayMidnight - Date.now();
     }
-    return { type: 'state', list, routes: this.hooks.routes(c) };
+    // While the checklists are with the Claude Code mod, the panel shows read-only and says why.
+    return { type: 'state', list, routes: this.hooks.routes(c), locked: this.hooks.locked?.(c) };
   }
 
   /** Re-send state to every visible panel (e.g. when how to reach a chat changes). */
@@ -161,7 +169,11 @@ export class Panels {
     for (const p of [...this.open.values()]) p.dispose();
   }
 
-  private flushing = new Map<string, () => void>();
+  /** The flush each panel waits on: its number, and what ends the wait. */
+  private flushing = new Map<string, { n: number; done: () => void }>();
+  private flushSeq = 0;
+  private flushes = new Map<string, Promise<void>>();
+  private lockNoticeAt = 0;
   /**
    * Asks a checklist's panel to send what was typed or picked there and not saved yet, and waits for it (at most `ms`),
    * so the window counts it: the panel holds typing back for a moment before saving it. Done at once if no panel is open.
@@ -169,24 +181,49 @@ export class Panels {
   flush(id: string, ms = 500): Promise<void> {
     const p = this.open.get(id);
     if (!p || !this.ready.has(id)) return Promise.resolve();
-    return new Promise((resolve) => {
-      this.flushing.get(id)?.(); // an earlier wait for this panel ends too
+    // One at a time per panel: a second wait starts when the first has its answer, so neither returns early.
+    const earlier = this.flushes.get(id);
+    if (earlier) return earlier.then(() => this.flush(id, ms));
+    const n = ++this.flushSeq;
+    const run = new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer);
-        if (this.flushing.get(id) === done) this.flushing.delete(id);
+        this.flushing.delete(id);
+        this.flushes.delete(id);
         resolve();
       };
       const timer = setTimeout(done, ms);
-      this.flushing.set(id, done);
-      p.webview.postMessage({ type: 'flush' });
+      this.flushing.set(id, { n, done });
+      p.webview.postMessage({ type: 'flush', n });
     });
+    this.flushes.set(id, run);
+    return run;
   }
 
   private async onMessage(id: string, m: any) {
     const s = this.store;
+    const why = READ_ONLY.has(m?.type) ? undefined : this.hooks.locked?.(s.get(id));
+    if (why) {
+      // The panel shows read-only while locked, so this is a change already on its way when the lock came.
+      // Put the panel back as it was, and say why nothing changed (once, not for every keystroke's draft).
+      const c = s.get(id);
+      const p = this.open.get(id);
+      if (c && p) p.webview.postMessage(this.state(c, p.webview));
+      if (Date.now() - this.lockNoticeAt > LOCK_NOTICE_MS) {
+        this.lockNoticeAt = Date.now();
+        vscode.window
+          .showInformationMessage(why, 'Switch back to VS Code')
+          .then((pick) => pick && vscode.commands.executeCommand('checklistBridge.useExtension'));
+      }
+      return;
+    }
     switch (m?.type) {
+      case 'unlock':
+        vscode.commands.executeCommand('checklistBridge.useExtension');
+        break;
       case 'flushed': // everything held back was sent before this, and messages arrive in order: it is saved
-        this.flushing.get(id)?.();
+        // Only the answer to the flush waited on now: one that timed out may still answer late.
+        if (this.flushing.get(id)?.n === m.n) this.flushing.get(id)!.done();
         break;
       case 'ready': {
         this.ready.add(id);

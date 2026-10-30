@@ -38,12 +38,17 @@
     "viewsWelcome": [
       {
         "view": "checklistBridge.list",
-        "when": "!checklistBridge.connected",
+        "when": "!checklistBridge.connected && !checklistBridge.modMode",
         "contents": "Claude Code isn't connected yet. Checklist Bridge connects on its own when VS Code starts; if that didn't work, click below.\n[Connect Claude Code](command:checklistBridge.connect)\nNo Claude Code yet? [Install it](https://code.claude.com/docs/en/overview), then click Connect.\n[Getting started](command:checklistBridge.gettingStarted)"
       },
       {
         "view": "checklistBridge.list",
-        "when": "checklistBridge.connected",
+        "when": "checklistBridge.modMode",
+        "contents": "Checklist Bridge runs inside Claude Code now, as a mod. Type /checklist in Claude Code to see this chat's checklist.\n[Switch back to VS Code](command:checklistBridge.useExtension)"
+      },
+      {
+        "view": "checklistBridge.list",
+        "when": "checklistBridge.connected && !checklistBridge.modMode",
         "contents": "Connected to Claude Code. Start a new Claude chat; when Claude needs you to do something by hand or make a decision, its checklist appears here.\n[Open an example checklist](command:checklistBridge.demo)\n[Getting started](command:checklistBridge.gettingStarted)"
       }
     ],
@@ -53,6 +58,16 @@
         "title": "Connect Claude Code",
         "category": "Checklist Bridge",
         "icon": "$(plug)"
+      },
+      {
+        "command": "checklistBridge.useMod",
+        "title": "Use the Claude Code mod instead",
+        "category": "Checklist Bridge"
+      },
+      {
+        "command": "checklistBridge.useExtension",
+        "title": "Use this extension instead of the Claude Code mod",
+        "category": "Checklist Bridge"
       },
       {
         "command": "checklistBridge.disconnect",
@@ -280,7 +295,7 @@
     ]
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "tsc -p . && node scripts/copy-mod-lib.js",
     "release": "python3 scripts/release.py",
     "test": "node test/run.js"
   },

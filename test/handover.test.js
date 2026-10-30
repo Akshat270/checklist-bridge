@@ -1,0 +1,261 @@
+const __ROOT = require('path').resolve(__dirname, '..');
+// Switching between the extension and the mod: the mode file, the shared folder's names, handing checklists
+// over and back, the mod's wording, and that mod/hooks/lib/ matches src/.
+const path = require('path'), fs = require('fs');
+const DIST = __ROOT + '/dist';
+const { ChecklistStore, TOOLS, MOD_TOOLS, SERVER_INSTRUCTIONS, MOD_INSTRUCTIONS } = require(DIST + '/model.js');
+const H = require(DIST + '/handover.js');
+const { SHARED, expected } = require(__ROOT + '/scripts/copy-mod-lib.js');
+
+let failed = 0;
+const check = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) failed++; };
+const text = (r) => r.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+
+/* ---------- the mode file */
+check(H.parseMode(H.modeText('mod')) === 'mod' && H.parseMode(H.modeText('extension')) === 'extension', 'mode file round-trips');
+check(H.parseMode(undefined) === undefined && H.parseMode('{oops') === undefined && H.parseMode('{"use":"other"}') === undefined, 'a missing, broken or unknown mode file means no choice yet');
+
+/* ---------- folder keys */
+check(H.folderKey('C:\\Work\\My App') === H.folderKey('c:/work/my app/'), 'Windows paths: same key with either slash, any case, trailing slash');
+check(H.folderKey('/home/a/proj') !== H.folderKey('/home/b/proj'), 'two folders with the same name get different keys');
+check(/^my-app-[0-9a-f]{8}$/.test(H.folderKey('C:\\Work\\My App')), 'the key starts with the folder name: ' + H.folderKey('C:\\Work\\My App'));
+check(/^folder-[0-9a-f]{8}$/.test(H.folderKey('/')) && !/[\\/:]/.test(H.folderKey('D:\\')), 'a root folder still gets a safe key');
+check(H.join('/home/u/.checklist-bridge/', 'mod', 'x') === '/home/u/.checklist-bridge/mod/x' && H.join('C:\\Users\\u\\.cb', 'mode.json') === 'C:\\Users\\u\\.cb/mode.json', 'join');
+check(JSON.stringify(H.listIds(['a1.json', 'a1.json.bak', 'b2.json.moved', 'b2.json.bak.moved', 'x.txt', '../evil.json'])) === '["a1"]', 'checklists are <id>.json files, each once; .moved and other files are not');
+check(JSON.stringify(H.listIds(['c3.json.bak'])) === '["c3"]', 'a checklist whose first save stopped after its backup is still found');
+check(H.folderKey('/Users/me/Projects/MyApp') === H.folderKey('/users/me/projects/myapp'), 'macOS: the same folder spelled with other capitals gets the same key');
+check(H.absolutePath('~/Desktop/a.png', '/home/u', '/work/p') === '/home/u/Desktop/a.png', 'a ~ screenshot path is under the home folder');
+check(H.absolutePath('shots/a.png', '/home/u', '/work/p') === '/work/p/shots/a.png' && H.absolutePath('./a.png', '/home/u', '/work/p') === '/work/p/a.png', 'a relative path is under the project folder');
+check(H.absolutePath('"/tmp/my shot.png"', '/h', '/w') === '/tmp/my shot.png' && H.absolutePath('C:\\Users\\u\\a.png', '/h', '/w') === 'C:\\Users\\u\\a.png', 'an absolute path stays as it is, without the quotes');
+
+/* ---------- hand over and back */
+const ext = new ChecklistStore();
+ext.handleTool('s1', { cwd: '/work/app' }, 'checklist_add_tasks', { title: 'Launch', tasks: [{ text: 'Create a key' }, { text: 'Set the env var' }] });
+ext.handleTool('s1', { cwd: '/work/app' }, 'checklist_ask', { questions: [{ question: 'Which DB?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] });
+const c = ext.forSession('s1');
+ext.setDraft(c.id, 't1', { done: true, note: 'made it' });
+ext.addImages(c.id, 't1', [{ mime: 'image/png', data: 'aGVsbG8=', w: 2, h: 3 }]);
+ext.share(c.id, 't1');
+ext.setAnswerDraft(c.id, 'q1', { picks: [c.questions[0].options[0].id] });
+ext.shareAnswer(c.id, 'q1');
+const files = {};
+const shared = H.toShared(c, (img) => { const p = `/cb/mod/images/${img.id}.png`; files[p] = img.data; return p; });
+check(shared.tasks[0].shared.images.length === 1 && shared.tasks[0].shared.images[0].path && !shared.tasks[0].shared.images[0].data, 'screenshots become file paths in the shared copy');
+check(c.tasks[0].shared.images[0].data === 'aGVsbG8=', 'the extension\'s own copy is not changed');
+const parsed = H.parseList(JSON.stringify(shared));
+check(parsed && parsed.id === c.id && parsed.tasks.map((t) => t.id).join() === 't1,t2' && parsed.questions[0].id === 'q1', 'ids are kept');
+check(parsed.tasks[0].shared.note === 'made it' && parsed.tasks[0].shared.done && parsed.questions[0].answer.picks.length === 1, 'shared tasks and answers are kept');
+check(H.parseList('{broken') === undefined && H.parseList('{"id":"x"}') === undefined, 'a broken file is not a checklist');
+
+const mod = new ChecklistStore([parsed]);
+mod.host = 'mod';
+check(mod.forSession('s1')?.id === c.id, 'the mod has the checklist');
+const r = text(mod.handleTool('s1', {}, 'checklist_read', { include_earlier_images: true }));
+check(/screenshot 1\/1: \/cb\/mod\/images\/\w+\.png \(open it with your Read tool\)/.test(r), 'the mod tells Claude where a screenshot is');
+check(!/VS Code|checklist_wait/.test(r), 'mod results don\'t mention VS Code or checklist_wait');
+check(mod.addImagePath(c.id, 't2', '/home/u/Desktop/shot 1.JPG') && mod.get(c.id).tasks[1].draft.images[0].mime === 'image/jpeg', 'a screenshot path can be added in the mod');
+check(mod.addImagePath(c.id, 't2', "/home/u/it's.png") && mod.get(c.id).tasks[1].draft.images[1].path === "/home/u/it's.png", 'the path is kept as given (absolutePath cleans what was typed)');
+check(!mod.addImagePath(c.id, 't2', '/home/u/notes.txt'), 'a path that is not an image is refused');
+
+check(H.toShared({ ...c, hidden: true }, () => undefined).hidden === true, 'a checklist whose tab the user closed stays that way after the round trip');
+const said = text(mod.handleTool('s3', {}, 'checklist_add_tasks', { title: 'Try it in VS Code', tasks: [{ text: 'Check it in VS Code' }] }));
+check(said.includes('"Try it in VS Code"') && text(mod.handleTool('s3', {}, 'checklist_read', {})).includes('Check it in VS Code'), 'the mod leaves the user\'s own words alone');
+check(!/VS Code/.test(said.replace('"Try it in VS Code"', '')), 'but drops ours');
+
+const back = H.fromShared(mod.get(c.id), (p) => files[p]);
+check(back.tasks[0].shared.images[0].data === 'aGVsbG8=', 'screenshots come back with their data');
+check(back.tasks[1].draft.images.length === 0, 'a screenshot whose file is gone is left out');
+
+/* ---------- read-only while the mod has the checklists */
+const locked = new ChecklistStore();
+locked.handleTool('s9', { cwd: '/w' }, 'checklist_add_tasks', { tasks: [{ text: 'One' }] });
+locked.lockedNote = 'read-only here';
+const lr = locked.handleTool('s9', {}, 'checklist_add_tasks', { tasks: [{ text: 'Two' }] });
+check(text(lr) === 'read-only here' && locked.forSession('s9').tasks.length === 1, 'a locked store tells Claude why and changes nothing');
+check(!locked.hasPending('s9'), 'and has nothing for checklist_wait to wait for');
+locked.lockedNote = undefined;
+check(locked.forSession('s9').tasks.length === 1 && !text(locked.handleTool('s9', {}, 'checklist_read', {})).includes('read-only'), 'unlocked, it works again');
+
+/* ---------- the mod's wording */
+check(!MOD_TOOLS.some((t) => t.name === 'checklist_wait') && MOD_TOOLS.length === TOOLS.length - 1, 'the mod has every tool but checklist_wait');
+check(!JSON.stringify(MOD_TOOLS).includes('VS Code') && !JSON.stringify(MOD_TOOLS).includes('checklist_wait'), 'mod tool descriptions don\'t mention VS Code or checklist_wait');
+check(!/VS Code|checklist_wait/.test(MOD_INSTRUCTIONS) && /Send now/.test(MOD_INSTRUCTIONS), 'mod instructions');
+check(/in the user's VS Code/.test(SERVER_INSTRUCTIONS) && TOOLS.some((t) => t.name === 'checklist_wait'), 'the extension\'s tools and instructions are unchanged');
+const asked = text(mod.handleTool('s2', {}, 'checklist_ask', { questions: [{ question: 'Name?', options: [{ label: 'A' }, { label: 'B' }] }] }));
+check(/end your turn/.test(asked) && !/checklist_wait|VS Code/.test(asked), 'mod: asking says to end the turn, not to wait');
+
+/* ---------- the store, as both sides use it */
+{
+  const s = new ChecklistStore();
+  s.handleTool('x', {}, 'checklist_add_tasks', { title: 'Mine', tasks: [{ text: 'A' }] });
+  const copy = JSON.parse(JSON.stringify(s.forSession('x')));
+  copy.updatedAt = 12345;
+  check(s.replace(copy).updatedAt === 12345, 'taking in a copy keeps its version (updatedAt), the one both sides compare');
+
+  // A chat that took over an older checklist uses it, not its own newer one that was closed.
+  const t = new ChecklistStore();
+  t.handleTool('old', {}, 'checklist_add_tasks', { title: 'Older', tasks: [{ text: 'A' }] });
+  const older = t.forSession('old');
+  older.createdAt -= 1000;
+  t.handleTool('me', {}, 'checklist_add_tasks', { title: 'Mine', tasks: [{ text: 'B' }] });
+  t.close(t.forSession('me').id);
+  older.sessionId = 'me';
+  check(t.forSession('me')?.title === 'Older' && /Older/.test(text(t.handleTool('me', {}, 'checklist_read', {}))), 'a chat\'s open checklist comes before its newer closed one');
+  older.closed = true;
+  check(t.forSession('me')?.title === 'Mine', 'with none open, its latest closed one (so Claude can be told)');
+
+  // Locked while the mod has them, except the checklists that could not be handed over.
+  const u = new ChecklistStore();
+  u.handleTool('a', {}, 'checklist_add_tasks', { title: 'Handed', tasks: [{ text: 'A' }] });
+  u.handleTool('b', {}, 'checklist_add_tasks', { title: 'Kept', tasks: [{ text: 'B' }] });
+  u.lockedNote = 'read-only here';
+  u.keptHere = new Set([u.forSession('b').id]);
+  check(text(u.handleTool('a', {}, 'checklist_add_tasks', { tasks: [{ text: 'C' }] })) === 'read-only here', 'a handed-over checklist is read-only');
+  check(/Added 1 task/.test(text(u.handleTool('b', {}, 'checklist_add_tasks', { tasks: [{ text: 'C' }] }))), 'one that could not be handed over still works');
+  check(text(u.handleTool('new', {}, 'checklist_add_tasks', { tasks: [{ text: 'C' }] })) === 'read-only here', 'and no new checklist starts here');
+  for (const sid of ['a', 'b']) u.setAway(u.forSession(sid).id, 1000, 'soon');
+  u.expireAway(Date.now() + 5000);
+  check(!!u.forSession('a').awayUntil && !u.forSession('b').awayUntil, 'the away timer ends only the aways of checklists still here');
+}
+
+/* ---------- tidying the shared folders */
+{
+  const { tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cb-tidy-'));
+  const imgs = H.imagesDir(root), dir = H.sharedDir(root, '/w/app');
+  fs.mkdirSync(imgs, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const put = (p, text, ageMs) => {
+    fs.writeFileSync(p, text);
+    const t = (Date.now() - ageMs) / 1000;
+    fs.utimesSync(p, t, t);
+  };
+  const OLD = KEEP_MS + 60_000;
+  const used = path.join(imgs, 'used.png');
+  const list = { id: 'a1', title: 'x', sessionId: 's', tasks: [{ id: 't1', text: 'x', draft: { done: false, note: '', images: [] }, shared: { at: 1, done: true, note: '', images: [{ id: 'i', mime: 'image/png', w: 0, h: 0, path: used }] } }], questions: [], updatedAt: 1 };
+  put(path.join(dir, 'a1.json'), JSON.stringify(list), OLD);
+  put(used, 'PNG', OLD);
+  put(path.join(imgs, 'unused-old.png'), 'PNG', OLD);
+  put(path.join(imgs, 'unused-new.png'), 'PNG', 0);
+  put(path.join(dir, 'b2.json.moved'), '{}', OLD);
+  const movedShot = path.join(imgs, 'moved.png');
+  put(movedShot, 'PNG', OLD);
+  put(path.join(dir, 'c3.json.moved'), JSON.stringify({ ...list, id: 'c3', tasks: [{ ...list.tasks[0], shared: { ...list.tasks[0].shared, images: [{ id: 'm', mime: 'image/png', w: 0, h: 0, path: movedShot }] } }] }), 0);
+  const n = tidyShared(root);
+  const has = (p) => fs.existsSync(p);
+  check(n === 2 && !has(path.join(imgs, 'unused-old.png')) && !has(path.join(dir, 'b2.json.moved')), 'tidy: deletes old .moved files and old screenshots no checklist uses');
+  check(has(movedShot), 'tidy: keeps a screenshot that a .moved file still kept uses');
+  check(has(used) && has(path.join(imgs, 'unused-new.png')) && has(path.join(dir, 'c3.json.moved')) && has(path.join(dir, 'a1.json')), 'tidy: keeps screenshots in use, recent files and the checklists');
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+/* ---------- which VS Code window a chat uses (the connector and the mod) */
+{
+  const win = (windowId, folders, focusedAt, pid = 1) => ({ windowId, port: 1, token: 't', pid, folders, focusedAt, name: windowId });
+  const wins = [win('recent', ['/x'], 9), win('proj', ['/work/proj'], 1), win('deep', ['/work/proj/web'], 0), win('ide', ['/y'], 0, 42)];
+  const ids = (hints) => H.rankWindows(wins, { caseless: false, ...hints }).map((r) => r.w.windowId).join();
+  check(ids({ cwd: '/work/proj/web/src' }) === 'deep,proj,recent,ide', 'windows: the deepest folder of the chat first, then by last use');
+  check(ids({ cwd: '/work/proj', idePid: 42 }).startsWith('ide,proj'), 'windows: Claude Code\'s own VS Code connection before folders');
+  check(ids({ cwd: '/work/proj', idePid: 42, envWindow: 'recent' }).startsWith('recent,ide'), 'windows: the window whose terminal started the chat first of all');
+  check(ids({ cwd: '/work/PROJ' }).startsWith('recent') && H.rankWindows(wins, { cwd: 'C:\\Work\\Proj', caseless: true }).length === 4 && ids({ cwd: '/WORK/PROJ', caseless: true }).startsWith('proj'), 'windows: case counts only where the disk keeps it');
+  check(H.parseWindow('{"port":"1","token":"t"}') === undefined && H.parseWindow('{half') === undefined && H.parseWindow(JSON.stringify(wins[0])).windowId === 'recent', 'window files: only whole ones count');
+}
+
+/* ---------- which shared folders a window takes back, and moving files */
+{
+  const { sharedDirs, markMoved, importLists, hasShared, tidyShared, KEEP_MS } = require(DIST + '/switcher.js');
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cb-dirs-'));
+  const R = (d) => path.resolve(d);
+  const dirFor = (at, handed = false, by = 'w-x') => {
+    const d = H.sharedDir(root, at);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, H.FOLDER_NOTE), at);
+    if (handed) fs.writeFileSync(path.join(d, H.HANDED_NOTE), H.handedNote(at, by));
+    return R(d);
+  };
+  const win = (id, ...folders) => ({ id, folders });
+  const web = dirFor('/work/proj/web'); // a mod chat started in a subfolder
+  const other = dirFor('/work/other');
+  const api = dirFor('/work/proj/api', true); // a VS Code window on /work/proj/api handed it over
+  const deep = dirFor('/work/proj/lib/x'); // a mod chat under a folder another window has open
+  const dirs = sharedDirs(root, win('w-p', '/work/proj'), [win('w-l', '/work/proj/lib')]).map(R);
+  check(dirs.includes(R(H.sharedDir(root, '/work/proj'))) && dirs.includes(web), 'VS Code finds the checklists of mod chats started in a subfolder');
+  check(!dirs.includes(other) && !dirs.includes(api), 'but not another project\'s, nor what a window on a subfolder handed over');
+  check(!dirs.includes(deep) && sharedDirs(root, win('w-l', '/work/proj/lib'), [win('w-p', '/work/proj')]).map(R).includes(deep), 'a subfolder goes to the window nearest to it');
+  check(sharedDirs(root, win('w-h', '/work'), [], '/work').map(R).length === 1, 'a window on the home folder takes only its own folder\'s');
+  // Two windows with the same folder open (one a multi-root workspace): each shared folder goes to one of them.
+  const a = sharedDirs(root, win('w-a', '/work/proj'), [win('w-b', '/elsewhere', '/work/proj')]).map(R);
+  const b = sharedDirs(root, win('w-b', '/elsewhere', '/work/proj'), [win('w-a', '/work/proj')]).map(R);
+  check(a.includes(web) && !b.includes(web) && a.includes(R(H.sharedDir(root, '/work/proj'))) && !b.includes(R(H.sharedDir(root, '/work/proj'))), 'two windows on the same folder: only one takes its checklists back');
+  const both = (id, others) => sharedDirs(root, win(id, '/work/proj/api'), others).map(R).includes(api);
+  check(!both('w-a', [win('w-x', '/work/proj/api')]) && both('w-x', [win('w-a', '/work/proj/api')]), 'and a handed-over folder goes back to the window that handed it over');
+  check(both('w-a', [win('w-b', '/work/proj/api')]) && !both('w-b', [win('w-a', '/work/proj/api')]), 'or, once that window is closed, to one of the others');
+
+  // Moving: a file the mod saved again after it was read stays, to be taken in next; the others are moved.
+  const list = (id, updatedAt) => JSON.stringify({ id, title: id, sessionId: 's', tasks: [], questions: [], updatedAt });
+  fs.writeFileSync(path.join(web, 'a1.json'), list('a1', 1));
+  fs.writeFileSync(path.join(web, 'a2.json'), list('a2', 1));
+  const { lists, seen } = importLists(web, (c) => c.id === 'a1');
+  check(lists.map((c) => c.id).join() === 'a1' && Object.keys(seen).sort().join() === 'a1,a2', 'import: only the checklists wanted are read in, every one is noted');
+  fs.writeFileSync(path.join(web, 'a2.json'), list('a2', 2)); // saved meanwhile
+  const moved = markMoved(web, seen);
+  check(moved.changed.join() === 'a2' && fs.existsSync(path.join(web, 'a2.json')) && fs.existsSync(path.join(web, 'a1.json.moved')), 'a file saved again while being taken in is not moved away unread');
+
+  // A save that lands after the look but before the rename is put back, not moved away unread.
+  const race = dirFor('/work/race');
+  fs.writeFileSync(path.join(race, 'a4.json'), list('a4', 1));
+  fs.writeFileSync(path.join(race, 'a4.json.bak'), list('a4', 1));
+  const rename = fs.renameSync;
+  let once = true;
+  fs.renameSync = (from, to) => {
+    if (once && from.endsWith('a4.json')) {
+      once = false;
+      fs.writeFileSync(path.join(race, 'a4.json.bak'), list('a4', 2));
+      fs.writeFileSync(path.join(race, 'a4.json'), list('a4', 2));
+    }
+    return rename(from, to);
+  };
+  let late;
+  try {
+    late = markMoved(race, { a4: 1 });
+  } finally {
+    fs.renameSync = rename;
+  }
+  check(late.changed.join() === 'a4' && JSON.parse(fs.readFileSync(path.join(race, 'a4.json'), 'utf8')).updatedAt === 2, 'a save landing just before the move is put back, to be taken in next');
+
+  // Screenshots come back only from image files, whatever a checklist file names.
+  const png = path.join(root, 'shot.png');
+  fs.writeFileSync(png, Buffer.from('89504e470d0a1a0a0000', 'hex'));
+  const secret = path.join(root, 'secret.png');
+  fs.writeFileSync(secret, 'API_KEY=hunter2');
+  const env = path.join(root, '.env');
+  fs.writeFileSync(env, 'API_KEY=hunter2');
+  const shots = fs.mkdtempSync(path.join(root, 'shots-'));
+  const img = (id, p) => ({ id, mime: 'image/png', w: 0, h: 0, path: p });
+  fs.writeFileSync(path.join(shots, 'i1.json'), JSON.stringify({ id: 'i1', title: 'x', sessionId: 's', questions: [], updatedAt: 1, tasks: [{ id: 't1', text: 'x', draft: { images: [img('a', png), img('b', secret), img('c', env)] } }] }));
+  const got = importLists(shots).lists[0].tasks[0].draft.images;
+  check(got.length === 1 && got[0].id === 'a' && got[0].mime === 'image/png', 'a screenshot path to a file that is not an image is left out');
+
+  // A file that can't be moved starts no take-back until it changes.
+  const p2 = path.join(web, 'a2.json');
+  const stuck = new Map([[p2, fs.statSync(p2).mtimeMs]]);
+  check(!hasShared(web, stuck) && hasShared(web), 'a file that could not be moved does not count again until it changes');
+
+  // Moved files keep their 30 days, counted from the move.
+  const file = path.join(web, 'a3.json');
+  fs.writeFileSync(file, list('a3', 1));
+  const old = (Date.now() - KEEP_MS - 86_400_000) / 1000;
+  fs.utimesSync(file, old, old);
+  markMoved(web, { a3: 1 });
+  tidyShared(root);
+  check(fs.existsSync(`${file}.moved`), 'a file last changed long ago is still kept 30 days after it is moved');
+  fs.rmSync(root, { recursive: true, force: true });
+  check(H.ancestors('/a/b').join() === '/a/b,/a,/' && H.ancestors('C:\\u\\p').join() === 'C:\\u\\p,C:\\u,C:\\' && H.isInside('C:\\P\\x', 'c:/p', true) && !H.isInside('/ab', '/a', false) && H.isInside('/srv/app', '/', false), 'folders above a path, and what is inside a folder (the root too)');
+}
+
+/* ---------- the mod's copies */
+for (const f of SHARED)
+  check(fs.readFileSync(path.join(__ROOT, 'mod', 'hooks', 'lib', f), 'utf8').replace(/\r\n/g, '\n') === expected(f), `mod/hooks/lib/${f} matches src/${f} (run npm run build)`);
+
+console.log(failed ? `${failed} FAILED` : 'ALL PASSED');
+process.exit(failed ? 1 : 0);

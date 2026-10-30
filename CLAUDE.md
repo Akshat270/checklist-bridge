@@ -1,6 +1,6 @@
 # Checklist Bridge: notes for Claude
 
-A VS Code extension (Marketplace id `Akshat270.checklist-bridge`) that gives each Claude Code chat its own checklist of manual tasks (t1, t2…) and deferred questions (q1, q2…). It is public and used by people other than the author, so changes must work on Windows, macOS and Linux, and in both the VS Code Claude panel and the terminal.
+A VS Code extension (Marketplace id `Akshat270.checklist-bridge`), and a Claude Code mod (`mod/`) for people without VS Code, that gives each Claude Code chat its own checklist of manual tasks (t1, t2…) and deferred questions (q1, q2…). It is public and used by people other than the author, so changes must work on Windows, macOS and Linux, and in both the VS Code Claude panel and the terminal.
 
 Read `README.md` for what users see. `PRODUCT.md` and `DESIGN.md` describe who it's for and the panel's visual rules: read them before changing anything in `media/`.
 
@@ -12,6 +12,8 @@ npm run build               # src/*.ts -> dist/*.js (tsc)
 npm test                    # every suite in test/, against dist/ — build first
 node test/run.js reload     # one suite, by file-name prefix
 npx playwright install chromium   # needed for the panel (ui/layout) suites; they SKIP without it
+claude plugin validate mod  # the mod: manifest and hooks module
+claude plugin test mod      # the mod's own tests (mod/hooks/*.test.tsx); test/mod.test.js runs both
 ```
 
 Always `npm run build` before `npm test`: the tests run the compiled `dist/extension.js`, not the TypeScript.
@@ -29,12 +31,21 @@ VS Code window ── windowServer.ts (local HTTP, per-window token) ── exte
                                                                      ├─ claudeConnect.ts   `claude mcp add`, auto-connect
                                                                      ├─ claudeSetup.ts     ~/.claude/CLAUDE.md + settings.json block
                                                                      ├─ sidebar.ts, updater.ts, settings.ts
+                                                                     └─ switcher.ts   hand checklists to the mod and back
+
+Claude Code chat ── mod/ (a Claude Code mod: hooks module, no connector, no VS Code)
+                       register.tsx  tools, /checklist, the pane, Claude's instructions
+                       app.ts, pane.tsx, away.ts   no engine calls, so they read like normal code
+                       lib/model.ts, lib/handover.ts   COPIES of src/, made by npm run build
 ```
 
 - `extension.ts` copies `connector.js` to `~/.checklist-bridge/connector/` and registers it with Claude Code as the user-scope MCP server `checklist`.
 - The connector holds no state. Every tool call goes to the chat's VS Code window, which owns the checklist.
 - Checklists are saved under the workspace storage (or global storage for folderless windows) in `checklists/<id>.json`; screenshots are separate files in `checklists/images/`.
-- Send now reaches Claude by one of: a waiting `checklist_wait` call, a Claude Code channel push, typing into Claude's terminal, or the clipboard.
+- Send now reaches Claude by one of: a waiting `checklist_wait` call, a Claude Code channel push, typing into Claude's terminal, or the clipboard. In the mod it is `$.prompt.submit`, so the mod has no `checklist_wait`.
+- **A mod chat after switching to VS Code** keeps the mod's tools (a running chat can't gain the extension's MCP server). The mod passes its calls to the VS Code window over the connector's protocol (`/call`, and `/poll` for Send now, with `$.http.fetch`); results go through `withoutWait()`, and images are turned into the Messages API's form (a mod tool's MCP-style image is not shown to the model). It picks the window with `rankWindows()` (`handover.ts`), the same ranking the connector uses. New chats get only the extension's tools.
+- **Extension or mod, one at a time.** `~/.checklist-bridge/mode.json` (`handover.ts`) says which is on. The mod keeps its checklists in `~/.checklist-bridge/mod/<folder key>/<id>.json`, with a `folder.txt` naming the folder (and `from-vscode.txt` where VS Code handed checklists over). A mod chat uses its own folder's, or the nearest one above that VS Code handed over for (never the home folder or above: `tooWide`). VS Code takes back from its folders (as they are now, plus the one it handed over), and from subfolders only where mod chats made them and no other open window is nearer; each shared folder goes to one window (`sharedDirs`), on a tie the one named in `from-vscode.txt`; the extension hands its checklists over there and takes them back (`switcher.ts`), following the mode file at start, on focus and when it changes. With no mode file, the mod writes one at its first start (`extension` if the extension's connection is in `~/.claude.json`, else `mod`), and the extension writes `extension` once it is connected. While the mod has them, the extension's copies are read-only (`store.lockedNote`, the panels' `locked` hook).
+- **In the mod, the files are the truth.** Other chats in the folder and VS Code change them too, so every change (tool call, pane press, command, the away timer) runs `disk.load()` (mode and checklists), then the change, then `disk.save()`. Pane presses go through `act.edit(listId, change)`; never change the store from a press without it. A failed write stays unsaved and is retried (`App.pending` / `saved`).
 
 ## Rules that matter
 
@@ -46,6 +57,8 @@ VS Code window ── windowServer.ts (local HTTP, per-window token) ── exte
 - **Windows quoting.** Programs are run with `execFile` and no shell. `.cmd` files go through `ComSpec /d /s /c` with the quoting in `claudeConnect.run`. Paths with spaces, `&` and `%` are tested on Windows CI.
 - **Claude's instructions** live in `SERVER_INSTRUCTIONS` (`model.ts`) and `INSTRUCTIONS` (`claudeSetup.ts`). Keep them in step when changing how tools behave.
 - **Item ids** (t1, q1) are shown in the panel and used by Claude. Don't renumber existing items.
+- **`model.ts` and `handover.ts` run in the mod too.** No Node imports in them (no `fs`, `path`, `crypto`). `npm run build` copies them into `mod/hooks/lib/`; commit the copies (the mod installs straight from GitHub) and never edit them there. `MOD_INSTRUCTIONS` and `forMod()` reword Claude's text for the mod: keep them in step with `SERVER_INSTRUCTIONS` and the tool texts.
+- **The mod's rules** (checked by `claude plugin validate mod`): every engine call is spelled `$.noun.call(...)` inside a hook, never `$` passed to a function, so `app.ts`/`pane.tsx` take plain values and callbacks. State atoms are declared in `register.tsx` and typed in `mod/types/index.d.ts`. `$.fs` writes text only and can't rename or delete: screenshots are file paths, and saves write `<id>.json.bak` then `<id>.json`. A tool's `result` must be a string or a list of content blocks. Mods are early access in Claude Code; the API may change between releases.
 
 ## Tests
 
@@ -61,7 +74,7 @@ VS Code window ── windowServer.ts (local HTTP, per-window token) ── exte
 - Work on a branch and open a pull request into `main`. `main` is protected: it needs a pull request, and the owner merges it. Several Claude sessions may be working at once, so keep each pull request to one change.
 - Add a line for user-visible changes under `## Unreleased` at the top of `CHANGELOG.md` (create the heading if it's missing). Write it for users, in plain words: what changed for them, not how.
 - Update `README.md` if behaviour, commands or settings change.
-- **Do not release unless the owner asks.** Don't change the version, `latest.json` or `releases/` in a normal pull request.
+- **Do not release unless the owner asks.** Don't change the version, `latest.json` or `releases/` in a normal pull request. The mod's version is in `mod/.claude-plugin/plugin.json`; people get the mod from `main` through `.claude-plugin/marketplace.json`.
 
 ## Releasing (only when asked)
 

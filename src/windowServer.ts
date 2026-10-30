@@ -12,6 +12,8 @@ export interface SessionInfo {
   /** The connector is currently long-polling for pushes (channel delivery is live). */
   polling: boolean;
   lastCall: number;
+  /** When the chat last called or polled. */
+  lastSeen: number;
 }
 
 export interface WindowServer {
@@ -24,6 +26,8 @@ export interface WindowServer {
   prune(): boolean;
   /** Queue a channel message for this chat. Returns false if no connector is listening. */
   push(sessionId: string, content: string): boolean;
+  /** Ends the checklist_wait calls under way for which `why` gives a text, with that text (handed to the mod). */
+  endWaits(why: (sessionId: string) => string | undefined): void;
   onSessionsChange(fn: () => void): void;
 }
 
@@ -41,7 +45,7 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
 
   const session = (id: string): SessionInfo => {
     let s = sessions.get(id);
-    if (!s) sessions.set(id, (s = { ancestors: [], channel: false, polling: false, lastCall: 0 }));
+    if (!s) sessions.set(id, (s = { ancestors: [], channel: false, polling: false, lastCall: 0, lastSeen: 0 }));
     return s;
   };
 
@@ -53,9 +57,14 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
       return e?.code === 'EPERM';
     }
   };
+  // A chat that gives no process (the Claude Code mod passing calls on after a switch) is alive while it keeps
+  // coming back: it polls at least every half minute.
+  const QUIET_MS = 2 * 60_000;
   const isAlive = (id: string) => {
-    const pid = sessions.get(id)?.ancestors[0];
-    return pid === undefined || pidAlive(pid);
+    const s = sessions.get(id);
+    const pid = s?.ancestors[0];
+    if (pid !== undefined) return pidAlive(pid);
+    return !s || !s.lastSeen || Date.now() - s.lastSeen < QUIET_MS;
   };
   const open = (res?: http.ServerResponse) => !!res && !res.writableEnded && !res.destroyed;
 
@@ -76,6 +85,9 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
   });
 
   function wait(sessionId: string, minutes: number, res: http.ServerResponse): Promise<ToolResult> {
+    // Handed to the Claude Code mod: say so, rather than that nothing is waiting.
+    const locked = store.lockedFor(store.forSession(sessionId), sessionId);
+    if (locked) return Promise.resolve({ content: [{ type: 'text', text: locked }] });
     if (store.hasUnread(sessionId)) return Promise.resolve(store.handleTool(sessionId, {}, 'checklist_read', {}));
     const away = store.awayNoteFor(sessionId);
     if (away) return Promise.resolve({ content: [{ type: 'text', text: away }] });
@@ -151,6 +163,7 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
         return;
       }
       const s = session(msg.sessionId);
+      s.lastSeen = Date.now();
       const key = () => JSON.stringify([s.ancestors, s.channel, s.polling]);
       const before = key();
       if (msg.process && Array.isArray(msg.process.ancestors)) {
@@ -242,6 +255,12 @@ export function createWindowServer(store: ChecklistStore, token: string, log: (s
         queued.set(sessionId, [...(queued.get(sessionId) ?? []), content].slice(-20));
       }
       return true;
+    },
+    endWaits(why) {
+      for (const [sid, set] of [...waiters]) {
+        const text = why(sid);
+        if (text) for (const done of [...set]) done({ content: [{ type: 'text', text }] });
+      }
     },
     onSessionsChange: (fn) => changeFns.push(fn),
   };

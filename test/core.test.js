@@ -11,7 +11,8 @@ const { writeWindow } = require(DIST + '/registry.js');
 const store = new ChecklistStore();
 const events = [];
 store.onChange((e) => events.push(e.kind));
-const server = createWindowServer(store, 'secret').server;
+const ws = createWindowServer(store, 'secret');
+const server = ws.server;
 let failed = 0;
 const check = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) failed++; };
 
@@ -83,11 +84,50 @@ server.listen(0, '127.0.0.1', async () => {
   r = await A.tool('checklist_add_tasks', { tasks: ['Something new'] });
   check(store.all().filter((c) => c.sessionId.startsWith('chatA')).length === 1 && store.all().some((c) => c.title === 'Things to do'), 'adding after close starts a fresh checklist');
 
+  // Handing the checklists to the Claude Code mod ends a wait under way, and says why; so does the next one.
+  {
+    const W = chat('chatW'), K = chat('chatK');
+    await W.tool('checklist_add_tasks', { tasks: ['Wait on me'] });
+    await K.tool('checklist_add_tasks', { tasks: ['Kept here'] });
+    const waiting = W.tool('checklist_wait', { timeout_minutes: 5 });
+    let keptDone = false;
+    const keptWait = K.tool('checklist_wait', { timeout_minutes: 1 }).then((r) => ((keptDone = true), r));
+    await new Promise((r) => setTimeout(r, 300));
+    store.lockedNote = 'Moved to the mod.';
+    store.keptHere = new Set(store.all().filter((c) => c.sessionId.startsWith('chatK')).map((c) => c.id)); // its export failed
+    ws.endWaits((sid) => store.lockedFor(store.forSession(sid), sid));
+    check(text(await waiting) === 'Moved to the mod.', 'a wait under way ends when the checklists go to the mod');
+    await new Promise((r) => setTimeout(r, 200));
+    check(!keptDone, 'but not the wait on a checklist that stays usable here');
+    store.keptHere = new Set();
+    check(text(await W.tool('checklist_wait', {})) === 'Moved to the mod.', 'and a new wait says so, not that nothing is waiting');
+    store.lockedNote = undefined;
+    store.share(store.all().find((c) => c.sessionId.startsWith('chatK')).id, 't1');
+    check(!/Moved to the mod/.test(text(await keptWait)), 'which ends as usual, with the user\'s update');
+    W.kill(); K.kill();
+  }
+
+  // A chat that gives no process (the mod passing calls on) counts as reachable only while it keeps coming back.
+  {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/call`, { method: 'POST', headers: { Authorization: 'Bearer secret' }, body: JSON.stringify({ sessionId: 'mod-chat', tool: '__hello' }) });
+    check(res.status === 200 && ws.isAlive('mod-chat'), 'a chat without a process is reachable while it calls');
+    ws.sessions.get('mod-chat').lastSeen = Date.now() - 3 * 60_000;
+    check(!ws.isAlive('mod-chat') && ws.prune() && !ws.sessions.has('mod-chat'), 'and is dropped once it has been quiet for minutes');
+  }
+
   // window goes away -> clear error, no hang
   server.close(); server.closeAllConnections();
   fs.rmSync(path.join(HOME, 'windows'), { recursive: true });
   r = await A.tool('checklist_read', {});
   check(r.isError && /no VS Code window/.test(text(r)), 'helpful error when VS Code is not running');
+
+  // A window's folder is compared as the chat's is, made absolute and tidied (on Windows, /work/x is D:\work\x):
+  // the window with the project open wins over one used more recently.
+  const { pickWindow } = require(DIST + '/registry.js');
+  writeWindow({ windowId: 'w-dots', port: 1, token: 't', pid: process.pid, folders: ['/work/other/../dotted'], focusedAt: 1, name: 'dots' });
+  writeWindow({ windowId: 'w-recent', port: 2, token: 't', pid: process.pid, folders: ['/elsewhere'], focusedAt: Date.now() + 1e6, name: 'recent' });
+  const picked = pickWindow({}, '/work/dotted');
+  check(picked?.w.windowId === 'w-dots' && picked.w.folders[0] === '/work/other/../dotted', `the window with the chat's folder open is picked: ${picked?.w.windowId} (${picked?.why})`);
 
   A.kill(); B.kill();
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASS');

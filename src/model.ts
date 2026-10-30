@@ -1,11 +1,26 @@
-// Checklist data model and Claude's tools. Pure Node, no `vscode` import, so it can be tested directly.
-import { randomUUID } from 'crypto';
+// Checklist data model and Claude's tools. No `vscode` import and no Node imports, so it can be tested directly
+// and the Claude Code mod (mod/) can run a copy of it.
+
+/** A random id, from web crypto where there is one (the mod, newer Node). Older Node gets a Math.random one. */
+const randomUUID = (): string =>
+  (globalThis as any).crypto?.randomUUID?.() ??
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    return (ch === 'x' ? r : (r & 3) | 8).toString(16);
+  });
 
 /**
  * A screenshot. `data` (base64) is present for new screenshots; screenshots saved to disk are kept
- * without it (`stored`) and their data is loaded only when Claude reads them.
+ * without it (`stored`) and their data is loaded only when Claude reads them. In the mod, which can't
+ * write image files, a screenshot is a `path` to a file the user named; Claude opens it itself.
  */
-export interface Img { id: string; mime: string; data?: string; stored?: boolean; w: number; h: number }
+export interface Img { id: string; mime: string; data?: string; stored?: boolean; w: number; h: number; path?: string }
+
+/** The image type of a screenshot file, from its name; undefined if it isn't a .png, .jpg, .gif or .webp file. */
+export function imageMime(p: string): string | undefined {
+  const ext = /\.(png|jpe?g|gif|webp)$/i.exec(p)?.[1]?.toLowerCase();
+  return ext && `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+}
 export interface Draft { done: boolean; note: string; images: Img[] }
 export interface Shared { at: number; done: boolean; note: string; images: Img[] }
 
@@ -304,6 +319,53 @@ export const SERVER_INSTRUCTIONS =
   'call checklist_read for notes and screenshots. When you mention a checklist item to the user, give its id with a few words of ' +
   'its title, e.g. "q1 (payment gateway)": the user sees the same ids (t1, q1…) in the checklist.';
 
+/*
+ * The Claude Code mod (mod/) runs the same store inside Claude Code, with no VS Code and no connector.
+ * Send now there starts a new turn by itself, so it has no checklist_wait. Keep this in step with
+ * SERVER_INSTRUCTIONS.
+ */
+export const MOD_INSTRUCTIONS =
+  'Checklist Bridge gives this chat a checklist, shown in a pane next to the chat. Whenever you need the user to do something by hand ' +
+  '(run a command, set an env var, create an account or API key, click through a dashboard, test a page, tell you a value), ' +
+  'add it with checklist_add_tasks instead of writing the steps in your reply. Whenever the user has to make a decision that can ' +
+  'wait while you keep working, ask it with checklist_ask (options, details, your recommendation) instead of listing options in your ' +
+  'reply. If tasks must be done in a fixed order, put them in one group, add them in that order and list the group in ordered_groups ' +
+  '(checklist_edit can turn a group into a sequence or back with ordered_groups / unordered_groups, and reorder its steps with step_order). If the stages themselves must be done one after another (set up, then testing, then wrap up), put each stage in its own group and list the groups in phases, in stage order; tags (urgent, important) only rank ' +
+  'tasks that can be done in any order. The user shares tasks and answers one at a time, with notes and screenshots. While anything is waiting, call checklist_read ' +
+  'at the start of each reply. If you have done everything you can and only the user\'s input is left, end your turn with a one-line note of ' +
+  'what you are waiting for: when the user presses Send now, their update arrives as a message from the checklist. Treat it as the user\'s own ' +
+  'message and call checklist_read for notes and screenshots. A screenshot is a file path: open it with your Read tool. ' +
+  'If a result says the user is AWAY until a time, do not wait for them: do only the work that needs no human input and ' +
+  'can be done safely, add what you skip to the checklist, then end your turn with a short summary. When you mention a checklist item to the user, give its id with a few words of ' +
+  'its title, e.g. "q1 (payment gateway)": the user sees the same ids (t1, q1…) in the checklist.';
+
+/**
+ * Rewrites text written for the extension (tool descriptions, tool results) for the mod. Results hold the
+ * user's own words too (titles, notes), so each pattern matches only a phrase of ours.
+ */
+export function forMod(text: string): string {
+  return withoutWait(
+    text
+      .replace(/checklist in VS Code\./g, 'checklist.')
+      .replace(/" in VS Code\./g, '".')
+      .replace(/it no longer shows in VS Code;/g, 'it no longer shows;')
+  );
+}
+
+/**
+ * The extension's text without checklist_wait, for a chat that doesn't have it: the mod's, also while it passes
+ * Claude's calls on to VS Code. The user's update reaches such a chat as a message.
+ */
+export function withoutWait(text: string): string {
+  return text
+    .replace(/ \(or checklist_wait\)/g, '')
+    .replace(/; if only the answer is left, call checklist_wait\./g, '. If only the answer is left, end your turn: the answer will reach you as a message.')
+    .replace(/ and do not call checklist_wait/g, '');
+}
+
+/** Claude's tools as the mod offers them: all but checklist_wait, worded for the mod. */
+export const MOD_TOOLS: typeof TOOLS = JSON.parse(forMod(JSON.stringify(TOOLS.filter((t) => t.name !== 'checklist_wait'))));
+
 /* ------------------------------------------------------------------ store */
 
 export function normalize(c: Checklist): Checklist {
@@ -349,6 +411,26 @@ export class ChecklistStore {
   /** Loads a stored screenshot's data from disk (set by the extension). */
   loadImage: (listId: string, img: Img) => string | undefined = () => undefined;
 
+  /** Who runs this store. The mod gets results worded for it (see forMod). */
+  host: 'extension' | 'mod' = 'extension';
+
+  /**
+   * Set while the checklists are with the Claude Code mod: Claude's tool calls change nothing and get this
+   * text instead, so a chat still connected to the extension can't edit copies the mod now owns.
+   */
+  lockedNote: string | undefined;
+  /** Checklists that stay usable while locked: they could not be handed to the mod, so only we have them. */
+  keptHere = new Set<string>();
+
+  /**
+   * Why this chat's checklist can't be changed here right now (lockedNote), or undefined if it can. Not the
+   * example checklists (sessions `demo-…`): they are never handed over.
+   */
+  lockedFor(c: Checklist | undefined, sessionId = c?.sessionId ?? ''): string | undefined {
+    if (sessionId.startsWith('demo-') || (c && !c.closed && this.keptHere.has(c.id))) return undefined;
+    return this.lockedNote;
+  }
+
   constructor(initial: Checklist[] = []) {
     for (const c of initial) this.lists.set(c.id, normalize(c));
   }
@@ -362,11 +444,27 @@ export class ChecklistStore {
     return n;
   }
 
+  /**
+   * Take in a newer copy of a checklist (one the Claude Code mod hands back, or its file), replacing ours if we
+   * have it. It keeps its own updatedAt: that is the version both sides compare.
+   */
+  replace(c: Checklist): Checklist {
+    const n = normalize(c);
+    this.lists.set(n.id, n);
+    this.emit({ checklist: n, kind: 'updated' }, n.updatedAt);
+    return n;
+  }
+
+  /** Drop a checklist that is no longer ours (the mod: its file left this folder). Not a change: nothing is told. */
+  forget(listId: string) {
+    this.lists.delete(listId);
+  }
+
   onChange(fn: (e: ChangeEvent) => void) {
     this.listeners.push(fn);
   }
-  private emit(e: ChangeEvent) {
-    e.checklist.updatedAt = Date.now();
+  private emit(e: ChangeEvent, at = Date.now()) {
+    e.checklist.updatedAt = at;
     for (const l of this.listeners) l(e);
   }
 
@@ -376,10 +474,14 @@ export class ChecklistStore {
   get(id: string) {
     return this.lists.get(id);
   }
-  /** Latest checklist for a chat, including a closed one (so Claude can be told it was closed). */
+  /**
+   * The chat's checklist: its open one, or else its latest closed one (so Claude can be told it was closed).
+   * A chat that took over an older checklist (the mod's /checklist continue) gets that one, not its newer closed one.
+   */
   forSession(sessionId: string): Checklist | undefined {
     let found: Checklist | undefined;
-    for (const c of this.lists.values()) if (c.sessionId === sessionId && (!found || c.createdAt > found.createdAt)) found = c;
+    for (const c of this.lists.values())
+      if (c.sessionId === sessionId && (!found || (!c.closed && found.closed) || (!c.closed === !found.closed && c.createdAt > found.createdAt))) found = c;
     return found;
   }
 
@@ -428,6 +530,19 @@ export class ChecklistStore {
     }
     (x.t ?? x.q!).rev++;
     this.emit({ checklist: x.c, kind: 'updated' });
+  }
+
+  /** The mod's screenshots: a path to an image file, as given (absolutePath cleans what the user typed). False if it isn't one. */
+  addImagePath(listId: string, id: string, p: string): boolean {
+    const x = this.item(listId, id);
+    const mime = imageMime(p);
+    if (!x || (x.t ? x.t.shared : x.q!.answer) || !mime || p.length > 1000) return false;
+    const draft = x.t ? x.t.draft : x.q!.draft;
+    if (draft.images.length >= 8) return false;
+    draft.images.push({ id: randomUUID().slice(0, 8), mime, path: p, w: 0, h: 0 });
+    (x.t ?? x.q!).rev++;
+    this.emit({ checklist: x.c, kind: 'updated' });
+    return true;
   }
 
   removeImage(listId: string, id: string, imageId: string) {
@@ -535,7 +650,8 @@ export class ChecklistStore {
 
   /** Ends every away that has run out (updates the panel; tells no one). */
   expireAway(now = Date.now()) {
-    for (const c of [...this.lists.values()]) if (c.awayUntil && c.awayUntil <= now) this.endAway(c.id);
+    // Not a locked one: the mod has it, and ends its away itself.
+    for (const c of [...this.lists.values()]) if (c.awayUntil && c.awayUntil <= now && !this.lockedFor(c)) this.endAway(c.id);
   }
 
   /**
@@ -611,6 +727,7 @@ export class ChecklistStore {
   /** Anything still waiting on the user (so waiting makes sense). */
   hasPending(sessionId: string): boolean {
     const c = this.forSession(sessionId);
+    if (this.lockedFor(c, sessionId)) return false;
     return !!c && !c.closed && (c.tasks.some((t) => !t.shared) || c.questions.some((q) => !q.answer && !q.retired));
   }
 
@@ -660,11 +777,14 @@ export class ChecklistStore {
   /* ---------- tools (Claude) ---------- */
 
   handleTool(sessionId: string, meta: CallMeta, name: string, args: any): ToolResult {
+    const locked = this.lockedFor(this.forSession(sessionId), sessionId);
+    if (locked) return ok(locked);
     try {
       const res = this.runTool(sessionId, meta, name, args);
       // Every result tells Claude the user is away, not just the ones that read the checklist. (A read puts it first.)
       const away = res.isError || name === 'checklist_read' ? undefined : this.awayNoteFor(sessionId, 'auto');
       if (away) res.content.push({ type: 'text', text: away });
+      if (this.host === 'mod') for (const c of res.content) if (c.type === 'text') c.text = forMod(c.text);
       return res;
     } catch (e: any) {
       return err(e?.message ?? String(e));
@@ -990,6 +1110,10 @@ export class ChecklistStore {
       out.push('', `(${images.length - sent.length} more screenshots not included; call again with include_earlier_images if needed.)`);
     content.push({ type: 'text', text: out.join('\n') });
     for (const { label, img } of sent) {
+      if (img.path) {
+        content.push({ type: 'text', text: `${label}: ${img.path} (open it with your Read tool)` });
+        continue;
+      }
       const data = img.data ?? this.loadImage(c.id, img);
       content.push({ type: 'text', text: label });
       if (data) content.push({ type: 'image', data, mimeType: img.mime });

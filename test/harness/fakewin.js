@@ -7,7 +7,7 @@ let tree;
 const commands = {};
 const terminals = []; const termOpen = [];
 const panels = [];
-let focusListener; let serializer;
+const focusListeners = [], folderListeners = []; let serializer;
 const ev = () => () => noop;
 class EventEmitter { constructor() { this.l = []; this.event = (f) => (this.l.push(f), noop); } fire(x) { this.l.forEach((f) => f(x)); } }
 const Uri = { parse: (v) => ({ fsPath: v, toString() { return v; } }), joinPath: (b, ...p) => ({ fsPath: path.join(b.fsPath, ...p), toString() { return this.fsPath; } }), file: (p) => ({ fsPath: p, toString() { return 'vscode-resource:' + p; } }) };
@@ -40,12 +40,13 @@ const vscode = {
     onDidCloseTerminal: () => noop,
     setStatusBarMessage: (m) => (say({ log: `[${name}] STATUS ${m}` }), noop),
     showErrorMessage: async (m) => (say({ log: `[${name}] ERROR ${m}` }), undefined),
-    onDidChangeWindowState: (f) => ((focusListener = f), noop),
+    onDidChangeWindowState: (f) => (focusListeners.push(f), noop),
     createOutputChannel: () => ({ appendLine: (s) => say({ log: `[${name}] ${s}` }), show() {}, dispose() {} }),
     createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
     createTreeView: (_id, o) => ((tree = o.treeDataProvider), { dispose() {}, onDidChangeVisibility: ev() }),
-    showInformationMessage: async (m) => (say({ log: `[${name}] NOTIFY ${m}` }), undefined),
-    showWarningMessage: async (m, o) => (say({ log: `[${name}] WARN ${m}`, warn: m, detail: o?.detail }), /^Close /.test(m) ? 'Close checklist' : undefined),
+    showInformationMessage: async (m) => (say({ log: `[${name}] NOTIFY ${m}` }), /^Use Checklist Bridge inside Claude Code/.test(m) ? 'Switch' : undefined),
+    // CB_DIALOG_MS: how long the user takes to answer a question (to test what happens meanwhile).
+    showWarningMessage: async (m, o) => (say({ log: `[${name}] WARN ${m}`, warn: m, detail: o?.detail }), await new Promise((r) => setTimeout(r, Number(process.env.CB_DIALOG_MS) || 0)), /^Close /.test(m) ? 'Close checklist' : undefined),
     showQuickPick: async () => undefined,
     withProgress: async (o, task) => { say({ log: `[${name}] PROGRESS ${o.title}` }); return task(); },
     createTerminal: () => ({ show() {}, sendText: (t) => say({ log: `[${name}] TERMINAL ${t}` }) }),
@@ -53,7 +54,7 @@ const vscode = {
     createWebviewPanel: (type, title) => {
       const msg = new EventEmitter(), disp = new EventEmitter();
       const p = {
-        title, webview: { options: {}, cspSource: 'x', asWebviewUri: (u) => u, onDidReceiveMessage: msg.event, postMessage: async (m) => { if (m.type === 'state') { p.state = m.list; p.routes = m.routes; say({ state: m, title: p.title }); } else say({ webMsg: m, title: p.title }); if (m.type === 'flush') setTimeout(() => { for (const x of p.unsaved || []) msg.fire(x); p.unsaved = []; msg.fire({ type: 'flushed' }); }, 20); return true; }, set html(v) { setTimeout(() => msg.fire({ type: 'ready' })); } },
+        title, webview: { options: {}, cspSource: 'x', asWebviewUri: (u) => u, onDidReceiveMessage: msg.event, postMessage: async (m) => { if (m.type === 'state') { p.state = m.list; p.routes = m.routes; say({ state: m, title: p.title }); } else say({ webMsg: m, title: p.title }); if (m.type === 'flush') setTimeout(() => { for (const x of p.unsaved || []) msg.fire(x); p.unsaved = []; msg.fire({ type: 'flushed', n: m.n }); }, Number(process.env.CB_FLUSH_MS) || 20); return true; }, set html(v) { setTimeout(() => msg.fire({ type: 'ready' })); } },
         onDidDispose: disp.event, reveal() {}, dispose() { if (p.gone) return; p.gone = true; disp.fire(); say({ panelClosed: p.title }); },
         user: (m) => msg.fire(m),
       };
@@ -63,7 +64,7 @@ const vscode = {
     },
   },
   commands: { registerCommand: (n, f) => ((commands[n] = f), noop), executeCommand: (n, ...a) => { if (n === 'setContext') { say({ context: { [a[0]]: a[1] } }); return Promise.resolve(); } if (n.startsWith('workbench.')) { say({ log: `[${name}] VSCODE ${n} ${a.map(String).join(' ')}` }); return Promise.resolve(); } return commands[n](...a); } },
-  workspace: { name, workspaceFolders: process.env.CB_FOLDERLESS ? undefined : [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: ev(), getConfiguration: (section) => config(section) },
+  workspace: { name, workspaceFolders: process.env.CB_FOLDERLESS ? undefined : [{ uri: { fsPath: folder }, name }], workspaceFile: undefined, onDidChangeWorkspaceFolders: (f) => (folderListeners.push(f), noop), getConfiguration: (section) => config(section) },
   env: { clipboard: { writeText: async (t) => say({ clipboard: t }) }, openExternal: async (u) => (say({ opened: String(u) }), true) },
   extensions: { getExtension: (id) => (process.env.HAS_OLD === '1' && id === 'akshat.checklist-bridge' ? { id } : undefined) },
 };
@@ -83,7 +84,9 @@ const ctx = {
 ext.activate(ctx).then(() => say({ ready: name }));
 
 process.on('message', (m) => {
-  if (m.cmd === 'focus') { vscode.window.state.focused = true; focusListener({ focused: true }); }
+  // The user adds or removes workspace folders: m.folders is the window's folders after.
+  if (m.cmd === 'folders') { vscode.workspace.workspaceFolders = m.folders.map((f) => ({ uri: { fsPath: f }, name: path.basename(f) })); folderListeners.forEach((f) => f({})); setTimeout(() => say({ done: 1 }), 100); }
+  if (m.cmd === 'focus') { vscode.window.state.focused = true; focusListeners.forEach((f) => f({ focused: true })); }
   if (m.cmd === 'panels') say({ panels: panels.filter((p) => !p.gone).map((p) => ({ title: p.title, away: !!p.state?.away, awayLeft: p.state?.awayLeft, awayLabel: p.state?.awayLabel, awayMs: p.state?.awayMs, id: p.state?.id, routes: p.routes, questions: (p.state?.questions || []).map((q) => ({ id: q.id, answered: !!q.answer, seen: !!q.seenAt, pushed: !!q.pushedAt, retired: !!q.retired })), tasks: (p.state?.tasks || []).map((t) => t.id + (t.shared ? '*' : '')) })) });
   if (m.cmd === 'addTerminal') { const t = { name: 'claude', processId: Promise.resolve(m.pid), show() {}, sendText: (x) => say({ termText: x }) }; terminals.push(t); termOpen.forEach((fn) => fn(t)); setTimeout(() => say({ done: 1 }), 300); }
   // What the panel holds back and sends only when asked to flush (typing not saved yet), like the real panel.

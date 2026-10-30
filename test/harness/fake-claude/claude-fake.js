@@ -1,6 +1,7 @@
 // A stand-in for the `claude` CLI's `mcp add/remove/get`, writing user-scope servers to
 // $CLAUDE_CONFIG_DIR/.claude.json (or ~/.claude.json) like the real one. Logs every call.
 // FAKE_CLAUDE_FAIL=1 makes `mcp add` fail without registering anything.
+// FAKE_CLAUDE_REMOVE_MS makes `mcp remove` take that long (a slow computer).
 const fs = require('fs'), path = require('path'), os = require('os');
 const args = process.argv.slice(2);
 const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
@@ -25,6 +26,7 @@ if (args[1] === 'add') {
   write(cfg); console.log(`Added stdio MCP server ${name} to user config`); process.exit(0);
 }
 if (args[1] === 'remove') {
+  if (process.env.FAKE_CLAUDE_REMOVE_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_CLAUDE_REMOVE_MS));
   if (!cfg.mcpServers[args[2]]) { console.error(`No user-scoped MCP server found with name: ${args[2]}`); process.exit(1); }
   delete cfg.mcpServers[args[2]]; write(cfg); console.log(`Removed MCP server ${args[2]}`); process.exit(0);
 }

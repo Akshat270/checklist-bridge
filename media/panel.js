@@ -6,6 +6,8 @@
 
   let list = null;
   let routes = { waiting: false, channel: false, terminal: false };
+  // Why this checklist is read-only right now (it is with the Claude Code mod), or '' when it isn't.
+  let locked = '';
   const qDrafts = {}; // qid -> { picks, other, note } as typed here
   const qTimers = {};
   const openDetails = new Set(); // "q1/o2": an option's Details you opened
@@ -804,7 +806,7 @@
     const dock = $('#dock');
     dock.classList.toggle('on', ticked >= 2);
     // Out of reach while it is hidden (also while it slides away) and while a screenshot is open over it.
-    dock.inert = ticked < 2 || !!$('.lightbox');
+    dock.inert = ticked < 2 || !!$('.lightbox') || !!locked;
     $('#dock-text').innerHTML = `<b>${ticked}</b> ticked and not shared yet`;
   }
 
@@ -883,7 +885,12 @@
     };
 
     const nodes = [];
-    $('#waiting').hidden = !routes.waiting;
+    $('#waiting').hidden = !routes.waiting || !!locked;
+    // Read-only: the list and its controls can be seen but not used; the banner says why and how to change it.
+    $('#locked').hidden = !locked;
+    $('#locked-text').textContent = locked;
+    $('#list').inert = !!locked;
+    for (const id of ['away-btn', 'close']) $('#' + id).disabled = !!locked;
     renderAway();
     // "Send now" hands over everything not read yet in one go, so show exactly one control:
     // on the answer card when that answer is the only thing waiting, otherwise in the bar.
@@ -1193,6 +1200,7 @@
         <div class="sub"><span class="folder" id="folder">${I.folder}<span id="folder-name"></span></span><span id="task-count"></span></div>
       </header>
       <div class="waiting" id="waiting" hidden role="status"><span class="pulse"></span>Claude is waiting for you. Whatever you share reaches it right away.</div>
+      <div class="locked" id="locked" hidden role="status"><span id="locked-text"></span><button class="btn small" id="unlock">Switch back to VS Code</button></div>
       <div class="away-wrap" id="away"><div class="away-inner" id="away-inner"></div></div>
       <div class="progress" id="progress"><div class="bar" id="bar"></div><div class="progress-label" id="progress-label"></div></div>
       <div id="list"></div>
@@ -1202,6 +1210,7 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>`;
 
   $('#away-btn').onclick = toggleAway;
+  $('#unlock').onclick = () => post({ type: 'unlock' });
   $('#hide').onclick = () => post({ type: 'hide' });
   // Before asking about closing, the window has this panel send what isn't saved yet (an answer typed a moment ago).
   $('#close').onclick = () => post({ type: 'close' });
@@ -1234,6 +1243,7 @@
         saveUi();
       }
       routes = m.routes || routes;
+      locked = m.locked || '';
       awayGot = Date.now();
       render();
       // The one authored moment: after sharing the current task, the next one opens in its place.
@@ -1255,7 +1265,7 @@
     } else if (m.type === 'flush') {
       // The window is about to ask about closing: send what isn't saved yet first, so the question counts it.
       flushDrafts();
-      post({ type: 'flushed' });
+      post({ type: 'flushed', n: m.n }); // which request this answers: a late answer must not end the next one
     } else if (m.type === 'reveal' && m.taskId) jump(m.taskId);
     else if (m.type === 'toast') toast(m.text);
   });

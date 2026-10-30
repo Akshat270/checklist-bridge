@@ -9,9 +9,38 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const LOCKED = new Set(['EPERM', 'EBUSY', 'EACCES']);
+/** The errors Windows gives for a file another program has open. */
+export const LOCKED = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+let tmpSeq = 0;
+
+/**
+ * Writes a file the way Saver does, at once: to a temp file renamed over the real one, retrying while
+ * Windows has it locked and writing it in place if it stays locked. For files outside Saver's folder
+ * (the checklists handed to the Claude Code mod).
+ */
+export function writeFileSafe(target: string, text: string | Buffer) {
+  const tmp = `${target}.${process.pid}.${++tmpSeq}.tmp`;
+  fs.writeFileSync(tmp, text);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, target);
+        return;
+      } catch (e: any) {
+        if (!LOCKED.has(e?.code)) throw e;
+        if (attempt >= 3) {
+          fs.writeFileSync(target, text);
+          return;
+        }
+        sleepSync(40);
+      }
+    }
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
 
 export class Saver {
   private dirty = new Set<string>();
@@ -23,7 +52,6 @@ export class Saver {
   /** Per checklist: failed attempts in a row, and when to try again. One locked file doesn't slow the others. */
   private failures = new Map<string, number>();
   private retryAt = new Map<string, number>();
-  private tmpSeq = 0;
   private stopped = false;
 
   constructor(
@@ -166,7 +194,7 @@ export class Saver {
 
   private async write(id: string, text: string, v: number) {
     const target = this.file(id);
-    const tmp = `${target}.${process.pid}.${++this.tmpSeq}.tmp`;
+    const tmp = `${target}.${process.pid}.${++tmpSeq}.tmp`;
     await fs.promises.writeFile(tmp, text);
     try {
       for (let attempt = 0; ; attempt++) {
@@ -193,25 +221,6 @@ export class Saver {
   }
 
   private writeSync(id: string, text: string) {
-    const target = this.file(id);
-    const tmp = `${target}.${process.pid}.${++this.tmpSeq}.tmp`;
-    fs.writeFileSync(tmp, text);
-    try {
-      for (let attempt = 0; ; attempt++) {
-        try {
-          fs.renameSync(tmp, target);
-          return;
-        } catch (e: any) {
-          if (!LOCKED.has(e?.code)) throw e;
-          if (attempt >= 3) {
-            fs.writeFileSync(target, text);
-            return;
-          }
-          sleepSync(40);
-        }
-      }
-    } finally {
-      fs.rmSync(tmp, { force: true });
-    }
+    writeFileSafe(this.file(id), text);
   }
 }

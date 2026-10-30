@@ -1,0 +1,23 @@
+{
+  "name": "checklist-bridge",
+  "version": "0.1.0",
+  "description": "A checklist for every Claude Code chat: Claude adds the manual tasks and decisions that need you, you tick them off and send them back.",
+  "author": {
+    "name": "Akshat270"
+  },
+  "homepage": "https://github.com/Akshat270/checklist-bridge",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "colors": {
+      "type": "string",
+      "title": "Colors",
+      "description": "Match your terminal theme: dark or light.",
+      "default": "dark",
+      "options": [
+        "dark",
+        "light"
+      ]
+    }
+  }
+}
