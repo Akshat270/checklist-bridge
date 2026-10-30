@@ -45,8 +45,10 @@ export type Actions = {
   continueHere: (listId: string) => Promise<void>
   /** Shows or hides the ☾ Away time choices. */
   toggleAwayPicker: () => Promise<void>
-  /** Draws the pane again (no change saved): what is typed is shown in full under its field. */
+  /** Draws the pane again (no change saved): a note too long for its field is shown in full in its frame. */
   redraw: () => void
+  /** Gives the keyboard to the element with this key once the pane is drawn with it. */
+  focus: (key: string) => void
 }
 
 export type View = {
@@ -276,6 +278,14 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
   /* ------------------------------------------------------------------ the checklist */
 
   const edit = (change: () => string | void) => act.edit(c.id, change)
+  /** Enter in a field: saves it, and gives the keyboard back to the field, now drawn under its next key (fieldKey). */
+  const saveField = (itemId: string, field: 'note' | 'other', change: () => void) => {
+    let key = ''
+    void edit(() => {
+      change()
+      key = app.nextRound(c.id, itemId, field)
+    }).then(() => key && act.focus(key))
+  }
   const groups = ordered(c)
   const all = groups.flatMap(g => g.tasks)
   const open = all.filter(t => !t.shared)
@@ -331,13 +341,13 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
         field(
           'Note',
           <Input
-            key={`${owner.id}-note`}
+            key={app.fieldKey(c.id, owner.id, 'note')}
             placeholder="optional: what you did, or a value Claude needs"
-            value={app.fieldValue(c.id, owner.id, 'note', note)}
+            value={note}
             rows={rowsFor(note)}
             submitLabel="save"
             onInput={setNote}
-            onSubmit={v => edit(() => setNote(v))}
+            onSubmit={v => saveField(owner.id, 'note', () => app.type(c.id, owner.id, 'note', v))}
           />,
           note,
         )}
@@ -538,13 +548,13 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
             {field(
               'Something else',
               <Input
-                key={`${q.id}-other`}
+                key={app.fieldKey(c.id, q.id, 'other')}
                 placeholder="your own answer"
-                value={app.fieldValue(c.id, q.id, 'other', q.draft.other)}
+                value={q.draft.other}
                 rows={rowsFor(q.draft.other)}
                 submitLabel="save"
                 onInput={typing('Something else', c.id, q.id, 'other', q.draft.other)}
-                onSubmit={v => edit(() => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
+                onSubmit={v => saveField(q.id, 'other', () => void app.store.setAnswerDraft(c.id, q.id, { other: v }))}
               />,
               q.draft.other,
             )}

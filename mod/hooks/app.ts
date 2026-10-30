@@ -66,12 +66,8 @@ export class App {
    * this copy is replaced, what was typed is put back.
    */
   private typed = new Map<string, string>()
-  /**
-   * What each field being typed in held when the typing began (its text as last drawn). The field is drawn
-   * with that until the typing is saved: Claude Code empties a field on Enter and fills it only with a text
-   * different from the one it last drew, so drawing what was typed while typing would leave it empty after.
-   */
-  private typedFrom = new Map<string, string>()
+  /** How many times each field was saved with Enter: part of its key (fieldKey). */
+  private rounds = new Map<string, number>()
   /** Each checklist file's time when we last read it, and when that was: settled files are not read again. */
   private readAt = new Map<string, { mtime: number; at: number }>()
 
@@ -235,22 +231,34 @@ export class App {
 
   /** What the user types into an item's note, or a question's own answer: kept, not saved yet (see typed). */
   type(listId: string, itemId: string, field: 'note' | 'other', value: string) {
-    const key = `${listId}/${itemId}/${field}`
-    if (!this.typed.has(key)) this.typedFrom.set(key, this.fieldText(listId, itemId, field))
-    this.typed.set(key, value)
+    this.typed.set(`${listId}/${itemId}/${field}`, value)
     this.applyTyped(listId, itemId, field, value)
   }
 
-  /** The text a field is drawn with: `now`, or while it is being typed in, what it held before (see typedFrom). */
-  fieldValue(listId: string, itemId: string, field: 'note' | 'other', now: string): string {
-    return this.typedFrom.get(`${listId}/${itemId}/${field}`) ?? now
+  /**
+   * Forgets what was typed on a checklist (all, without `listId`) that this chat no longer has: switched to
+   * VS Code, or taken over by another chat. Otherwise it would be put back over a newer note later.
+   */
+  forgetTyped(listId?: string) {
+    for (const k of [...this.typed.keys()]) if (!listId || k.startsWith(`${listId}/`)) this.typed.delete(k)
   }
 
-  private fieldText(listId: string, itemId: string, field: 'note' | 'other'): string {
-    const c = this.store.get(listId)
-    const t = c?.tasks.find(x => x.id === itemId)
-    const q = c?.questions.find(x => x.id === itemId)
-    return (field === 'note' ? (t ?? q)?.draft.note : q?.draft.other) ?? ''
+  /**
+   * A field's key: `t1-note`, then `t1-note-1` after its first Enter, and so on. Claude Code empties a field
+   * on Enter and fills it again only with a text other than the one it last drew, so after a save the same
+   * note (a long one already drawn while typed, or Enter on a note left as it was) would leave it empty. A
+   * field under a new key is a new field, drawn with the note.
+   */
+  fieldKey(listId: string, itemId: string, field: 'note' | 'other'): string {
+    const n = this.rounds.get(`${listId}/${itemId}/${field}`) ?? 0
+    return `${itemId}-${field}${n ? `-${n}` : ''}`
+  }
+
+  /** After Enter in a field: its next key. */
+  nextRound(listId: string, itemId: string, field: 'note' | 'other'): string {
+    const k = `${listId}/${itemId}/${field}`
+    this.rounds.set(k, (this.rounds.get(k) ?? 0) + 1)
+    return this.fieldKey(listId, itemId, field)
   }
 
   private applyTyped(listId: string, itemId: string, field: 'note' | 'other', value: string) {
@@ -301,11 +309,7 @@ export class App {
     this.known.set(p.id, p.at)
     if (this.store.get(p.id)?.updatedAt !== p.at) return // changed again meanwhile: saved next time
     this.dirty.delete(p.id)
-    for (const k of [...this.typed.keys()])
-      if (k.startsWith(`${p.id}/`)) {
-        this.typed.delete(k) // it is in the file now
-        this.typedFrom.delete(k)
-      }
+    this.forgetTyped(p.id) // it is in the file now
   }
 
   /** Whether some change is still not saved (a write failed). */

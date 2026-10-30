@@ -838,17 +838,69 @@ test('a note longer than its field is shown whole under it as it is typed, and t
   await ui.unmount()
 })
 
-test('a note stays in its field after Enter: while typing the field is drawn as it was, after saving with the note', async ($, on) => {
+test('a note stays in its field after Enter, and after Enter again with nothing changed', async ($, on) => {
   const { files } = world(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  // Claude Code empties a field on Enter and fills it again only with a text other than the one it last drew.
+  // Claude Code empties a field on Enter and fills it again only with a text other than the one it last drew:
+  // after each Enter the field is a new one (a new key), drawn with the note.
   const long = 'the key is in the shared vault under payments, ask Sam for access first'
   await ui.input({ key: 't1-note', text: long, kind: 'change' })
-  expect((await ui.find({ key: 't1-note' }))?.props.value).toBe('')
   await ui.input({ key: 't1-note', text: long })
-  expect((await ui.find({ key: 't1-note' }))?.props.value).toBe(long)
+  expect(await ui.find({ key: 't1-note' })).toBeUndefined()
+  expect((await ui.find({ key: 't1-note-1' }))?.props.value).toBe(long)
   expect(JSON.parse(files[listFile(files)]!).tasks[0].draft.note).toBe(long)
+  await ui.input({ key: 't1-note-1', text: long })
+  expect((await ui.find({ key: 't1-note-2' }))?.props.value).toBe(long)
   await ui.unmount()
+})
+
+test('what is typed and not saved is still there when the card is opened again', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }, { text: 'Two' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 't1-note', text: 'abc' })
+  await ui.input({ key: 't1-note-1', text: 'abc def', kind: 'change' })
+  await ui.press({ key: 't2-open' })
+  await ui.press({ key: 't1-open' })
+  expect((await ui.find({ key: 't1-note-1' }))?.props.value).toBe('abc def')
+  await ui.unmount()
+})
+
+test('what was typed before switching to VS Code is not put back over a newer note later', async ($, on) => {
+  const { files } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 't1-note', text: 'typed here', kind: 'change' })
+  await ui.unmount()
+  await $.command.run({ command: 'checklist', args: 'use-extension' } as any)
+  // VS Code changes the note, then hands the checklist back.
+  elsewhere(files, c => (c.tasks[0].draft.note = 'set in VS Code'))
+  await $.command.run({ command: 'checklist', args: 'use-mod' } as any)
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await again.find({ key: 't1-note' }))?.props.value).toBe('set in VS Code')
+  await again.unmount()
+})
+
+test('/checklist continue N after an earlier continue counts in the list as it is now', async ($, on) => {
+  const { files, chat } = world(on)
+  for (const [sid, title] of [['chat-a', 'A'], ['chat-b', 'B']]) {
+    chat.sid = sid!
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await $.tool.call({ tool: `${T}checklist_add_tasks`, title, tasks: [{ text: 'One' }] } as any)
+  }
+  chat.sid = 'chat-c'
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'checklist', args: 'list' } as any) // 1. B, 2. A
+  expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"B" is this chat's checklist now/)
+  // B is closed (in VS Code, say); continue 1 is now A, the only other one.
+  const f = Object.keys(files).find(k => k.endsWith('.json') && JSON.parse(files[k]!).title === 'B')!
+  const b = JSON.parse(files[f]!)
+  b.closed = true
+  b.updatedAt += 10_000
+  files[f] = files[`${f}.bak`] = JSON.stringify(b)
+  expect((await $.command.run({ command: 'checklist', args: 'continue 1' } as any)).text).toMatch(/"A" is this chat's checklist now/)
 })

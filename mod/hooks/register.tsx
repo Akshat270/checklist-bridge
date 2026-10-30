@@ -130,7 +130,10 @@ export const register: Register = (on, options) => {
           inVSCode = false
           // Switched to the mod from VS Code while this chat was open: Claude gets its checklist tools now.
           if (!toolsRegistered) await registerTools()
-        } else if (a.current(await $.session.id())) inVSCode = true // its checklist goes to VS Code, and so do its calls
+        } else {
+          if (a.current(await $.session.id())) inVSCode = true // its checklist goes to VS Code, and so do its calls
+          a.forgetTyped() // VS Code has the checklists: what was typed here is not put back on them later
+        }
         return true
       },
       // The mode and the folder as they are now: only files that changed since they were last read are read,
@@ -398,6 +401,7 @@ export const register: Register = (on, options) => {
       await disk!.save() // everything goes over as it is now
       await $.fs.write(modeFile(a.root), modeText('extension'))
       a.use = 'extension'
+      a.forgetTyped()
       inVSCode = !!c
       out = [
         'Switched to the VS Code extension.',
@@ -438,7 +442,10 @@ export const register: Register = (on, options) => {
       else if (!pick) out = 'That checklist was closed or taken by another chat since. Run /checklist list to see them as they are now.'
       else {
         const refused = a.takeOver(pick.id, sid)
-        if (!refused) void $.ui.open({ id: PANE, title: 'Checklist' })
+        if (!refused) {
+          listed = [] // that list is out of date now: the next N counts in the list as it is then
+          void $.ui.open({ id: PANE, title: 'Checklist' })
+        }
         out = refused ?? `"${pick.title}" is this chat's checklist now. Claude sees it the next time it reads the checklist.`
       }
     } else if (sub === '' || sub === 'open') {
@@ -482,6 +489,7 @@ export const register: Register = (on, options) => {
         }
         const gone = a.refusal(listId, sid)
         if (gone) {
+          a.forgetTyped(listId) // another chat's now: not put back on it if it comes back here
           await update($, rev, n => n + 1)
           return void $.ui.toast(gone)
         }
@@ -492,6 +500,7 @@ export const register: Register = (on, options) => {
       },
       toast: text => void $.ui.toast(text),
       redraw: () => void update($, rev, n => n + 1),
+      focus: key => void $.ui.focus({ requestId: PANE, key }).catch(() => undefined),
       send: async c => {
         await d.load()
         const fresh = a.isOn ? a.store.get(c.id) : undefined

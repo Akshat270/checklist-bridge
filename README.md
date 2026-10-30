@@ -129,6 +129,7 @@ Answer `y` to add the marketplace, pick a scope, then start a new chat. From a s
 **Use it.** When Claude adds tasks or asks a question, the checklist opens next to the chat. You can also type `/checklist` to open it.
 
 - The next task is open at the top of **To do**. Add a note if you like, then press **Done, share with Claude** (or **Couldn't do it, share note**). Press any other task to open it instead.
+- In a note, Enter saves it (Claude sees it once you share the task) and Shift+Enter starts a new line. A note too long for its field is shown in full under it.
 - For a question, pick an option (or type *Something else*), then press **Answer**.
 - **Screenshots:** take one to the clipboard (Win+Shift+S on Windows, Cmd+Ctrl+Shift+4 on a Mac), then press **Paste screenshot** on the task. You can also type an image file's path. On Linux, pasting needs `wl-clipboard` or `xclip`.
 - What you shared folds into **Shared with Claude** at the bottom. Open it to see what Claude has read, or to take something back.
