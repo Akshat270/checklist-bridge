@@ -837,3 +837,18 @@ test('a note longer than its field is shown whole under it as it is typed, and t
   expect((await ui.find({ key: 't1-note' }))?.props.rows).toBe(3)
   await ui.unmount()
 })
+
+test('a note stays in its field after Enter: while typing the field is drawn as it was, after saving with the note', async ($, on) => {
+  const { files } = world(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: `${T}checklist_add_tasks`, tasks: [{ text: 'One' }] } as any)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Claude Code empties a field on Enter and fills it again only with a text other than the one it last drew.
+  const long = 'the key is in the shared vault under payments, ask Sam for access first'
+  await ui.input({ key: 't1-note', text: long, kind: 'change' })
+  expect((await ui.find({ key: 't1-note' }))?.props.value).toBe('')
+  await ui.input({ key: 't1-note', text: long })
+  expect((await ui.find({ key: 't1-note' }))?.props.value).toBe(long)
+  expect(JSON.parse(files[listFile(files)]!).tasks[0].draft.note).toBe(long)
+  await ui.unmount()
+})

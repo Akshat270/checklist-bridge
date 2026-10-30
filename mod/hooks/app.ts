@@ -66,6 +66,12 @@ export class App {
    * this copy is replaced, what was typed is put back.
    */
   private typed = new Map<string, string>()
+  /**
+   * What each field being typed in held when the typing began (its text as last drawn). The field is drawn
+   * with that until the typing is saved: Claude Code empties a field on Enter and fills it only with a text
+   * different from the one it last drew, so drawing what was typed while typing would leave it empty after.
+   */
+  private typedFrom = new Map<string, string>()
   /** Each checklist file's time when we last read it, and when that was: settled files are not read again. */
   private readAt = new Map<string, { mtime: number; at: number }>()
 
@@ -229,8 +235,22 @@ export class App {
 
   /** What the user types into an item's note, or a question's own answer: kept, not saved yet (see typed). */
   type(listId: string, itemId: string, field: 'note' | 'other', value: string) {
-    this.typed.set(`${listId}/${itemId}/${field}`, value)
+    const key = `${listId}/${itemId}/${field}`
+    if (!this.typed.has(key)) this.typedFrom.set(key, this.fieldText(listId, itemId, field))
+    this.typed.set(key, value)
     this.applyTyped(listId, itemId, field, value)
+  }
+
+  /** The text a field is drawn with: `now`, or while it is being typed in, what it held before (see typedFrom). */
+  fieldValue(listId: string, itemId: string, field: 'note' | 'other', now: string): string {
+    return this.typedFrom.get(`${listId}/${itemId}/${field}`) ?? now
+  }
+
+  private fieldText(listId: string, itemId: string, field: 'note' | 'other'): string {
+    const c = this.store.get(listId)
+    const t = c?.tasks.find(x => x.id === itemId)
+    const q = c?.questions.find(x => x.id === itemId)
+    return (field === 'note' ? (t ?? q)?.draft.note : q?.draft.other) ?? ''
   }
 
   private applyTyped(listId: string, itemId: string, field: 'note' | 'other', value: string) {
@@ -281,7 +301,11 @@ export class App {
     this.known.set(p.id, p.at)
     if (this.store.get(p.id)?.updatedAt !== p.at) return // changed again meanwhile: saved next time
     this.dirty.delete(p.id)
-    for (const k of [...this.typed.keys()]) if (k.startsWith(`${p.id}/`)) this.typed.delete(k) // it is in the file now
+    for (const k of [...this.typed.keys()])
+      if (k.startsWith(`${p.id}/`)) {
+        this.typed.delete(k) // it is in the file now
+        this.typedFrom.delete(k)
+      }
   }
 
   /** Whether some change is still not saved (a write failed). */

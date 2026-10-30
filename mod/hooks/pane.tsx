@@ -333,7 +333,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
           <Input
             key={`${owner.id}-note`}
             placeholder="optional: what you did, or a value Claude needs"
-            value={note}
+            value={app.fieldValue(c.id, owner.id, 'note', note)}
             rows={rowsFor(note)}
             submitLabel="save"
             onInput={setNote}
@@ -540,7 +540,7 @@ export function drawPane(els: Elements[keyof Elements], app: App, sid: string, v
               <Input
                 key={`${q.id}-other`}
                 placeholder="your own answer"
-                value={q.draft.other}
+                value={app.fieldValue(c.id, q.id, 'other', q.draft.other)}
                 rows={rowsFor(q.draft.other)}
                 submitLabel="save"
                 onInput={typing('Something else', c.id, q.id, 'other', q.draft.other)}
