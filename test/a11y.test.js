@@ -132,14 +132,14 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
       return { row: getComputedStyle(row).outlineStyle, edge: getComputedStyle(card).boxShadow, holdsNote: card.contains(document.querySelector('#task-t1 textarea')) };
     });
     check(ring.row === 'none' && /0px 0px 0px 2px inset/.test(ring.edge) && /0px 0px 0px 3px(,|$)/.test(ring.edge) && ring.holdsNote, `the focused open task has one outline, round the whole card (${JSON.stringify(ring)})`);
-    await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120); // shut
-    await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120); // open
+    await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(400); // shut
+    await page.click('#task-t1 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(400); // open
     check((await focused(page)) === 't1 note', `with a click it goes on into the empty note (${await focused(page)})`);
     // No control sits inside the row's button: a screen reader reads each one on its own.
     check(await page.evaluate(() => document.querySelectorAll('[role=button] input, [role=button] button, [role=button] [role=button]').length === 0), 'no checkbox, Share or id inside a row\'s button');
     // A click anywhere on the row still opens it.
     const before = await isOpen(page, 't4');
-    await page.click('#task-t4 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(120);
+    await page.click('#task-t4 .row', { position: { x: 200, y: 12 } }); await page.waitForTimeout(400);
     check((await isOpen(page, 't4')) !== before, 'a click on the row still opens it');
     // The id is a button: Enter copies it, without opening the row.
     const was = await isOpen(page, 't3');
@@ -162,12 +162,12 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
     const nameOf = (id) => page.$eval(`#task-${id} .row-main`, (e) => e.textContent.replace(/\s+/g, ' ').trim());
     const role = async (re) => page.getByRole('button', { name: re }).count();
     // Close the next task first (it starts open): a closed urgent row shows a mark, not a chip.
-    if (await isOpen(page, 't1')) { await page.click('#task-t1 .row'); await page.waitForTimeout(120); }
+    if (await isOpen(page, 't1')) { await page.click('#task-t1 .row'); await page.waitForTimeout(400); }
     check(/Urgent/.test(await nameOf('t1')) && (await role(/Restart the server.*Urgent/)) === 1, `a closed urgent row says Urgent (${await nameOf('t1')})`);
     check(/Shared as done\. Claude has read this\./.test(await nameOf('t2')) && (await role(/Read one.*Shared as done/)) === 1, `a shared row says how it was shared and that Claude read it (${await nameOf('t2')})`);
     check(/Shared as not done\. Claude hasn’t read this yet\./.test(await nameOf('t3')), `…or that Claude hasn't read it yet (${await nameOf('t3')})`);
     check(/Your answer:.*No.*Claude has read this/.test(await nameOf('q2')), `a read answer says the answer and that Claude read it (${await nameOf('q2')})`);
-    if (await isOpen(page, 't4')) { await page.click('#task-t4 .row'); await page.waitForTimeout(120); }
+    if (await isOpen(page, 't4')) { await page.click('#task-t4 .row'); await page.waitForTimeout(400); }
     check(/1 screenshot/.test(await nameOf('t4')), `the screenshot count is a phrase, not a lone number (${await nameOf('t4')})`);
     check(await page.evaluate(() => [...document.querySelectorAll('.mark, .prio, .right .status')].every((e) => e.closest('[aria-hidden="true"]'))), 'the marks themselves are hidden from screen readers, so nothing is read twice');
     // Nothing of that shows on screen.
@@ -178,7 +178,7 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
   // A screenshot opens full size from the keyboard, and closing it goes back to it.
   {
     const page = await open();
-    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(120); }
+    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(400); }
     await page.focus('#task-t4 .shot-open'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
     check(!!(await page.$('.lightbox')), 'Enter on a screenshot shows it full size');
     await page.keyboard.press('Escape'); await page.waitForTimeout(250);
@@ -240,7 +240,7 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
   // While a screenshot is open, nothing behind it can be reached, and Escape closes only it.
   {
     const page = await open();
-    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(120); }
+    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(400); }
     await page.click('#away-btn'); await page.waitForTimeout(450); // the away picker is open too
     await page.focus('#task-t4 .shot-open'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
     check(await page.evaluate(() => document.querySelector('.page').inert && document.querySelector('#dock').inert), 'the page and the bar behind it are out of reach');
@@ -260,7 +260,7 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
   // While a screenshot is open: a paste goes nowhere, and a task shown from the sidebar closes it first.
   {
     const page = await open();
-    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(120); }
+    if (!(await isOpen(page, 't4'))) { await page.click('#task-t4 .row'); await page.waitForTimeout(400); }
     await page.focus('#task-t4 .shot-open'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
     await page.evaluate((png) => {
       const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], 'a.png', { type: 'image/png' }));
@@ -329,7 +329,7 @@ const CLOCK = (start) => `const R=Date;let off=${start}-R.now();window.__shift=(
   // Claude rewords a task or a choice while you are on it: the focus and the caret stay.
   {
     const page = await open();
-    if (!(await isOpen(page, 't1'))) { await page.click('#task-t1 .row'); await page.waitForTimeout(120); }
+    if (!(await isOpen(page, 't1'))) { await page.click('#task-t1 .row'); await page.waitForTimeout(400); }
     await page.focus('#task-t1 textarea'); await page.keyboard.type('Half way');
     const l = state(); Object.assign(l.tasks.find((t) => t.id === 't1'), { text: 'Restart the API server', rev: 50 });
     await page.send(l); await page.waitForTimeout(150);

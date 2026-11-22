@@ -59,8 +59,10 @@ function state(shareTask, answers) {
   {
     const page = await b.newPage({ viewport: { width: 400, height: 1100 } });
     await page.setContent(`<!doctype html><html><head><style>html{${THEME}}${css}</style></head><body class="vscode-dark"><script>window.acquireVsCodeApi=()=>({postMessage(){},getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
-    await page.evaluate((l) => window.postMessage({ type: 'state', list: l, routes: { waiting: false, channel: false, terminal: false } }, '*'), state(false, []));
+    await page.evaluate((l) => window.postMessage({ type: 'state', list: l, routes: { waiting: false, channel: false, terminal: false } }, '*'), state(true, ['q1']));
     await page.waitForTimeout(300);
+    for (const t of await page.$$('text=Shared with Claude')) await t.click().catch(() => {});
+    await page.waitForTimeout(150);
     const isOpen = () => page.$eval('#task-t2', (e) => e.classList.contains('open'));
     const before = await isOpen();
     const box = await page.$eval('#task-t2 .row-main', (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y + r.height / 2, w: r.width }; });
@@ -69,8 +71,26 @@ function state(shareTask, answers) {
     const sel = await page.evaluate(() => String(getSelection()));
     check(sel.length > 0 && (await isOpen()) === before, `selecting text in a task does not open or shut it (selected "${sel}")`);
     await page.evaluate(() => getSelection().removeAllRanges());
-    await page.click('#task-t2 .row-main'); await page.waitForTimeout(100);
+    await page.click('#task-t2 .row-main'); await page.waitForTimeout(450);
     check((await isOpen()) !== before, 'a plain click on a task still opens or shuts it');
+    // Double click (a word) and triple click (the line) select the text without moving the task.
+    const now = await isOpen();
+    await page.dblclick('#task-t2 .row-main'); await page.waitForTimeout(450);
+    const word = await page.evaluate(() => String(getSelection()));
+    check(word.length > 0 && (await isOpen()) === now, `double-clicking a word in a task selects it and leaves the task alone ("${word}")`);
+    await page.click('#task-t2 .row-main', { clickCount: 3 }); await page.waitForTimeout(450);
+    check((await page.evaluate(() => String(getSelection()))).length > 0 && (await isOpen()) === now, 'triple-clicking a task selects its text and leaves the task alone');
+    // A shared task's row works the same way.
+    const sOpen = () => page.$eval('#task-t1', (e) => e.classList.contains('open')).catch(() => null);
+    const sBefore = await sOpen();
+    await page.dblclick('#task-t1 .row-main', { position: { x: 12, y: 8 } }); await page.waitForTimeout(450);
+    check(sBefore !== null && (await sOpen()) === sBefore && (await page.evaluate(() => String(getSelection()))).length > 0, 'double-clicking a shared task selects its text and leaves it alone');
+    // A selection somewhere else does not stop a click on another task from working.
+    await page.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.querySelector('#task-t2 .row-main')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
+    const t1Before = await page.$eval('#task-t1', (e) => e.classList.contains('open'));
+    await page.evaluate(() => document.querySelector('#task-t1 .row').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })));
+    await page.waitForTimeout(450);
+    check((await page.$eval('#task-t1', (e) => e.classList.contains('open'))) !== t1Before, 'a selection in another task does not stop a click from opening this one');
     await page.close();
   }
   // Away: a moon in the header opens a picker; a time is only set after a yes.

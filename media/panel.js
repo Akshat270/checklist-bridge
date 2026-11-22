@@ -75,7 +75,10 @@
     }, id);
   /** Words only a screen reader hears, for things the eye gets from a colour or an icon. */
   const sr = (text) => text && h('span', { class: 'sr' }, text);
-  const hasSelection = () => { const s = getSelection(); return !!s && !s.isCollapsed && s.toString().length > 0; };
+  /** True when some of the text inside `el` is selected. */
+  const hasSelectionIn = (el) => { const s = getSelection(); return !!s && !s.isCollapsed && (el.contains(s.anchorNode) || el.contains(s.focusNode)); };
+  /** A click waits this long, so a double or triple click (selecting a word or line) can cancel it before the row moves. */
+  const CLICK_WAIT = 250;
   /**
    * A row: the whole of it opens and shuts on a click. For the keyboard and screen readers, only the middle (the text) is
    * the button, so the checkbox, Share and the id next to it stay controls of their own instead of sitting inside a button.
@@ -87,11 +90,19 @@
         toggle(t, true);
       }
     };
-    // Selecting text (to copy it) ends in a click too; that must not open or shut the row.
-    return h('div', { class: 'row', onclick: () => { if (!hasSelection()) toggle(t); } },
+    // Selecting text (to copy it) must not open or shut the row: a drag ends in a click too, and a double or
+    // triple click starts with a plain one. So a click toggles after a short wait, unless a selection is there by then.
+    let pending = 0;
+    const onclick = (e) => {
+      clearTimeout(pending);
+      if (e.detail > 1 || hasSelectionIn(e.currentTarget)) return;
+      pending = setTimeout(() => { if (!hasSelectionIn(row)) toggle(t); }, CLICK_WAIT);
+    };
+    const row = h('div', { class: 'row', onclick },
       lead,
       h('div', { class: 'row-main', 'data-key': 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onkeydown: toggleKey }, main),
       h('div', { class: 'right' }, right));
+    return row;
   }
 
   function toast(text) {
