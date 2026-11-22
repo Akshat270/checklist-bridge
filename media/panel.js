@@ -75,6 +75,7 @@
     }, id);
   /** Words only a screen reader hears, for things the eye gets from a colour or an icon. */
   const sr = (text) => text && h('span', { class: 'sr' }, text);
+  const hasSelection = () => { const s = getSelection(); return !!s && !s.isCollapsed && s.toString().length > 0; };
   /**
    * A row: the whole of it opens and shuts on a click. For the keyboard and screen readers, only the middle (the text) is
    * the button, so the checkbox, Share and the id next to it stay controls of their own instead of sitting inside a button.
@@ -86,7 +87,8 @@
         toggle(t, true);
       }
     };
-    return h('div', { class: 'row', onclick: () => toggle(t) },
+    // Selecting text (to copy it) ends in a click too; that must not open or shut the row.
+    return h('div', { class: 'row', onclick: () => { if (!hasSelection()) toggle(t); } },
       lead,
       h('div', { class: 'row-main', 'data-key': 'row', role: 'button', tabindex: '0', 'aria-expanded': String(open), onkeydown: toggleKey }, main),
       h('div', { class: 'right' }, right));

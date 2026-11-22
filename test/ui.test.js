@@ -55,6 +55,24 @@ function state(shareTask, answers) {
     check(out.length === 1 && out[0].text === 't2' && (await isOpen()) === before, 'clicking an id copies it, without opening or closing the task');
     await page.close();
   }
+  // Selecting a task's text (to copy it) must not open or shut the task; a plain click still does.
+  {
+    const page = await b.newPage({ viewport: { width: 400, height: 1100 } });
+    await page.setContent(`<!doctype html><html><head><style>html{${THEME}}${css}</style></head><body class="vscode-dark"><script>window.acquireVsCodeApi=()=>({postMessage(){},getState:()=>null,setState(){}});</script><script>${js}</script></body></html>`);
+    await page.evaluate((l) => window.postMessage({ type: 'state', list: l, routes: { waiting: false, channel: false, terminal: false } }, '*'), state(false, []));
+    await page.waitForTimeout(300);
+    const isOpen = () => page.$eval('#task-t2', (e) => e.classList.contains('open'));
+    const before = await isOpen();
+    const box = await page.$eval('#task-t2 .row-main', (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y + r.height / 2, w: r.width }; });
+    await page.mouse.move(box.x + 2, box.y); await page.mouse.down(); await page.mouse.move(box.x + 40, box.y, { steps: 5 }); await page.mouse.up();
+    await page.waitForTimeout(150);
+    const sel = await page.evaluate(() => String(getSelection()));
+    check(sel.length > 0 && (await isOpen()) === before, `selecting text in a task does not open or shut it (selected "${sel}")`);
+    await page.evaluate(() => getSelection().removeAllRanges());
+    await page.click('#task-t2 .row-main'); await page.waitForTimeout(100);
+    check((await isOpen()) !== before, 'a plain click on a task still opens or shuts it');
+    await page.close();
+  }
   // Away: a moon in the header opens a picker; a time is only set after a yes.
   {
     const page = await b.newPage({ viewport: { width: 400, height: 1100 } });
