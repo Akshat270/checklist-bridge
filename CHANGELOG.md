@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- **Fixed:** you can now select and copy the text of a task or question. Selecting it no longer opens or closes the task.
+
 ## 0.8.0
 - **Use it without VS Code.** Checklist Bridge now also comes as a mod for Claude Code, so the checklist shows in a pane next to the chat in the terminal or the Claude desktop app. Install it with `/plugin install checklist-bridge --marketplace Akshat270/checklist-bridge`.
 - The mod's checklist has a new look: actions at the top, framed cards, a key bar at the bottom, and a **copy** button for commands. For a light terminal, set **Colors** to `light` in `/config`.
